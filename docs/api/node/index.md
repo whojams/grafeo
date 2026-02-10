@@ -96,8 +96,15 @@ result.scalar();         // first column of first row
 ## Vector Search
 
 ```typescript
-// Create HNSW index
-await db.createVectorIndex('Document', 'embedding', 384);
+// Create HNSW index (all params after property are optional)
+await db.createVectorIndex(
+  'Document',     // label
+  'embedding',    // property
+  384,            // dimensions (optional)
+  'cosine',       // metric (optional, default: 'cosine')
+  16,             // m - connections per node (optional, default: 16)
+  128             // ef_construction (optional, default: 128)
+);
 
 // Bulk insert
 const ids = await db.batchCreateNodes('Document', 'embedding', vectors);

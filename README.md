@@ -252,7 +252,7 @@ db.execute("""INSERT (:Document {
 # Create an HNSW index for fast approximate search
 db.execute("""
     CREATE VECTOR INDEX doc_idx ON :Document(embedding)
-    WITH (dimensions: 4, metric: 'cosine')
+    DIMENSION 4 METRIC 'cosine'
 """)
 
 # Find similar documents using cosine similarity

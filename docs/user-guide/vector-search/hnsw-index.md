@@ -21,44 +21,42 @@ HNSW builds a multi-layer graph structure where:
 
 ## Creating an HNSW Index
 
-### SQL Syntax
+### GQL Syntax
 
 ```sql
 -- Create a vector index on the embedding property
 CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
-  WITH (dimensions: 384, metric: 'cosine')
+  DIMENSION 384 METRIC 'cosine'
 
--- With custom HNSW parameters
+-- Dimensions and metric are optional (defaults: auto-detect dimensions, cosine)
 CREATE VECTOR INDEX document_embeddings ON :Document(embedding)
-  WITH (
-    dimensions: 768,
-    metric: 'euclidean',
-    m: 16,
-    ef_construction: 200
-  )
+  DIMENSION 768 METRIC 'euclidean'
 ```
 
 ### Python API
 
 ```python
 import grafeo
-from grafeo import HnswConfig, DistanceMetric
 
 db = grafeo.GrafeoDB()
 
 # Create index with default settings
 db.create_vector_index(
-    "movie_embeddings",
-    label="Movie",
-    property="embedding",
-    dimensions=384,
-    metric="cosine"
+    "Movie",             # label
+    "embedding",         # property
+    dimensions=384,      # optional
+    metric="cosine"      # optional (default: cosine)
 )
 
-# Or use the Rust-level configuration
-config = HnswConfig(dimensions=384, metric=DistanceMetric.Cosine)
-config.m = 16  # Connections per node
-config.ef_construction = 200  # Build-time quality
+# With HNSW tuning parameters
+db.create_vector_index(
+    "Document",
+    "embedding",
+    dimensions=768,
+    metric="euclidean",
+    m=32,                # connections per node (default: 16)
+    ef_construction=256  # build-time quality (default: 128)
+)
 ```
 
 ## Configuration Parameters
@@ -68,7 +66,7 @@ config.ef_construction = 200  # Build-time quality
 | `dimensions` | Required | Number of dimensions in vectors |
 | `metric` | `cosine` | Distance metric: `cosine`, `euclidean`, `dot_product`, `manhattan` |
 | `m` | 16 | Max connections per node (higher = better recall, more memory) |
-| `ef_construction` | 200 | Build-time beam width (higher = better index quality, slower build) |
+| `ef_construction` | 128 | Build-time beam width (higher = better index quality, slower build) |
 | `ef_search` | 50 | Search-time beam width (higher = better recall, slower search) |
 
 ## Tuning Parameters
@@ -81,29 +79,17 @@ Controls the graph connectivity:
 - **Default (16)**: Good balance for most use cases
 - **Higher (24-48)**: Better recall, more memory, slower build
 
-```sql
--- High-recall configuration
-CREATE VECTOR INDEX ... WITH (m: 32, ...)
-
--- Memory-efficient configuration
-CREATE VECTOR INDEX ... WITH (m: 8, ...)
-```
+Configure via the Python/Node.js API `create_vector_index()` parameter.
 
 ### ef_construction (Build Quality)
 
 Controls index build quality:
 
-- **Lower (100)**: Faster build, slightly lower quality
-- **Default (200)**: Good balance
-- **Higher (400-500)**: Best quality, slower build
+- **Lower (64)**: Faster build, slightly lower quality
+- **Default (128)**: Good balance
+- **Higher (256-512)**: Best quality, slower build
 
-```sql
--- Fast build (acceptable for frequently rebuilt indexes)
-CREATE VECTOR INDEX ... WITH (ef_construction: 100, ...)
-
--- High-quality build (for static datasets)
-CREATE VECTOR INDEX ... WITH (ef_construction: 400, ...)
-```
+Configure via the Python/Node.js API `create_vector_index()` parameter.
 
 ### ef_search (Search Quality)
 
@@ -161,13 +147,13 @@ For 1 million 384-dimensional vectors with m=16:
 
 ```sql
 -- For text embeddings (usually normalized)
-CREATE VECTOR INDEX ... WITH (metric: 'cosine', ...)
+CREATE VECTOR INDEX idx ON :Doc(embedding) METRIC 'cosine'
 
 -- For image embeddings or spatial data
-CREATE VECTOR INDEX ... WITH (metric: 'euclidean', ...)
+CREATE VECTOR INDEX idx ON :Doc(embedding) METRIC 'euclidean'
 
 -- For retrieval models with dot product training
-CREATE VECTOR INDEX ... WITH (metric: 'dot_product', ...)
+CREATE VECTOR INDEX idx ON :Doc(embedding) METRIC 'dot_product'
 ```
 
 ### 2. Build Index After Bulk Loading
@@ -179,10 +165,7 @@ for doc in documents:
                {"title": doc.title, "emb": doc.embedding})
 
 # Then create index (faster than incremental inserts)
-db.execute("""
-    CREATE VECTOR INDEX doc_embeddings ON :Document(embedding)
-    WITH (dimensions: 384, metric: 'cosine')
-""")
+db.create_vector_index("Document", "embedding", dimensions=384, metric="cosine")
 ```
 
 ### 3. Monitor Recall
@@ -205,16 +188,8 @@ hnsw_result = db.execute("MATCH (d:Document) RETURN d.id ORDER BY cosine_similar
 
 For memory-constrained environments, combine HNSW with quantization:
 
-```python
-from grafeo import QuantizedHnswIndex, HnswConfig, QuantizationType
-
-# Scalar quantization: 4x compression
-config = HnswConfig(dimensions=384, metric="cosine")
-index = QuantizedHnswIndex(config, QuantizationType.Scalar)
-
-# Product quantization: 48x compression (384/8 subvectors)
-index = QuantizedHnswIndex(config, QuantizationType.Product(num_subvectors=8))
-```
+See the [Quantization](quantization.md) page for how to use scalar, binary, and product quantization
+to reduce memory usage while maintaining search quality.
 
 See [Quantization](quantization.md) for details.
 

@@ -108,7 +108,7 @@ RETURN m.title
 
 -- Create vector index
 CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
-  WITH (dimensions: 384, metric: 'cosine')
+  DIMENSION 384 METRIC 'cosine'
 ```
 
 ---

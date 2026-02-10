@@ -77,7 +77,7 @@ vec_a = quantizer.quantize([0.1, 0.2, 0.3])
 vec_b = quantizer.quantize([0.4, 0.5, 0.6])
 
 # Quantized distance (fast, approximate)
-distance = quantizer.distance_u8(vec_a, vec_b)
+distance = quantizer.distance(vec_a, vec_b)
 ```
 
 ### Properties
@@ -189,83 +189,32 @@ bytes_needed = BinaryQuantizer.bytes_needed(384)  # 48 bytes (384/8)
 
 ## Distance Functions
 
-Standalone distance functions for direct computation:
+Distance functions are available in the GQL query language, not as standalone Python functions:
 
 ```python
-from grafeo import (
-    cosine_similarity,
-    cosine_distance,
-    euclidean_distance,
-    dot_product,
-    manhattan_distance,
-    l2_norm,
-    normalize,
-)
+import grafeo
 
-vec_a = [0.1, 0.2, 0.3]
-vec_b = [0.4, 0.5, 0.6]
+db = grafeo.GrafeoDB()
 
-# Similarities and distances
-sim = cosine_similarity(vec_a, vec_b)   # 0.0 to 1.0
-dist = cosine_distance(vec_a, vec_b)    # 1 - similarity
-dist = euclidean_distance(vec_a, vec_b) # L2 distance
-prod = dot_product(vec_a, vec_b)        # Inner product
-dist = manhattan_distance(vec_a, vec_b) # L1 distance
-
-# Utilities
-norm = l2_norm(vec_a)                   # Vector magnitude
-normalized = normalize(vec_a)           # Unit vector
+# Use distance functions in queries
+result = db.execute("""
+    MATCH (d:Document)
+    RETURN d.title,
+           cosine_similarity(d.embedding, $query) AS sim,
+           euclidean_distance(d.embedding, $query) AS dist
+    ORDER BY sim DESC
+    LIMIT 10
+""", {"query": query_embedding})
 ```
 
-## Storage Backends
-
-### RAM Storage
-
-```python
-from grafeo import RamStorage
-
-# Create in-memory storage
-storage = RamStorage(dimensions=384)
-
-# Operations
-storage.insert(node_id=1, vector=[0.1] * 384)
-vector = storage.get(node_id=1)           # Returns List[float] or None
-exists = storage.contains(node_id=1)      # True
-removed = storage.remove(node_id=1)       # True if existed
-count = len(storage)                      # Number of vectors
-dims = storage.dimensions                 # 384
-memory = storage.memory_usage             # Bytes used
-```
-
-### Memory-Mapped Storage
-
-```python
-from grafeo import MmapStorage
-
-# Create new storage file
-storage = MmapStorage.create("vectors.bin", dimensions=384)
-
-# Or open existing
-storage = MmapStorage.open("vectors.bin")
-
-# Configure cache
-storage = storage.with_cache_limit(10000)  # LRU cache size
-
-# Operations (same as RamStorage)
-storage.insert(node_id=1, vector=[0.1] * 384)
-vector = storage.get(node_id=1)
-
-# Persistence
-storage.flush()                           # Ensure written to disk
-size = storage.file_size                  # File size in bytes
-storage.clear_cache()                     # Free cache memory
-```
+Available GQL distance functions: `cosine_similarity`, `cosine_distance`,
+`euclidean_distance`, `dot_product`, `manhattan_distance`.
 
 ## Complete Example
 
 ```python
 import grafeo
-from grafeo import ProductQuantizer, MmapStorage
+from grafeo import ProductQuantizer
 
 # Setup database
 db = grafeo.GrafeoDB()
@@ -320,10 +269,9 @@ Check available SIMD acceleration:
 ```python
 import grafeo
 
-# Returns dict with available SIMD features
+# Returns a string identifying the active SIMD instruction set
 simd = grafeo.simd_support()
-print(simd)
-# {'avx2': True, 'avx512': False, 'sse4': True, 'neon': False}
+print(simd)  # One of: "avx2", "sse", "neon", or "scalar"
 ```
 
 SIMD is automatically used for:

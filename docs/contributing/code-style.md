@@ -22,7 +22,7 @@ cargo fmt --all
 Use `clippy`:
 
 ```bash
-cargo clippy --workspace -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 ### Naming

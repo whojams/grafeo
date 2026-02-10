@@ -1,6 +1,6 @@
 # Ecosystem
 
-The GrafeoDB ecosystem extends beyond the core database with visualization tools, benchmarking, and browser support.
+The GrafeoDB ecosystem extends beyond the core database with AI/LLM integrations, visualization tools, benchmarking, and browser support.
 
 <div class="grid cards" markdown>
 
@@ -48,24 +48,24 @@ The GrafeoDB ecosystem extends beyond the core database with visualization tools
 
     ---
 
-    LangChain integration for Grafeo: graph-backed memory store, vector retriever, and chat message history.
+    LangChain integration for Grafeo: graph store, vector store, and Graph RAG retrieval.
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/GrafeoDB/grafeo-langchain)
+    [:octicons-arrow-right-24: Learn more](grafeo-langchain.md)
 
 -   :material-llama:{ .lg .middle } **grafeo-llamaindex**
 
     ---
 
-    LlamaIndex integration: graph store, vector store, and property graph index backed by Grafeo.
+    LlamaIndex integration: PropertyGraphStore, vector search, and knowledge graph construction.
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/GrafeoDB/grafeo-llamaindex)
+    [:octicons-arrow-right-24: Learn more](grafeo-llamaindex.md)
 
 -   :material-chip:{ .lg .middle } **grafeo-mcp**
 
     ---
 
-    Model Context Protocol server for Grafeo: expose your graph database as tools for LLM agents.
+    Model Context Protocol server: expose your graph database as tools for LLM agents.
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/GrafeoDB/grafeo-mcp)
+    [:octicons-arrow-right-24: Learn more](grafeo-mcp.md)
 
 </div>

@@ -130,6 +130,46 @@ import grafeo
 db = grafeo.GrafeoDB()
 ```
 
+## grafeo-node
+
+Node.js/TypeScript bindings via napi-rs. Located at `crates/bindings/node`.
+
+| Module | Purpose |
+|--------|---------|
+| `database.rs` | JsGrafeoDB class |
+| `query.rs` | Query execution and result conversion |
+| `types.rs` | JavaScript ↔ Rust type conversions |
+
+```javascript
+const { GrafeoDB } = require('@grafeo-db/js');
+const db = await GrafeoDB.create();
+```
+
+## grafeo-c
+
+C FFI layer for cross-language interop. Located at `crates/bindings/c`.
+
+| Module | Purpose |
+|--------|---------|
+| `lib.rs` | C-compatible function exports |
+| `types.rs` | C-safe type wrappers |
+
+Also used by the Go bindings (`crates/bindings/go`) via CGO.
+
+## grafeo-wasm
+
+WebAssembly bindings via wasm-bindgen. Located at `crates/bindings/wasm`.
+
+| Module | Purpose |
+|--------|---------|
+| `lib.rs` | WASM-compatible database API |
+| `types.rs` | JavaScript ↔ WASM type conversions |
+
+```javascript
+import { GrafeoDB } from '@grafeo-db/wasm';
+const db = new GrafeoDB();
+```
+
 ## grafeo-cli
 
 Command-line interface for database administration.

@@ -9,8 +9,9 @@ tags:
 
 ## Prerequisites
 
-- Rust 1.80.0+
-- Python 3.9+ (for Python bindings)
+- Rust 1.91.1+
+- Python 3.12+ (for Python bindings)
+- Node.js 20+ (for Node.js bindings)
 - Git
 
 ## Clone Repository
@@ -42,6 +43,15 @@ cargo test --workspace
 cd crates/bindings/python
 uv add maturin
 maturin develop
+```
+
+## Build Node.js Package
+
+```bash
+cd crates/bindings/node
+npm install
+npm run build
+npm test
 ```
 
 ## IDE Setup

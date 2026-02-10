@@ -319,4 +319,108 @@ mod tests {
         assert_eq!(result.column(1).unwrap().get_string(0), Some("constant"));
         assert_eq!(result.column(1).unwrap().get_string(1), Some("constant"));
     }
+
+    #[test]
+    fn test_project_empty_input() {
+        let mock_scan = MockScanOperator {
+            chunks: vec![],
+            position: 0,
+        };
+
+        let mut project =
+            ProjectOperator::select_columns(Box::new(mock_scan), vec![0], vec![LogicalType::Int64]);
+
+        assert!(project.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_project_column_not_found() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(1);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock_scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        // Reference column index 5 which doesn't exist
+        let mut project = ProjectOperator::new(
+            Box::new(mock_scan),
+            vec![ProjectExpr::Column(5)],
+            vec![LogicalType::Int64],
+        );
+
+        let result = project.next();
+        assert!(result.is_err(), "Should fail with ColumnNotFound");
+    }
+
+    #[test]
+    fn test_project_multiple_constants() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(1);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock_scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut project = ProjectOperator::new(
+            Box::new(mock_scan),
+            vec![
+                ProjectExpr::Constant(Value::Int64(42)),
+                ProjectExpr::Constant(Value::String("fixed".into())),
+                ProjectExpr::Constant(Value::Bool(true)),
+            ],
+            vec![LogicalType::Int64, LogicalType::String, LogicalType::Bool],
+        );
+
+        let result = project.next().unwrap().unwrap();
+        assert_eq!(result.column_count(), 3);
+        assert_eq!(result.column(0).unwrap().get_int64(0), Some(42));
+        assert_eq!(result.column(1).unwrap().get_string(0), Some("fixed"));
+        assert_eq!(
+            result.column(2).unwrap().get_value(0),
+            Some(Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_project_identity() {
+        // Select all columns in original order
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64, LogicalType::String]);
+        builder.column_mut(0).unwrap().push_int64(10);
+        builder.column_mut(1).unwrap().push_string("test");
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock_scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut project = ProjectOperator::select_columns(
+            Box::new(mock_scan),
+            vec![0, 1],
+            vec![LogicalType::Int64, LogicalType::String],
+        );
+
+        let result = project.next().unwrap().unwrap();
+        assert_eq!(result.column(0).unwrap().get_int64(0), Some(10));
+        assert_eq!(result.column(1).unwrap().get_string(0), Some("test"));
+    }
+
+    #[test]
+    fn test_project_name() {
+        let mock_scan = MockScanOperator {
+            chunks: vec![],
+            position: 0,
+        };
+        let project =
+            ProjectOperator::select_columns(Box::new(mock_scan), vec![0], vec![LogicalType::Int64]);
+        assert_eq!(project.name(), "Project");
+    }
 }

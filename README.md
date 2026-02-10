@@ -18,7 +18,7 @@ Grafeo is a high-performance graph database with a Rust core and no required C d
 ### Core Capabilities
 
 - **Dual data model support**: LPG and RDF with optimized storage for each
-- **Multi-language queries**: GQL, Cypher, Gremlin, GraphQL, and SPARQL
+- **Multi-language queries**: GQL, Cypher, Gremlin, GraphQL, SPARQL, and SQL/PGQ
 - Embeddable with zero external dependencies
 - **Multi-language bindings**: Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), WebAssembly (wasm-bindgen)
 - In-memory and persistent storage modes
@@ -31,6 +31,7 @@ Grafeo is a high-performance graph database with a Rust core and no required C d
 - **Gremlin** (Apache TinkerPop)
 - **GraphQL** (September 2025)
 - **SPARQL** (W3C 1.1)
+- **SQL/PGQ** (SQL:2023)
 
 ### Vector Search & AI
 
@@ -60,8 +61,9 @@ Grafeo is a high-performance graph database with a Rust core and no required C d
 | GQL | ✅ | — |
 | Cypher | ✅ | — |
 | Gremlin | ✅ | — |
-| GraphQL | ✅ | ✅ | 
+| GraphQL | ✅ | ✅ |
 | SPARQL | — | ✅ |
+| SQL/PGQ | ✅ | — |
 
 Grafeo uses a modular translator architecture where query languages are parsed into ASTs, then translated to a unified logical plan that executes against the appropriate storage backend (LPG or RDF).
 
@@ -298,6 +300,9 @@ grafeo info ./mydb --format table # Human-readable table (default)
 |---------|-------------|
 | [**grafeo-server**](https://github.com/GrafeoDB/grafeo-server) | HTTP server & web UI: REST API, transactions, single binary (~40MB Docker image) |
 | [**grafeo-web**](https://github.com/GrafeoDB/grafeo-web) | Browser-based Grafeo via WebAssembly with IndexedDB persistence |
+| [**grafeo-langchain**](https://github.com/GrafeoDB/grafeo-langchain) | LangChain integration: graph store, vector store, Graph RAG retrieval |
+| [**grafeo-llamaindex**](https://github.com/GrafeoDB/grafeo-llamaindex) | LlamaIndex integration: PropertyGraphStore, vector search, knowledge graphs |
+| [**grafeo-mcp**](https://github.com/GrafeoDB/grafeo-mcp) | Model Context Protocol server: expose Grafeo as tools for LLM agents |
 | [**anywidget-graph**](https://github.com/GrafeoDB/anywidget-graph) | Interactive graph visualization for Python notebooks (Marimo, Jupyter, VS Code, Colab) |
 | [**anywidget-vector**](https://github.com/GrafeoDB/anywidget-vector) | 3D vector/embedding visualization for Python notebooks |
 | [**graph-bench**](https://github.com/GrafeoDB/graph-bench) | Benchmark suite comparing graph databases across 25+ benchmarks |

@@ -2424,4 +2424,86 @@ mod tests {
             }
         }
     }
+
+    // ==================== Error/Negative Cases ====================
+
+    #[test]
+    fn test_parse_error_empty_input() {
+        let mut parser = Parser::new("");
+        let result = parser.parse();
+        assert!(result.is_err(), "Empty input should fail");
+    }
+
+    #[test]
+    fn test_parse_error_just_match() {
+        let mut parser = Parser::new("MATCH");
+        let result = parser.parse();
+        assert!(result.is_err(), "MATCH alone should fail");
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_node_pattern() {
+        let mut parser = Parser::new("MATCH (n:Person RETURN n");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed node pattern should fail");
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_edge_pattern() {
+        let mut parser = Parser::new("MATCH (a)-[:KNOWS->(b) RETURN a");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed edge pattern should fail");
+    }
+
+    #[test]
+    fn test_parse_error_missing_return() {
+        let mut parser = Parser::new("MATCH (n:Person) WHERE n.age > 25");
+        let result = parser.parse();
+        assert!(
+            result.is_err(),
+            "Query without RETURN or mutation should fail"
+        );
+    }
+
+    #[test]
+    fn test_parse_error_double_where() {
+        let mut parser = Parser::new("MATCH (n) WHERE n.a = 1 WHERE n.b = 2 RETURN n");
+        let result = parser.parse();
+        assert!(result.is_err(), "Double WHERE should fail");
+    }
+
+    #[test]
+    fn test_parse_error_invalid_literal() {
+        let mut parser = Parser::new("MATCH (n) WHERE n.x = @invalid RETURN n");
+        let result = parser.parse();
+        assert!(result.is_err(), "Invalid literal should fail");
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_string() {
+        let mut parser = Parser::new("MATCH (n) WHERE n.name = 'hello RETURN n");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed string should fail");
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_property_map() {
+        let mut parser = Parser::new("MATCH (n:Person {name: 'Alice') RETURN n");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed property map should fail");
+    }
+
+    #[test]
+    fn test_parse_error_return_only() {
+        let mut parser = Parser::new("RETURN RETURN");
+        let result = parser.parse();
+        assert!(result.is_err(), "RETURN RETURN should fail");
+    }
+
+    #[test]
+    fn test_parse_error_insert_without_pattern() {
+        let mut parser = Parser::new("INSERT RETURN n");
+        let result = parser.parse();
+        assert!(result.is_err(), "INSERT without pattern should fail");
+    }
 }

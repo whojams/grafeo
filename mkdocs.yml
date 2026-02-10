@@ -5,7 +5,7 @@ site_author: S.T. Grond
 site_description: >-
   A high-performance, embeddable graph database with a Rust core and no required
   C dependencies. Python, Node.js, Go, and WebAssembly bindings. Supports LPG and
-  RDF data models, multiple query languages (GQL, Cypher, Gremlin, GraphQL, SPARQL),
+  RDF data models, multiple query languages (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ),
   ACID transactions, and extensible storage backends.
 
 # Repository
@@ -353,6 +353,9 @@ nav:
     - Ecosystem:
       - ecosystem/index.md
       - grafeo-server: ecosystem/grafeo-server.md
+      - grafeo-langchain: ecosystem/grafeo-langchain.md
+      - grafeo-llamaindex: ecosystem/grafeo-llamaindex.md
+      - grafeo-mcp: ecosystem/grafeo-mcp.md
       - Interactive Demo: ecosystem/interactive-demo.md
       - Performance Baselines: ecosystem/performance.md
       - graph-bench: ecosystem/graph-bench.md

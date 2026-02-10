@@ -229,4 +229,133 @@ mod tests {
 
         assert_eq!(results.len(), 3);
     }
+
+    #[test]
+    fn test_unwind_empty_list() {
+        // A list with zero elements should produce no output rows
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Any]);
+        let list = Value::List(Arc::new([]));
+        builder.column_mut(0).unwrap().push_value(list);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock = MockOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut unwind =
+            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Int64]);
+
+        let mut results = Vec::new();
+        while let Ok(Some(chunk)) = unwind.next() {
+            results.push(chunk);
+        }
+
+        assert_eq!(results.len(), 0, "Empty list should produce no rows");
+    }
+
+    #[test]
+    fn test_unwind_empty_input() {
+        // No chunks at all
+        let mock = MockOperator {
+            chunks: vec![],
+            position: 0,
+        };
+
+        let mut unwind =
+            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Int64]);
+
+        assert!(unwind.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_unwind_multiple_rows() {
+        // Two rows with lists of different sizes
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Any]);
+
+        let list1 = Value::List(Arc::new([Value::Int64(10), Value::Int64(20)]));
+        builder.column_mut(0).unwrap().push_value(list1);
+        builder.advance_row();
+
+        let list2 = Value::List(Arc::new([Value::Int64(30)]));
+        builder.column_mut(0).unwrap().push_value(list2);
+        builder.advance_row();
+
+        let chunk = builder.finish();
+
+        let mock = MockOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut unwind =
+            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Int64]);
+
+        let mut count = 0;
+        while let Ok(Some(_chunk)) = unwind.next() {
+            count += 1;
+        }
+
+        // 2 from first list + 1 from second list = 3 rows
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_unwind_single_element_list() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Any]);
+        let list = Value::List(Arc::new([Value::String("hello".into())]));
+        builder.column_mut(0).unwrap().push_value(list);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock = MockOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "item".to_string(),
+            vec![LogicalType::String],
+        );
+
+        let mut results = Vec::new();
+        while let Ok(Some(chunk)) = unwind.next() {
+            results.push(chunk);
+        }
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_unwind_variable_name() {
+        let mock = MockOperator {
+            chunks: vec![],
+            position: 0,
+        };
+
+        let unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "my_var".to_string(),
+            vec![LogicalType::Any],
+        );
+
+        assert_eq!(unwind.variable_name(), "my_var");
+    }
+
+    #[test]
+    fn test_unwind_name() {
+        let mock = MockOperator {
+            chunks: vec![],
+            position: 0,
+        };
+
+        let unwind =
+            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Any]);
+
+        assert_eq!(unwind.name(), "Unwind");
+    }
 }

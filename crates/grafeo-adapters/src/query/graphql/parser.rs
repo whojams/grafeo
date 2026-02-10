@@ -538,4 +538,141 @@ mod tests {
             assert_eq!(field.directives[0].name, "include");
         }
     }
+
+    // ==================== Error/Negative Cases ====================
+
+    #[test]
+    fn test_parse_empty_input() {
+        let mut parser = Parser::new("");
+        let result = parser.parse();
+        assert!(result.is_ok(), "Empty input produces empty document");
+        assert!(result.unwrap().definitions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_unclosed_brace() {
+        let mut parser = Parser::new("{ user { name }");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed brace should fail");
+    }
+
+    #[test]
+    fn test_parse_unclosed_selection_set() {
+        let mut parser = Parser::new("{ user { name");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed nested selection set should fail");
+    }
+
+    #[test]
+    fn test_parse_missing_selection_set() {
+        let mut parser = Parser::new("query GetUser");
+        let result = parser.parse();
+        assert!(result.is_err(), "Named query without body should fail");
+    }
+
+    #[test]
+    fn test_parse_invalid_argument_syntax() {
+        let mut parser = Parser::new("{ user(id: ) { name } }");
+        let result = parser.parse();
+        assert!(result.is_err(), "Missing argument value should fail");
+    }
+
+    #[test]
+    fn test_parse_unclosed_argument_list() {
+        let mut parser = Parser::new("{ user(id: 123 { name } }");
+        let result = parser.parse();
+        assert!(result.is_err(), "Unclosed argument list should fail");
+    }
+
+    #[test]
+    fn test_parse_fragment_without_type_condition() {
+        let mut parser = Parser::new("fragment UserFields { name }");
+        let result = parser.parse();
+        assert!(result.is_err(), "Fragment without 'on Type' should fail");
+    }
+
+    #[test]
+    fn test_parse_variable_without_type() {
+        let mut parser = Parser::new("query ($name) { user { name } }");
+        let result = parser.parse();
+        assert!(result.is_err(), "Variable without type should fail");
+    }
+
+    #[test]
+    fn test_parse_multiple_operations() {
+        let mut parser = Parser::new("query A { user { name } } query B { post { title } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+        let doc = result.unwrap();
+        assert_eq!(doc.definitions.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_inline_fragment() {
+        let mut parser = Parser::new("{ user { ... on Admin { role } name } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_fragment_spread() {
+        let mut parser = Parser::new("{ user { ...UserFields } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_list_argument() {
+        let mut parser = Parser::new("{ users(ids: [1, 2, 3]) { name } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_object_argument_not_supported() {
+        // Object literals in arguments are not yet supported
+        let mut parser = Parser::new("{ createUser(input: {name: \"Alice\", age: 30}) { id } }");
+        let result = parser.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_boolean_values() {
+        let mut parser = Parser::new("{ user(active: true, archived: false) { name } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_null_value() {
+        let mut parser = Parser::new("{ user(name: null) { id } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_variable_reference() {
+        let mut parser = Parser::new("query ($id: Int!) { user(id: $id) { name } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+        let doc = result.unwrap();
+        if let Definition::Operation(op) = &doc.definitions[0] {
+            assert_eq!(op.variables.len(), 1);
+            assert!(matches!(
+                op.variables[0].variable_type,
+                crate::query::graphql::ast::Type::NonNull(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_parse_subscription() {
+        let mut parser = Parser::new("subscription { messageAdded { text } }");
+        let result = parser.parse();
+        assert!(result.is_ok());
+        let doc = result.unwrap();
+        if let Definition::Operation(op) = &doc.definitions[0] {
+            assert_eq!(op.operation, OperationType::Subscription);
+        }
+    }
 }

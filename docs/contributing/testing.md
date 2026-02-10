@@ -11,16 +11,32 @@ tags:
 
 ```bash
 # All tests
-cargo test --workspace
+cargo test --all-features --workspace
 
 # Specific crate
 cargo test -p grafeo-core
 
-# Single test
+# Single test with output
 cargo test test_name -- --nocapture
 
-# With output
-cargo test -- --nocapture
+# Release mode (catches optimization-specific issues)
+cargo test --all-features --workspace --release
+```
+
+### Python Tests
+
+```bash
+cd crates/bindings/python
+maturin develop
+pytest tests/python/ -v
+```
+
+### Node.js Tests
+
+```bash
+cd crates/bindings/node
+npm install && npm run build
+npm test
 ```
 
 ## Coverage
@@ -41,7 +57,9 @@ cargo tarpaulin --workspace --out Html
 | grafeo-core | 90% |
 | grafeo-adapters | 85% |
 | grafeo-engine | 85% |
-| grafeo-python (`crates/bindings/python`) | 80% |
+| grafeo-python | 80% |
+| grafeo-node | 80% |
+| Overall workspace | 82%+ |
 
 ## Test Categories
 

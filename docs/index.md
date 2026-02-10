@@ -195,6 +195,7 @@ Choose the query language that fits your needs:
 | **Gremlin** | LPG | Apache TinkerPop, traversal-based |
 | **GraphQL** | LPG, RDF | Schema-driven, familiar to web developers |
 | **SPARQL** | RDF | W3C standard for RDF queries |
+| **SQL/PGQ** | LPG | SQL:2023 GRAPH_TABLE for SQL-native graph queries |
 
 === "GQL"
 

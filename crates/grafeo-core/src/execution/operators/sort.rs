@@ -394,4 +394,207 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_sort_empty_input() {
+        let mock = MockOperator::new(vec![]);
+
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+
+        assert!(sort.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_sort_already_sorted() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        for v in [1i64, 2, 3, 4] {
+            builder.column_mut(0).unwrap().push_int64(v);
+            builder.advance_row();
+        }
+        let chunk = builder.finish();
+
+        let mock = MockOperator::new(vec![chunk]);
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+
+        let mut results = Vec::new();
+        while let Some(chunk) = sort.next().unwrap() {
+            for row in chunk.selected_indices() {
+                results.push(chunk.column(0).unwrap().get_int64(row).unwrap());
+            }
+        }
+
+        assert_eq!(results, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_sort_duplicate_values() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        for v in [3i64, 1, 3, 2, 1] {
+            builder.column_mut(0).unwrap().push_int64(v);
+            builder.advance_row();
+        }
+        let chunk = builder.finish();
+
+        let mock = MockOperator::new(vec![chunk]);
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+
+        let mut results = Vec::new();
+        while let Some(chunk) = sort.next().unwrap() {
+            for row in chunk.selected_indices() {
+                results.push(chunk.column(0).unwrap().get_int64(row).unwrap());
+            }
+        }
+
+        assert_eq!(results, vec![1, 1, 2, 3, 3]);
+    }
+
+    #[test]
+    fn test_sort_multi_key() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::String, LogicalType::Int64]);
+        let data = [("b", 2i64), ("a", 3), ("b", 1), ("a", 1)];
+        for (s, n) in data {
+            builder.column_mut(0).unwrap().push_string(s);
+            builder.column_mut(1).unwrap().push_int64(n);
+            builder.advance_row();
+        }
+        let chunk = builder.finish();
+
+        let mock = MockOperator::new(vec![chunk]);
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0), SortKey::ascending(1)],
+            vec![LogicalType::String, LogicalType::Int64],
+        );
+
+        let mut results = Vec::new();
+        while let Some(chunk) = sort.next().unwrap() {
+            for row in chunk.selected_indices() {
+                let s = chunk
+                    .column(0)
+                    .unwrap()
+                    .get_string(row)
+                    .unwrap()
+                    .to_string();
+                let n = chunk.column(1).unwrap().get_int64(row).unwrap();
+                results.push((s, n));
+            }
+        }
+
+        assert_eq!(
+            results,
+            vec![
+                ("a".to_string(), 1),
+                ("a".to_string(), 3),
+                ("b".to_string(), 1),
+                ("b".to_string(), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sort_multiple_chunks() {
+        // Two separate chunks that get merged during sort
+        let mut b1 = DataChunkBuilder::new(&[LogicalType::Int64]);
+        b1.column_mut(0).unwrap().push_int64(5);
+        b1.advance_row();
+        b1.column_mut(0).unwrap().push_int64(1);
+        b1.advance_row();
+        let chunk1 = b1.finish();
+
+        let mut b2 = DataChunkBuilder::new(&[LogicalType::Int64]);
+        b2.column_mut(0).unwrap().push_int64(3);
+        b2.advance_row();
+        b2.column_mut(0).unwrap().push_int64(2);
+        b2.advance_row();
+        let chunk2 = b2.finish();
+
+        let mock = MockOperator::new(vec![chunk1, chunk2]);
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+
+        let mut results = Vec::new();
+        while let Some(chunk) = sort.next().unwrap() {
+            for row in chunk.selected_indices() {
+                results.push(chunk.column(0).unwrap().get_int64(row).unwrap());
+            }
+        }
+
+        assert_eq!(results, vec![1, 2, 3, 5]);
+    }
+
+    #[test]
+    fn test_sort_reverse_sorted() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        for v in [4i64, 3, 2, 1] {
+            builder.column_mut(0).unwrap().push_int64(v);
+            builder.advance_row();
+        }
+        let chunk = builder.finish();
+
+        let mock = MockOperator::new(vec![chunk]);
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+
+        let mut results = Vec::new();
+        while let Some(chunk) = sort.next().unwrap() {
+            for row in chunk.selected_indices() {
+                results.push(chunk.column(0).unwrap().get_int64(row).unwrap());
+            }
+        }
+
+        assert_eq!(results, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_sort_single_row() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(42);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock = MockOperator::new(vec![chunk]);
+        let mut sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+
+        let mut count = 0;
+        while let Some(chunk) = sort.next().unwrap() {
+            for row in chunk.selected_indices() {
+                assert_eq!(chunk.column(0).unwrap().get_int64(row), Some(42));
+                count += 1;
+            }
+        }
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_sort_name() {
+        let mock = MockOperator::new(vec![]);
+        let sort = SortOperator::new(
+            Box::new(mock),
+            vec![SortKey::ascending(0)],
+            vec![LogicalType::Int64],
+        );
+        assert_eq!(sort.name(), "Sort");
+    }
 }

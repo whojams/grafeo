@@ -1669,4 +1669,111 @@ mod tests {
     fn test_error_create_missing_property() {
         parse_err("CREATE GRAPH G NODE TABLES (N (id BIGINT PRIMARY KEY))");
     }
+
+    // ==================== Additional Error Cases ====================
+
+    #[test]
+    fn test_error_unclosed_graph_table_paren() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)",
+        );
+    }
+
+    #[test]
+    fn test_error_unclosed_node_pattern() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person
+                COLUMNS (n.name AS name)
+            )",
+        );
+    }
+
+    #[test]
+    fn test_error_empty_columns_clause() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS ()
+            )",
+        );
+    }
+
+    #[test]
+    fn test_error_trailing_garbage() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)
+            ) EXTRA STUFF HERE",
+        );
+    }
+
+    #[test]
+    fn test_error_unknown_data_type() {
+        parse_err(
+            "CREATE PROPERTY GRAPH G
+             NODE TABLES (
+                 T (id UNKNOWN_TYPE PRIMARY KEY)
+             )",
+        );
+    }
+
+    #[test]
+    fn test_error_between_without_and() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.age AS age)
+            ) AS g
+            WHERE g.age BETWEEN 10",
+        );
+    }
+
+    #[test]
+    fn test_error_limit_non_integer() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)
+            ) LIMIT abc",
+        );
+    }
+
+    #[test]
+    fn test_error_order_by_missing_by() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)
+            ) ORDER name",
+        );
+    }
+
+    #[test]
+    fn test_error_edge_missing_bracket() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (a:Person)-(b:Person)
+                COLUMNS (a.name AS name)
+            )",
+        );
+    }
+
+    #[test]
+    fn test_error_select_without_from() {
+        parse_err("SELECT *");
+    }
+
+    #[test]
+    fn test_error_double_semicolon() {
+        parse_err(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)
+            );;",
+        );
+    }
 }

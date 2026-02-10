@@ -47,15 +47,16 @@ See [ARCHITECTURE.md](.claude/ARCHITECTURE.md) for the full picture. The short v
 
 | Crate | What it does |
 | ----- | ------------ |
+| `grafeo` | Top-level facade, re-exports public API |
 | `grafeo-common` | Foundation types, memory, utilities |
 | `grafeo-core` | Graph storage, indexes, execution |
-| `grafeo-adapters` | Query parsers (GQL, Cypher, SPARQL, etc.) |
+| `grafeo-adapters` | Query parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ) |
 | `grafeo-engine` | Database facade, sessions, transactions |
+| `grafeo-cli` | CLI with interactive shell |
 | `grafeo-python` | Python bindings (PyO3) |
-| `grafeo-node` | Node.js bindings (napi-rs) |
-| `grafeo-c` | C FFI layer for Go bindings |
+| `grafeo-node` | Node.js/TypeScript bindings (napi-rs) |
+| `grafeo-c` | C FFI layer (also used by Go via CGO) |
 | `grafeo-wasm` | WebAssembly bindings (wasm-bindgen) |
-| `grafeo-cli` | CLI tool |
 
 ## Code Style
 
@@ -73,6 +74,30 @@ cd crates/bindings/python
 maturin develop
 pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py
 ```
+
+## Node.js Bindings
+
+```bash
+cd crates/bindings/node
+npm install
+npm run build
+npm test
+```
+
+## Ecosystem Projects
+
+These companion projects live in separate repositories under the [GrafeoDB](https://github.com/GrafeoDB) organization:
+
+| Project | Description |
+| ------- | ----------- |
+| [grafeo-server](https://github.com/GrafeoDB/grafeo-server) | HTTP server & web UI |
+| [grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain) | LangChain graph + vector store |
+| [grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex) | LlamaIndex PropertyGraphStore |
+| [grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp) | MCP server for LLM agents |
+| [grafeo-web](https://github.com/GrafeoDB/grafeo-web) | Browser-based Grafeo (WASM) |
+| [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) | Graph visualization widget |
+| [anywidget-vector](https://github.com/GrafeoDB/anywidget-vector) | Vector visualization widget |
+| [graph-bench](https://github.com/GrafeoDB/graph-bench) | Benchmark suite |
 
 ## Pre-commit Hooks (Optional)
 

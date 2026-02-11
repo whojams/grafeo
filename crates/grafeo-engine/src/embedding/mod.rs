@@ -32,7 +32,7 @@ use grafeo_common::utils::error::Result;
 pub trait EmbeddingModel: Send + Sync {
     /// Generates embeddings for a batch of texts.
     ///
-    /// Returns one vector per input text, each with [`dimensions()`] elements.
+    /// Returns one vector per input text, each with [`EmbeddingModel::dimensions()`] elements.
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
 
     /// Returns the dimensionality of the embedding vectors.

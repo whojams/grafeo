@@ -225,12 +225,6 @@ impl WriteTracker {
         }
         None
     }
-
-    /// Clears all writes.
-    #[allow(dead_code)]
-    fn clear(&self) {
-        self.writes.write().clear();
-    }
 }
 
 /// Block-STM inspired parallel transaction executor.

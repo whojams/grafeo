@@ -63,17 +63,25 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! let tx = session.begin_transaction()?;
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use grafeo_engine::GrafeoDB;
+//!
+//! let db = GrafeoDB::new_in_memory();
+//! let mut session = db.session();
+//!
+//! session.begin_tx()?;
 //!
 //! // All reads see a consistent snapshot
 //! let result = session.execute("MATCH (n:Person) RETURN n")?;
 //!
 //! // Writes are isolated until commit
-//! session.execute("CREATE (n:Person {name: 'Alice'})")?;
+//! session.execute("INSERT (:Person {name: 'Alice'})")?;
 //!
 //! // Commit may fail if write-write conflict detected
 //! session.commit()?;
+//! # Ok(())
+//! # }
 //! ```
 
 mod manager;

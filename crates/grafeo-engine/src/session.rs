@@ -53,33 +53,12 @@ pub struct Session {
     commit_counter: Arc<AtomicUsize>,
     /// GC every N commits (0 = disabled).
     gc_interval: usize,
+    /// CDC log for change tracking.
+    #[cfg(feature = "cdc")]
+    cdc_log: Arc<crate::cdc::CdcLog>,
 }
 
 impl Session {
-    /// Creates a new session.
-    #[allow(dead_code)]
-    pub(crate) fn new(
-        store: Arc<LpgStore>,
-        tx_manager: Arc<TransactionManager>,
-        query_cache: Arc<QueryCache>,
-    ) -> Self {
-        Self {
-            store,
-            #[cfg(feature = "rdf")]
-            rdf_store: Arc::new(RdfStore::new()),
-            tx_manager,
-            query_cache,
-            current_tx: None,
-            auto_commit: true,
-            adaptive_config: AdaptiveConfig::default(),
-            factorized_execution: true,
-            graph_model: GraphModel::Lpg,
-            query_timeout: None,
-            commit_counter: Arc::new(AtomicUsize::new(0)),
-            gc_interval: 0,
-        }
-    }
-
     /// Creates a new session with adaptive execution configuration.
     #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn with_adaptive(
@@ -107,7 +86,15 @@ impl Session {
             query_timeout,
             commit_counter,
             gc_interval,
+            #[cfg(feature = "cdc")]
+            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
         }
+    }
+
+    /// Sets the CDC log for this session (shared with the database).
+    #[cfg(feature = "cdc")]
+    pub(crate) fn set_cdc_log(&mut self, cdc_log: Arc<crate::cdc::CdcLog>) {
+        self.cdc_log = cdc_log;
     }
 
     /// Creates a new session with RDF store and adaptive configuration.
@@ -138,6 +125,8 @@ impl Session {
             query_timeout,
             commit_counter,
             gc_interval,
+            #[cfg(feature = "cdc")]
+            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
         }
     }
 
@@ -165,7 +154,8 @@ impl Session {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
@@ -176,9 +166,11 @@ impl Session {
     ///
     /// // Query nodes
     /// let result = session.execute("MATCH (n:Person) RETURN n.name, n.age")?;
-    /// for row in result {
+    /// for row in &result.rows {
     ///     println!("{:?}", row);
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "gql")]
     pub fn execute(&self, query: &str) -> Result<QueryResult> {
@@ -369,7 +361,8 @@ impl Session {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
@@ -380,6 +373,8 @@ impl Session {
     ///
     /// // Query using Gremlin
     /// let result = session.execute_gremlin("g.V().hasLabel('Person')")?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "gremlin")]
     pub fn execute_gremlin(&self, query: &str) -> Result<QueryResult> {
@@ -455,7 +450,8 @@ impl Session {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
@@ -466,6 +462,8 @@ impl Session {
     ///
     /// // Query using GraphQL
     /// let result = session.execute_graphql("query { user { id name } }")?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "graphql")]
     pub fn execute_graphql(&self, query: &str) -> Result<QueryResult> {
@@ -541,7 +539,8 @@ impl Session {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
@@ -553,6 +552,8 @@ impl Session {
     ///         COLUMNS (n.name AS name)
     ///     )"
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "sql-pgq")]
     pub fn execute_sql(&self, query: &str) -> Result<QueryResult> {
@@ -702,7 +703,8 @@ impl Session {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
@@ -712,6 +714,8 @@ impl Session {
     /// session.execute("INSERT (:Person {name: 'Alice'})")?;
     /// session.execute("INSERT (:Person {name: 'Bob'})")?;
     /// session.commit()?; // Both inserts committed atomically
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn begin_tx(&mut self) -> Result<()> {
         if self.current_tx.is_some() {
@@ -796,7 +800,8 @@ impl Session {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
@@ -805,6 +810,8 @@ impl Session {
     /// session.begin_tx()?;
     /// session.execute("INSERT (:Person {name: 'Alice'})")?;
     /// session.rollback()?; // Insert is discarded
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn rollback(&mut self) -> Result<()> {
         let tx_id = self.current_tx.take().ok_or_else(|| {
@@ -928,7 +935,9 @@ impl Session {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_engine::GrafeoDB;
+    /// # let db = GrafeoDB::new_in_memory();
     /// let session = db.session();
     /// let node_id = session.create_node(&["Person"]);
     ///
@@ -955,7 +964,10 @@ impl Session {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_engine::GrafeoDB;
+    /// # use grafeo_common::types::Value;
+    /// # let db = GrafeoDB::new_in_memory();
     /// let session = db.session();
     /// let id = session.create_node_with_props(&["Person"], [("name", "Alice".into())]);
     ///
@@ -994,7 +1006,9 @@ impl Session {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_engine::GrafeoDB;
+    /// # let db = GrafeoDB::new_in_memory();
     /// let session = db.session();
     /// let alice = session.create_node(&["Person"]);
     /// let bob = session.create_node(&["Person"]);
@@ -1027,7 +1041,11 @@ impl Session {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_engine::GrafeoDB;
+    /// # let db = GrafeoDB::new_in_memory();
+    /// # let session = db.session();
+    /// # let alice = session.create_node(&["Person"]);
     /// let neighbors = session.get_neighbors_outgoing_by_type(alice, "KNOWS");
     /// ```
     #[must_use]
@@ -1088,6 +1106,37 @@ impl Session {
         ids.iter()
             .map(|&id| self.store.get_node_versioned(id, epoch, tx))
             .collect()
+    }
+
+    // ── Change Data Capture ─────────────────────────────────────────────
+
+    /// Returns the full change history for an entity (node or edge).
+    #[cfg(feature = "cdc")]
+    pub fn history(
+        &self,
+        entity_id: impl Into<crate::cdc::EntityId>,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.history(entity_id.into()))
+    }
+
+    /// Returns change events for an entity since the given epoch.
+    #[cfg(feature = "cdc")]
+    pub fn history_since(
+        &self,
+        entity_id: impl Into<crate::cdc::EntityId>,
+        since_epoch: EpochId,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.history_since(entity_id.into(), since_epoch))
+    }
+
+    /// Returns all change events across all entities in an epoch range.
+    #[cfg(feature = "cdc")]
+    pub fn changes_between(
+        &self,
+        start_epoch: EpochId,
+        end_epoch: EpochId,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.changes_between(start_epoch, end_epoch))
     }
 }
 

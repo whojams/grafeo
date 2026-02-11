@@ -9,10 +9,6 @@ import pytest
 from tests.python.bases.test_filters import BaseFilterAndLookupTest
 
 
-# Skip Gremlin filter tests until Gremlin support is more complete
-pytestmark = pytest.mark.skip(reason="Gremlin filter syntax not yet fully implemented")
-
-
 class TestGremlinFilters(BaseFilterAndLookupTest):
     """Gremlin implementation of filter and lookup tests."""
 

@@ -356,6 +356,7 @@ nav:
       - grafeo-langchain: ecosystem/grafeo-langchain.md
       - grafeo-llamaindex: ecosystem/grafeo-llamaindex.md
       - grafeo-mcp: ecosystem/grafeo-mcp.md
+      - grafeo-memory: ecosystem/grafeo-memory.md
       - Interactive Demo: ecosystem/interactive-demo.md
       - Performance Baselines: ecosystem/performance.md
       - graph-bench: ecosystem/graph-bench.md

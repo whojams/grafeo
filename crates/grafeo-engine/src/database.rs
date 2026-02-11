@@ -67,6 +67,12 @@ pub struct GrafeoDB {
     commit_counter: Arc<AtomicUsize>,
     /// Whether the database is open.
     is_open: RwLock<bool>,
+    /// Change data capture log for tracking mutations.
+    #[cfg(feature = "cdc")]
+    cdc_log: Arc<crate::cdc::CdcLog>,
+    /// Registered embedding models for text-to-vector conversion.
+    #[cfg(feature = "embed")]
+    embedding_models: RwLock<hashbrown::HashMap<String, Arc<dyn crate::embedding::EmbeddingModel>>>,
 }
 
 impl GrafeoDB {
@@ -219,6 +225,10 @@ impl GrafeoDB {
             query_cache,
             commit_counter: Arc::new(AtomicUsize::new(0)),
             is_open: RwLock::new(true),
+            #[cfg(feature = "cdc")]
+            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
+            #[cfg(feature = "embed")]
+            embedding_models: RwLock::new(hashbrown::HashMap::new()),
         })
     }
 
@@ -289,34 +299,38 @@ impl GrafeoDB {
     #[must_use]
     pub fn session(&self) -> Session {
         #[cfg(feature = "rdf")]
-        {
-            Session::with_rdf_store_and_adaptive(
-                Arc::clone(&self.store),
-                Arc::clone(&self.rdf_store),
-                Arc::clone(&self.tx_manager),
-                Arc::clone(&self.query_cache),
-                self.config.adaptive.clone(),
-                self.config.factorized_execution,
-                self.config.graph_model,
-                self.config.query_timeout,
-                Arc::clone(&self.commit_counter),
-                self.config.gc_interval,
-            )
-        }
+        let mut session = Session::with_rdf_store_and_adaptive(
+            Arc::clone(&self.store),
+            Arc::clone(&self.rdf_store),
+            Arc::clone(&self.tx_manager),
+            Arc::clone(&self.query_cache),
+            self.config.adaptive.clone(),
+            self.config.factorized_execution,
+            self.config.graph_model,
+            self.config.query_timeout,
+            Arc::clone(&self.commit_counter),
+            self.config.gc_interval,
+        );
         #[cfg(not(feature = "rdf"))]
-        {
-            Session::with_adaptive(
-                Arc::clone(&self.store),
-                Arc::clone(&self.tx_manager),
-                Arc::clone(&self.query_cache),
-                self.config.adaptive.clone(),
-                self.config.factorized_execution,
-                self.config.graph_model,
-                self.config.query_timeout,
-                Arc::clone(&self.commit_counter),
-                self.config.gc_interval,
-            )
-        }
+        let mut session = Session::with_adaptive(
+            Arc::clone(&self.store),
+            Arc::clone(&self.tx_manager),
+            Arc::clone(&self.query_cache),
+            self.config.adaptive.clone(),
+            self.config.factorized_execution,
+            self.config.graph_model,
+            self.config.query_timeout,
+            Arc::clone(&self.commit_counter),
+            self.config.gc_interval,
+        );
+
+        #[cfg(feature = "cdc")]
+        session.set_cdc_log(Arc::clone(&self.cdc_log));
+
+        // Suppress unused_mut when cdc is disabled
+        let _ = &mut session;
+
+        session
     }
 
     /// Returns the adaptive execution configuration.
@@ -473,11 +487,14 @@ impl GrafeoDB {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
     /// let result = db.execute_sparql("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     pub fn execute_sparql(&self, query: &str) -> Result<QueryResult> {
@@ -677,6 +694,10 @@ impl GrafeoDB {
             tracing::warn!("Failed to log CreateNode to WAL: {}", e);
         }
 
+        #[cfg(feature = "cdc")]
+        self.cdc_log
+            .record_create_node(id, self.store.current_epoch(), None);
+
         id
     }
 
@@ -706,6 +727,13 @@ impl GrafeoDB {
             .store
             .create_node_with_props(labels, props.iter().map(|(k, v)| (k.clone(), v.clone())));
 
+        // Build CDC snapshot before WAL consumes props
+        #[cfg(feature = "cdc")]
+        let cdc_props: std::collections::HashMap<String, grafeo_common::types::Value> = props
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+
         // Log node creation to WAL
         #[cfg(feature = "wal")]
         {
@@ -728,6 +756,32 @@ impl GrafeoDB {
             }
         }
 
+        #[cfg(feature = "cdc")]
+        self.cdc_log.record_create_node(
+            id,
+            self.store.current_epoch(),
+            if cdc_props.is_empty() {
+                None
+            } else {
+                Some(cdc_props)
+            },
+        );
+
+        // Auto-insert into matching text indexes for the new node
+        #[cfg(feature = "text-index")]
+        if let Some(node) = self.store.get_node(id) {
+            for label in &node.labels {
+                for (prop_key, prop_val) in &node.properties {
+                    if let grafeo_common::types::Value::String(text) = prop_val
+                        && let Some(index) =
+                            self.store.get_text_index(label.as_str(), prop_key.as_ref())
+                    {
+                        index.write().insert(id, text);
+                    }
+                }
+            }
+        }
+
         id
     }
 
@@ -744,6 +798,15 @@ impl GrafeoDB {
     ///
     /// If WAL is enabled, the operation is logged for durability.
     pub fn delete_node(&self, id: grafeo_common::types::NodeId) -> bool {
+        // Capture properties for CDC before deletion
+        #[cfg(feature = "cdc")]
+        let cdc_props = self.store.get_node(id).map(|node| {
+            node.properties
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect::<std::collections::HashMap<String, grafeo_common::types::Value>>()
+        });
+
         // Collect matching vector indexes BEFORE deletion removes labels
         #[cfg(feature = "vector-index")]
         let indexes_to_clean: Vec<std::sync::Arc<grafeo_core::index::vector::HnswIndex>> = self
@@ -763,6 +826,27 @@ impl GrafeoDB {
             })
             .unwrap_or_default();
 
+        // Collect matching text indexes BEFORE deletion removes labels
+        #[cfg(feature = "text-index")]
+        let text_indexes_to_clean: Vec<
+            std::sync::Arc<parking_lot::RwLock<grafeo_core::index::text::InvertedIndex>>,
+        > = self
+            .store
+            .get_node(id)
+            .map(|node| {
+                let mut indexes = Vec::new();
+                for label in &node.labels {
+                    let prefix = format!("{}:", label.as_str());
+                    for (key, index) in self.store.text_index_entries() {
+                        if key.starts_with(&prefix) {
+                            indexes.push(index);
+                        }
+                    }
+                }
+                indexes
+            })
+            .unwrap_or_default();
+
         let result = self.store.delete_node(id);
 
         // Remove from vector indexes after successful deletion
@@ -773,9 +857,26 @@ impl GrafeoDB {
             }
         }
 
+        // Remove from text indexes after successful deletion
+        #[cfg(feature = "text-index")]
+        if result {
+            for index in text_indexes_to_clean {
+                index.write().remove(id);
+            }
+        }
+
         #[cfg(feature = "wal")]
         if result && let Err(e) = self.log_wal(&WalRecord::DeleteNode { id }) {
             tracing::warn!("Failed to log DeleteNode to WAL: {}", e);
+        }
+
+        #[cfg(feature = "cdc")]
+        if result {
+            self.cdc_log.record_delete(
+                crate::cdc::EntityId::Node(id),
+                self.store.current_epoch(),
+                cdc_props,
+            );
         }
 
         result
@@ -807,7 +908,24 @@ impl GrafeoDB {
             tracing::warn!("Failed to log SetNodeProperty to WAL: {}", e);
         }
 
+        // Capture old value for CDC before the store write
+        #[cfg(feature = "cdc")]
+        let cdc_old_value = self
+            .store
+            .get_node_property(id, &grafeo_common::types::PropertyKey::new(key));
+        #[cfg(feature = "cdc")]
+        let cdc_new_value = value.clone();
+
         self.store.set_node_property(id, key, value);
+
+        #[cfg(feature = "cdc")]
+        self.cdc_log.record_update(
+            crate::cdc::EntityId::Node(id),
+            self.store.current_epoch(),
+            key,
+            cdc_old_value,
+            cdc_new_value,
+        );
 
         // Auto-insert into matching vector indexes
         #[cfg(feature = "vector-index")]
@@ -819,6 +937,28 @@ impl GrafeoDB {
                     let accessor =
                         grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, key);
                     index.insert(id, &vec, &accessor);
+                }
+            }
+        }
+
+        // Auto-update matching text indexes
+        #[cfg(feature = "text-index")]
+        if let Some(node) = self.store.get_node(id) {
+            let text_val = node
+                .properties
+                .get(&grafeo_common::types::PropertyKey::new(key))
+                .and_then(|v| match v {
+                    grafeo_common::types::Value::String(s) => Some(s.to_string()),
+                    _ => None,
+                });
+            for label in &node.labels {
+                if let Some(index) = self.store.get_text_index(label.as_str(), key) {
+                    let mut idx = index.write();
+                    if let Some(ref text) = text_val {
+                        idx.insert(id, text);
+                    } else {
+                        idx.remove(id);
+                    }
                 }
             }
         }
@@ -873,6 +1013,18 @@ impl GrafeoDB {
                         );
                         index.insert(id, v, &accessor);
                     }
+                }
+            }
+        }
+
+        // Auto-insert into text indexes for the newly-added label
+        #[cfg(feature = "text-index")]
+        if result && let Some(node) = self.store.get_node(id) {
+            for (prop_key, prop_val) in &node.properties {
+                if let grafeo_common::types::Value::String(text) = prop_val
+                    && let Some(index) = self.store.get_text_index(label, prop_key.as_ref())
+                {
+                    index.write().insert(id, text);
                 }
             }
         }
@@ -975,6 +1127,10 @@ impl GrafeoDB {
             tracing::warn!("Failed to log CreateEdge to WAL: {}", e);
         }
 
+        #[cfg(feature = "cdc")]
+        self.cdc_log
+            .record_create_edge(id, self.store.current_epoch(), None);
+
         id
     }
 
@@ -1009,6 +1165,13 @@ impl GrafeoDB {
             props.iter().map(|(k, v)| (k.clone(), v.clone())),
         );
 
+        // Build CDC snapshot before WAL consumes props
+        #[cfg(feature = "cdc")]
+        let cdc_props: std::collections::HashMap<String, grafeo_common::types::Value> = props
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+
         // Log edge creation to WAL
         #[cfg(feature = "wal")]
         {
@@ -1033,6 +1196,17 @@ impl GrafeoDB {
             }
         }
 
+        #[cfg(feature = "cdc")]
+        self.cdc_log.record_create_edge(
+            id,
+            self.store.current_epoch(),
+            if cdc_props.is_empty() {
+                None
+            } else {
+                Some(cdc_props)
+            },
+        );
+
         id
     }
 
@@ -1049,11 +1223,29 @@ impl GrafeoDB {
     ///
     /// If WAL is enabled, the operation is logged for durability.
     pub fn delete_edge(&self, id: grafeo_common::types::EdgeId) -> bool {
+        // Capture properties for CDC before deletion
+        #[cfg(feature = "cdc")]
+        let cdc_props = self.store.get_edge(id).map(|edge| {
+            edge.properties
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect::<std::collections::HashMap<String, grafeo_common::types::Value>>()
+        });
+
         let result = self.store.delete_edge(id);
 
         #[cfg(feature = "wal")]
         if result && let Err(e) = self.log_wal(&WalRecord::DeleteEdge { id }) {
             tracing::warn!("Failed to log DeleteEdge to WAL: {}", e);
+        }
+
+        #[cfg(feature = "cdc")]
+        if result {
+            self.cdc_log.record_delete(
+                crate::cdc::EntityId::Edge(id),
+                self.store.current_epoch(),
+                cdc_props,
+            );
         }
 
         result
@@ -1077,7 +1269,25 @@ impl GrafeoDB {
         }) {
             tracing::warn!("Failed to log SetEdgeProperty to WAL: {}", e);
         }
+
+        // Capture old value for CDC before the store write
+        #[cfg(feature = "cdc")]
+        let cdc_old_value = self
+            .store
+            .get_edge_property(id, &grafeo_common::types::PropertyKey::new(key));
+        #[cfg(feature = "cdc")]
+        let cdc_new_value = value.clone();
+
         self.store.set_edge_property(id, key, value);
+
+        #[cfg(feature = "cdc")]
+        self.cdc_log.record_update(
+            crate::cdc::EntityId::Edge(id),
+            self.store.current_epoch(),
+            key,
+            cdc_old_value,
+            cdc_new_value,
+        );
     }
 
     /// Removes a property from a node.
@@ -1108,7 +1318,10 @@ impl GrafeoDB {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_engine::GrafeoDB;
+    /// # use grafeo_common::types::Value;
+    /// # let db = GrafeoDB::new_in_memory();
     /// // Create an index on the 'email' property
     /// db.create_property_index("email");
     ///
@@ -1188,13 +1401,39 @@ impl GrafeoDB {
             }
         }
 
-        if vector_count == 0 {
-            return Err(grafeo_common::utils::error::Error::Internal(format!(
-                "No vector properties found on :{label}({property})"
-            )));
-        }
+        let Some(dims) = found_dims else {
+            // No vectors found yet — caller must have supplied explicit dimensions
+            // so we can create an empty index that auto-populates via set_node_property.
+            return if let Some(d) = dimensions {
+                #[cfg(feature = "vector-index")]
+                {
+                    use grafeo_core::index::vector::{HnswConfig, HnswIndex};
 
-        let dims = found_dims.unwrap_or(0);
+                    let mut config = HnswConfig::new(d, metric);
+                    if let Some(m_val) = m {
+                        config = config.with_m(m_val);
+                    }
+                    if let Some(ef_c) = ef_construction {
+                        config = config.with_ef_construction(ef_c);
+                    }
+
+                    let index = HnswIndex::new(config);
+                    self.store
+                        .add_vector_index(label, property, Arc::new(index));
+                }
+
+                let _ = (m, ef_construction);
+                tracing::info!(
+                    "Empty vector index created: :{label}({property}) - 0 vectors, {d} dimensions, metric={metric_name}",
+                    metric_name = metric.name()
+                );
+                Ok(())
+            } else {
+                Err(grafeo_common::utils::error::Error::Internal(format!(
+                    "No vector properties found on :{label}({property}) and no dimensions specified"
+                )))
+            };
+        };
 
         // Build and populate the HNSW index
         #[cfg(feature = "vector-index")]
@@ -1281,11 +1520,13 @@ impl GrafeoDB {
         )
     }
 
-    /// Computes a node allowlist from property equality filters.
+    /// Computes a node allowlist from property filters.
     ///
-    /// Intersects `nodes_by_label(label)` with `find_nodes_by_property(key, value)`
-    /// for each filter entry. Returns `None` if filters is `None` or empty (meaning
-    /// no filtering), or `Some(set)` with the intersection (possibly empty).
+    /// Supports equality filters (scalar values) and operator filters (Map values
+    /// with `$`-prefixed keys like `$gt`, `$lt`, `$in`, `$contains`).
+    ///
+    /// Returns `None` if filters is `None` or empty (meaning no filtering),
+    /// or `Some(set)` with the intersection (possibly empty).
     #[cfg(feature = "vector-index")]
     fn compute_filter_allowlist(
         &self,
@@ -1300,12 +1541,23 @@ impl GrafeoDB {
 
         let mut allowlist = label_nodes;
 
-        for (key, value) in filters {
-            let matching: std::collections::HashSet<NodeId> = self
-                .store
-                .find_nodes_by_property(key, value)
-                .into_iter()
-                .collect();
+        for (key, filter_value) in filters {
+            // Check if this is an operator filter (Map with $-prefixed keys)
+            let is_operator_filter = matches!(filter_value, Value::Map(ops) if ops.keys().any(|k| k.as_str().starts_with('$')));
+
+            let matching: std::collections::HashSet<NodeId> = if is_operator_filter {
+                // Operator filter: must scan nodes and check each
+                self.store
+                    .find_nodes_matching_filter(key, filter_value)
+                    .into_iter()
+                    .collect()
+            } else {
+                // Equality filter: use indexed lookup when available
+                self.store
+                    .find_nodes_by_property(key, filter_value)
+                    .into_iter()
+                    .collect()
+            };
             allowlist = allowlist.intersection(&matching).copied().collect();
 
             // Short-circuit: empty intersection means no results possible
@@ -1577,6 +1829,254 @@ impl GrafeoDB {
         Ok(mmr_select(query, &candidate_refs, k, lambda, metric))
     }
 
+    // ── Text Search ──────────────────────────────────────────────────────
+
+    /// Creates a BM25 text index on a node property for full-text search.
+    ///
+    /// Indexes all existing nodes with the given label and property.
+    /// New mutations to indexed properties are **not** automatically tracked;
+    /// call [`rebuild_text_index`](Self::rebuild_text_index) after bulk updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the label has no nodes or the property contains no text values.
+    #[cfg(feature = "text-index")]
+    pub fn create_text_index(&self, label: &str, property: &str) -> Result<()> {
+        use grafeo_common::types::PropertyKey;
+        use grafeo_core::index::text::{BM25Config, InvertedIndex};
+
+        let mut index = InvertedIndex::new(BM25Config::default());
+        let prop_key = PropertyKey::new(property);
+
+        // Index all existing nodes with this label + property
+        let nodes = self.store.nodes_by_label(label);
+        for node_id in nodes {
+            if let Some(Value::String(text)) = self.store.get_node_property(node_id, &prop_key) {
+                index.insert(node_id, text.as_str());
+            }
+        }
+
+        self.store
+            .add_text_index(label, property, Arc::new(RwLock::new(index)));
+        Ok(())
+    }
+
+    /// Drops a text index on a label+property pair.
+    ///
+    /// Returns `true` if the index existed and was removed.
+    #[cfg(feature = "text-index")]
+    pub fn drop_text_index(&self, label: &str, property: &str) -> bool {
+        self.store.remove_text_index(label, property)
+    }
+
+    /// Rebuilds a text index by re-scanning all matching nodes.
+    ///
+    /// Use after bulk property updates to keep the index current.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no text index exists for this label+property.
+    #[cfg(feature = "text-index")]
+    pub fn rebuild_text_index(&self, label: &str, property: &str) -> Result<()> {
+        self.store.remove_text_index(label, property);
+        self.create_text_index(label, property)
+    }
+
+    /// Searches a text index using BM25 scoring.
+    ///
+    /// Returns up to `k` results as `(NodeId, score)` pairs sorted by
+    /// descending relevance score.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no text index exists for this label+property.
+    #[cfg(feature = "text-index")]
+    pub fn text_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        let index = self.store.get_text_index(label, property).ok_or_else(|| {
+            Error::Internal(format!(
+                "No text index found for :{label}({property}). Call create_text_index() first."
+            ))
+        })?;
+
+        Ok(index.read().search(query, k))
+    }
+
+    /// Performs hybrid search combining text (BM25) and vector similarity.
+    ///
+    /// Runs both text search and vector search, then fuses results using
+    /// the specified method (default: Reciprocal Rank Fusion).
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Node label to search within
+    /// * `text_property` - Property indexed for text search
+    /// * `vector_property` - Property indexed for vector search
+    /// * `query_text` - Text query for BM25 search
+    /// * `query_vector` - Vector query for similarity search (optional)
+    /// * `k` - Number of results to return
+    /// * `fusion` - Score fusion method (default: RRF with k=60)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the required indexes don't exist.
+    #[cfg(feature = "hybrid-search")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn hybrid_search(
+        &self,
+        label: &str,
+        text_property: &str,
+        vector_property: &str,
+        query_text: &str,
+        query_vector: Option<&[f32]>,
+        k: usize,
+        fusion: Option<grafeo_core::index::text::FusionMethod>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        use grafeo_core::index::text::fuse_results;
+
+        let fusion_method = fusion.unwrap_or_default();
+        let mut sources: Vec<Vec<(NodeId, f64)>> = Vec::new();
+
+        // Text search
+        if let Some(text_index) = self.store.get_text_index(label, text_property) {
+            let text_results = text_index.read().search(query_text, k * 2);
+            if !text_results.is_empty() {
+                sources.push(text_results);
+            }
+        }
+
+        // Vector search (if query vector provided)
+        if let Some(query_vec) = query_vector
+            && let Some(vector_index) = self.store.get_vector_index(label, vector_property)
+        {
+            let accessor = grafeo_core::index::vector::PropertyVectorAccessor::new(
+                &self.store,
+                vector_property,
+            );
+            let vector_results = vector_index.search(query_vec, k * 2, &accessor);
+            if !vector_results.is_empty() {
+                sources.push(
+                    vector_results
+                        .into_iter()
+                        .map(|(id, dist)| (id, f64::from(dist)))
+                        .collect(),
+                );
+            }
+        }
+
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        Ok(fuse_results(&sources, &fusion_method, k))
+    }
+
+    // ── Embedding ────────────────────────────────────────────────────────
+
+    /// Registers an embedding model for text-to-vector conversion.
+    ///
+    /// Once registered, you can use [`embed_text()`](Self::embed_text) and
+    /// [`vector_search_text()`](Self::vector_search_text) with the model name.
+    #[cfg(feature = "embed")]
+    pub fn register_embedding_model(
+        &self,
+        name: &str,
+        model: Arc<dyn crate::embedding::EmbeddingModel>,
+    ) {
+        self.embedding_models
+            .write()
+            .insert(name.to_string(), model);
+    }
+
+    /// Generates embeddings for a batch of texts using a registered model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model is not registered or embedding fails.
+    #[cfg(feature = "embed")]
+    pub fn embed_text(&self, model_name: &str, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let models = self.embedding_models.read();
+        let model = models.get(model_name).ok_or_else(|| {
+            grafeo_common::utils::error::Error::Internal(format!(
+                "Embedding model '{}' not registered",
+                model_name
+            ))
+        })?;
+        model.embed(texts)
+    }
+
+    /// Searches a vector index using a text query, generating the embedding on-the-fly.
+    ///
+    /// This combines [`embed_text()`](Self::embed_text) with
+    /// [`vector_search()`](Self::vector_search) in a single call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model is not registered, embedding fails,
+    /// or the vector index doesn't exist.
+    #[cfg(all(feature = "embed", feature = "vector-index"))]
+    pub fn vector_search_text(
+        &self,
+        label: &str,
+        property: &str,
+        model_name: &str,
+        query_text: &str,
+        k: usize,
+        ef: Option<usize>,
+    ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
+        let vectors = self.embed_text(model_name, &[query_text])?;
+        let query_vec = vectors.into_iter().next().ok_or_else(|| {
+            grafeo_common::utils::error::Error::Internal(
+                "Embedding model returned no vectors".to_string(),
+            )
+        })?;
+        self.vector_search(label, property, &query_vec, k, ef, None)
+    }
+
+    // ── Change Data Capture ─────────────────────────────────────────────
+
+    /// Returns the full change history for an entity (node or edge).
+    ///
+    /// Events are ordered chronologically by epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the CDC feature is not enabled.
+    #[cfg(feature = "cdc")]
+    pub fn history(
+        &self,
+        entity_id: impl Into<crate::cdc::EntityId>,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.history(entity_id.into()))
+    }
+
+    /// Returns change events for an entity since the given epoch.
+    #[cfg(feature = "cdc")]
+    pub fn history_since(
+        &self,
+        entity_id: impl Into<crate::cdc::EntityId>,
+        since_epoch: grafeo_common::types::EpochId,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.history_since(entity_id.into(), since_epoch))
+    }
+
+    /// Returns all change events across all entities in an epoch range.
+    #[cfg(feature = "cdc")]
+    pub fn changes_between(
+        &self,
+        start_epoch: grafeo_common::types::EpochId,
+        end_epoch: grafeo_common::types::EpochId,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.changes_between(start_epoch, end_epoch))
+    }
+
+    // ── Property Indexes ────────────────────────────────────────────────
+
     /// Drops an index on a node property.
     ///
     /// Returns `true` if the index existed and was removed.
@@ -1597,7 +2097,10 @@ impl GrafeoDB {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_engine::GrafeoDB;
+    /// # use grafeo_common::types::Value;
+    /// # let db = GrafeoDB::new_in_memory();
     /// // Create index for fast lookups (optional but recommended)
     /// db.create_property_index("city");
     ///
@@ -2584,6 +3087,88 @@ mod tests {
             assert!(result.execution_time_ms.is_some());
             assert!(result.rows_scanned.is_some());
             assert_eq!(result.rows_scanned.unwrap(), 0);
+        }
+    }
+
+    #[cfg(feature = "cdc")]
+    mod cdc_integration {
+        use super::*;
+
+        #[test]
+        fn test_node_lifecycle_history() {
+            let db = GrafeoDB::new_in_memory();
+
+            // Create
+            let id = db.create_node(&["Person"]);
+            // Update
+            db.set_node_property(id, "name", "Alice".into());
+            db.set_node_property(id, "name", "Bob".into());
+            // Delete
+            db.delete_node(id);
+
+            let history = db.history(id).unwrap();
+            assert_eq!(history.len(), 4); // create + 2 updates + delete
+            assert_eq!(history[0].kind, crate::cdc::ChangeKind::Create);
+            assert_eq!(history[1].kind, crate::cdc::ChangeKind::Update);
+            assert!(history[1].before.is_none()); // first set_node_property has no prior value
+            assert_eq!(history[2].kind, crate::cdc::ChangeKind::Update);
+            assert!(history[2].before.is_some()); // second update has prior "Alice"
+            assert_eq!(history[3].kind, crate::cdc::ChangeKind::Delete);
+        }
+
+        #[test]
+        fn test_edge_lifecycle_history() {
+            let db = GrafeoDB::new_in_memory();
+
+            let alice = db.create_node(&["Person"]);
+            let bob = db.create_node(&["Person"]);
+            let edge = db.create_edge(alice, bob, "KNOWS");
+            db.set_edge_property(edge, "since", 2024i64.into());
+            db.delete_edge(edge);
+
+            let history = db.history(edge).unwrap();
+            assert_eq!(history.len(), 3); // create + update + delete
+            assert_eq!(history[0].kind, crate::cdc::ChangeKind::Create);
+            assert_eq!(history[1].kind, crate::cdc::ChangeKind::Update);
+            assert_eq!(history[2].kind, crate::cdc::ChangeKind::Delete);
+        }
+
+        #[test]
+        fn test_create_node_with_props_cdc() {
+            let db = GrafeoDB::new_in_memory();
+
+            let id = db.create_node_with_props(
+                &["Person"],
+                vec![
+                    ("name", grafeo_common::types::Value::from("Alice")),
+                    ("age", grafeo_common::types::Value::from(30i64)),
+                ],
+            );
+
+            let history = db.history(id).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].kind, crate::cdc::ChangeKind::Create);
+            // Props should be captured
+            let after = history[0].after.as_ref().unwrap();
+            assert_eq!(after.len(), 2);
+        }
+
+        #[test]
+        fn test_changes_between() {
+            let db = GrafeoDB::new_in_memory();
+
+            let id1 = db.create_node(&["A"]);
+            let _id2 = db.create_node(&["B"]);
+            db.set_node_property(id1, "x", 1i64.into());
+
+            // All events should be at the same epoch (in-memory, epoch doesn't advance without tx)
+            let changes = db
+                .changes_between(
+                    grafeo_common::types::EpochId(0),
+                    grafeo_common::types::EpochId(u64::MAX),
+                )
+                .unwrap();
+            assert_eq!(changes.len(), 3); // 2 creates + 1 update
         }
     }
 }

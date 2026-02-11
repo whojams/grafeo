@@ -1072,6 +1072,247 @@ impl PyGrafeoDB {
             .collect())
     }
 
+    // ── Text Search ──────────────────────────────────────────────
+
+    /// Create a BM25 text index on a node property for full-text search.
+    ///
+    /// Indexes all existing nodes with the given label and text property.
+    ///
+    /// Args:
+    ///     label: Node label to index
+    ///     property: Text property to index
+    ///
+    /// Example:
+    ///     db.create_node(['Article'], {'title': 'Graph Databases'})
+    ///     db.create_text_index("Article", "title")
+    #[cfg(feature = "text-index")]
+    fn create_text_index(&self, label: &str, property: &str) -> PyResult<()> {
+        let db = self.inner.read();
+        db.create_text_index(label, property)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Drop a text index for the given label and property.
+    ///
+    /// Returns True if the index existed and was removed.
+    ///
+    /// Args:
+    ///     label: Node label of the index
+    ///     property: Property name of the index
+    #[cfg(feature = "text-index")]
+    fn drop_text_index(&self, label: &str, property: &str) -> bool {
+        let db = self.inner.read();
+        db.drop_text_index(label, property)
+    }
+
+    /// Rebuild a text index by rescanning all matching nodes.
+    ///
+    /// Args:
+    ///     label: Node label of the index
+    ///     property: Property name of the index
+    #[cfg(feature = "text-index")]
+    fn rebuild_text_index(&self, label: &str, property: &str) -> PyResult<()> {
+        let db = self.inner.read();
+        db.rebuild_text_index(label, property)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Search a text index using BM25 scoring.
+    ///
+    /// Returns up to k results as (node_id, score) tuples sorted by
+    /// descending relevance.
+    ///
+    /// Args:
+    ///     label: Node label that was indexed
+    ///     property: Property that was indexed
+    ///     query: Text query string
+    ///     k: Number of results to return
+    ///
+    /// Returns:
+    ///     List of (node_id, score) tuples.
+    ///
+    /// Example:
+    ///     results = db.text_search("Article", "title", "graph database", k=10)
+    ///     for node_id, score in results:
+    ///         print(f"Node {node_id}: score={score:.4f}")
+    #[cfg(feature = "text-index")]
+    fn text_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: &str,
+        k: usize,
+    ) -> PyResult<Vec<(u64, f64)>> {
+        let db = self.inner.read();
+        let results = db
+            .text_search(label, property, query, k)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(results
+            .into_iter()
+            .map(|(id, score)| (id.as_u64(), score))
+            .collect())
+    }
+
+    /// Perform hybrid search combining text (BM25) and vector similarity.
+    ///
+    /// Runs both text and vector search, then fuses results using
+    /// Reciprocal Rank Fusion (RRF) by default.
+    ///
+    /// Args:
+    ///     label: Node label to search within
+    ///     text_property: Property indexed for text search
+    ///     vector_property: Property indexed for vector search
+    ///     query_text: Text query for BM25 search
+    ///     k: Number of results to return
+    ///     query_vector: Vector query for similarity search (optional)
+    ///     fusion: Fusion method - "rrf" (default) or "weighted"
+    ///     weights: Weights for weighted fusion [text_weight, vector_weight]
+    ///
+    /// Returns:
+    ///     List of (node_id, score) tuples.
+    ///
+    /// Example:
+    ///     results = db.hybrid_search("Article", "title", "embedding",
+    ///                                "graph databases", k=10,
+    ///                                query_vector=[1.0, 0.0, 0.0])
+    #[cfg(feature = "hybrid-search")]
+    #[pyo3(signature = (label, text_property, vector_property, query_text, k, query_vector=None, fusion=None, weights=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn hybrid_search(
+        &self,
+        label: &str,
+        text_property: &str,
+        vector_property: &str,
+        query_text: &str,
+        k: usize,
+        query_vector: Option<Vec<f32>>,
+        fusion: Option<&str>,
+        weights: Option<Vec<f64>>,
+    ) -> PyResult<Vec<(u64, f64)>> {
+        let fusion_method = match fusion {
+            Some("weighted") => {
+                let w = weights.unwrap_or_else(|| vec![0.5, 0.5]);
+                Some(grafeo_core::index::text::FusionMethod::Weighted { weights: w })
+            }
+            _ => None, // Default RRF
+        };
+
+        let db = self.inner.read();
+        let results = db
+            .hybrid_search(
+                label,
+                text_property,
+                vector_property,
+                query_text,
+                query_vector.as_deref(),
+                k,
+                fusion_method,
+            )
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(results
+            .into_iter()
+            .map(|(id, score)| (id.as_u64(), score))
+            .collect())
+    }
+
+    // ── Embedding ─────────────────────────────────────────────────
+
+    /// Register an ONNX embedding model for text-to-vector conversion.
+    ///
+    /// Once registered, use embed_text() and vector_search_text() with the model name.
+    ///
+    /// Args:
+    ///     name: Model name for later reference (e.g., "minilm")
+    ///     model_path: Path to the .onnx model file
+    ///     tokenizer_path: Path to the tokenizer.json file
+    ///     batch_size: Maximum batch size for embedding (default: 32)
+    ///
+    /// Example:
+    ///     db.register_embedding_model("minilm", "model.onnx", "tokenizer.json")
+    #[cfg(feature = "embed")]
+    #[pyo3(signature = (name, model_path, tokenizer_path, batch_size=None))]
+    fn register_embedding_model(
+        &self,
+        name: &str,
+        model_path: &str,
+        tokenizer_path: &str,
+        batch_size: Option<usize>,
+    ) -> PyResult<()> {
+        let mut model = grafeo_engine::embedding::OnnxEmbeddingModel::from_files(
+            name,
+            model_path,
+            tokenizer_path,
+        )
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        if let Some(bs) = batch_size {
+            model = model.with_batch_size(bs);
+        }
+        let db = self.inner.read();
+        db.register_embedding_model(name, std::sync::Arc::new(model));
+        Ok(())
+    }
+
+    /// Generate embeddings for a list of texts using a registered model.
+    ///
+    /// Args:
+    ///     model_name: Name of a previously registered model
+    ///     texts: List of strings to embed
+    ///
+    /// Returns:
+    ///     List of float vectors, one per input text.
+    ///
+    /// Example:
+    ///     vectors = db.embed_text("minilm", ["hello world", "graph databases"])
+    ///     assert len(vectors) == 2
+    #[cfg(feature = "embed")]
+    fn embed_text(&self, model_name: &str, texts: Vec<String>) -> PyResult<Vec<Vec<f32>>> {
+        let db = self.inner.read();
+        let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        db.embed_text(model_name, &text_refs)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Search a vector index using a text query, generating the embedding on-the-fly.
+    ///
+    /// Combines embed_text() + vector_search() in a single call.
+    ///
+    /// Args:
+    ///     label: Node label to search within
+    ///     property: Vector property name
+    ///     model_name: Name of a registered embedding model
+    ///     query_text: Text to embed and search for
+    ///     k: Number of results to return
+    ///     ef: Optional HNSW ef parameter for search quality
+    ///
+    /// Returns:
+    ///     List of (node_id, distance) tuples.
+    ///
+    /// Example:
+    ///     results = db.vector_search_text("Doc", "embedding", "minilm",
+    ///                                     "hello world", k=10)
+    #[cfg(all(feature = "embed", feature = "vector-index"))]
+    #[pyo3(signature = (label, property, model_name, query_text, k, ef=None))]
+    fn vector_search_text(
+        &self,
+        label: &str,
+        property: &str,
+        model_name: &str,
+        query_text: &str,
+        k: usize,
+        ef: Option<usize>,
+    ) -> PyResult<Vec<(u64, f32)>> {
+        let db = self.inner.read();
+        let results = db
+            .vector_search_text(label, property, model_name, query_text, k, ef)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(results
+            .into_iter()
+            .map(|(id, dist)| (id.as_u64(), dist))
+            .collect())
+    }
+
+    // ── Property Indexes ────────────────────────────────────────────
+
     /// Remove an index on a node property.
     ///
     /// Returns True if the index existed and was removed.
@@ -1484,6 +1725,91 @@ impl PyGrafeoDB {
     ) -> PyResult<bool> {
         self.close()?;
         Ok(false)
+    }
+
+    // ── Change Data Capture ─────────────────────────────────────────────
+
+    /// Returns the full change history for a node.
+    ///
+    /// Each event is a dict with keys: entity_id, entity_type, kind, epoch,
+    /// timestamp, before, after.
+    #[cfg(feature = "cdc")]
+    fn node_history(
+        &self,
+        node_id: u64,
+    ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
+        let db = self.inner.read();
+        let id = grafeo_common::types::NodeId::new(node_id);
+        let events = db
+            .history(id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        pyo3::Python::attach(|py| {
+            Ok(events
+                .into_iter()
+                .map(|e| change_event_to_dict(py, &e))
+                .collect())
+        })
+    }
+
+    /// Returns the full change history for an edge.
+    #[cfg(feature = "cdc")]
+    fn edge_history(
+        &self,
+        edge_id: u64,
+    ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
+        let db = self.inner.read();
+        let id = grafeo_common::types::EdgeId::new(edge_id);
+        let events = db
+            .history(id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        pyo3::Python::attach(|py| {
+            Ok(events
+                .into_iter()
+                .map(|e| change_event_to_dict(py, &e))
+                .collect())
+        })
+    }
+
+    /// Returns change events for a node since a given epoch.
+    #[cfg(feature = "cdc")]
+    fn node_history_since(
+        &self,
+        node_id: u64,
+        since_epoch: u64,
+    ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
+        let db = self.inner.read();
+        let id = grafeo_common::types::NodeId::new(node_id);
+        let events = db
+            .history_since(id, grafeo_common::types::EpochId(since_epoch))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        pyo3::Python::attach(|py| {
+            Ok(events
+                .into_iter()
+                .map(|e| change_event_to_dict(py, &e))
+                .collect())
+        })
+    }
+
+    /// Returns all change events across entities in an epoch range.
+    #[cfg(feature = "cdc")]
+    fn changes_between(
+        &self,
+        start_epoch: u64,
+        end_epoch: u64,
+    ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
+        let db = self.inner.read();
+        let events = db
+            .changes_between(
+                grafeo_common::types::EpochId(start_epoch),
+                grafeo_common::types::EpochId(end_epoch),
+            )
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        pyo3::Python::attach(|py| {
+            Ok(events
+                .into_iter()
+                .map(|e| change_event_to_dict(py, &e))
+                .collect())
+        })
     }
 }
 
@@ -1965,4 +2291,74 @@ fn extract_entities(result: &QueryResult, db: &GrafeoDB) -> (Vec<PyNode>, Vec<Py
     }
 
     (nodes, edges)
+}
+
+/// Converts a CDC ChangeEvent to a Python dict-like HashMap.
+#[cfg(feature = "cdc")]
+fn change_event_to_dict(
+    py: pyo3::Python<'_>,
+    event: &grafeo_engine::cdc::ChangeEvent,
+) -> std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>> {
+    use crate::types::PyValue;
+    use pyo3::conversion::IntoPyObjectExt;
+
+    let mut map = std::collections::HashMap::new();
+
+    // entity_id and entity_type
+    map.insert(
+        "entity_id".to_string(),
+        event.entity_id.as_u64().into_py_any(py).unwrap(),
+    );
+    let entity_type = if event.entity_id.is_node() {
+        "node"
+    } else {
+        "edge"
+    };
+    map.insert(
+        "entity_type".to_string(),
+        entity_type.into_py_any(py).unwrap(),
+    );
+
+    // kind
+    let kind = match event.kind {
+        grafeo_engine::cdc::ChangeKind::Create => "create",
+        grafeo_engine::cdc::ChangeKind::Update => "update",
+        grafeo_engine::cdc::ChangeKind::Delete => "delete",
+    };
+    map.insert("kind".to_string(), kind.into_py_any(py).unwrap());
+
+    // epoch and timestamp
+    map.insert("epoch".to_string(), event.epoch.0.into_py_any(py).unwrap());
+    map.insert(
+        "timestamp".to_string(),
+        event.timestamp.into_py_any(py).unwrap(),
+    );
+
+    // before (Option<HashMap<String, Value>> -> dict or None)
+    let before_py = match &event.before {
+        Some(props) => {
+            let d: std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>> = props
+                .iter()
+                .map(|(k, v)| (k.clone(), PyValue::to_py(v, py)))
+                .collect();
+            d.into_py_any(py).unwrap()
+        }
+        None => py.None(),
+    };
+    map.insert("before".to_string(), before_py);
+
+    // after (Option<HashMap<String, Value>> -> dict or None)
+    let after_py = match &event.after {
+        Some(props) => {
+            let d: std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>> = props
+                .iter()
+                .map(|(k, v)| (k.clone(), PyValue::to_py(v, py)))
+                .collect();
+            d.into_py_any(py).unwrap()
+        }
+        None => py.None(),
+    };
+    map.insert("after".to_string(), after_py);
+
+    map
 }

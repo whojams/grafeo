@@ -4,11 +4,14 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use grafeo_adapters::query::gremlin;
 //!
 //! let query = "g.V().hasLabel('Person').out('knows').values('name')";
 //! let ast = gremlin::parse(query)?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod ast;

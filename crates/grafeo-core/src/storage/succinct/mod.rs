@@ -11,7 +11,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_core::storage::succinct::{SuccinctBitVector, EliasFano};
 //!
 //! // Succinct bitvector with O(1) rank/select

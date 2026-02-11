@@ -25,7 +25,7 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_common::memory::buffer::{BufferManager, MemoryRegion};
 //!
 //! // Create with default config (75% of system RAM)

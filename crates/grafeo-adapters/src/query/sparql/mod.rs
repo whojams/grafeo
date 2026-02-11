@@ -4,7 +4,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use grafeo_adapters::query::sparql;
 //!
 //! let query = r#"
@@ -14,6 +15,8 @@
 //! "#;
 //!
 //! let ast = sparql::parse(query)?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod ast;

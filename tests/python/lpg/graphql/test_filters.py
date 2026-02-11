@@ -10,10 +10,6 @@ import pytest
 from tests.python.bases.test_filters import BaseFilterAndLookupTest
 
 
-# Skip entire class if GraphQL filtering isn't fully supported
-pytestmark = pytest.mark.skip(reason="GraphQL filter syntax not yet fully implemented")
-
-
 class TestGraphQLFilters(BaseFilterAndLookupTest):
     """GraphQL implementation of filter and lookup tests."""
 
@@ -62,27 +58,9 @@ class TestGraphQLFilters(BaseFilterAndLookupTest):
     def filter_by_age_range(self, db, min_age: int, max_age: int) -> list:
         """Filter using GraphQL range arguments.
 
-        Note: GraphQL range filters may not be supported. Skip if not available.
+        Note: GraphQL range filters (age_gt, age_lt) are not yet supported.
         """
-        import pytest
-
-        try:
-            result = self._execute_graphql(
-                db,
-                f"""
-                query {{
-                    person(age_gt: {min_age}, age_lt: {max_age}) {{
-                        name
-                        age
-                    }}
-                }}
-                """,
-            )
-            return list(result)
-        except (RuntimeError, Exception) as e:
-            if "age_gt" in str(e) or "unknown" in str(e).lower():
-                pytest.skip("GraphQL range filters not supported")
-            raise
+        pytest.skip("GraphQL range filter syntax (age_gt/age_lt) not yet implemented")
 
     def filter_by_city(self, db, city: str) -> list:
         """Filter using GraphQL string argument."""
@@ -128,6 +106,9 @@ class TestGraphQLFilterVerification:
         except NotImplementedError:
             pytest.skip("GraphQL not implemented")
 
+    @pytest.mark.skip(
+        reason="GraphQL nested query filters (age_gt on relationships) not yet implemented"
+    )
     def test_filter_with_nested_query(self, db):
         """Test filtering with nested query."""
         alice = db.create_node(["User"], {"name": "Alice", "age": 30})

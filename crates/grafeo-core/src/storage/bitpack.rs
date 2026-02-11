@@ -8,7 +8,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # use grafeo_core::storage::bitpack::BitPackedInts;
 //! // Values [5, 2, 3, 5, 5, 8, 2] - max is 8, needs 4 bits
 //! // Without packing: 7 * 64 = 448 bits
 //! // With packing:    7 * 4  = 28 bits (16x smaller!)

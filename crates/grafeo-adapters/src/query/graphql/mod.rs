@@ -4,7 +4,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use grafeo_adapters::query::graphql;
 //!
 //! let query = r#"
@@ -20,6 +21,8 @@
 //! "#;
 //!
 //! let doc = graphql::parse(query)?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod ast;

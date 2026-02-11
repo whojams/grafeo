@@ -21,8 +21,12 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod admin;
 pub mod catalog;
+#[cfg(feature = "cdc")]
+pub mod cdc;
 pub mod config;
 pub mod database;
+#[cfg(feature = "embed")]
+pub mod embedding;
 pub mod query;
 pub mod session;
 pub mod transaction;

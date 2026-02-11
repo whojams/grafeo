@@ -16,7 +16,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_core::storage::{TypeSpecificCompressor, CodecSelector};
 //!
 //! // Compress sorted integers

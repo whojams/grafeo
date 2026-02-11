@@ -9,7 +9,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # use grafeo_core::storage::delta::DeltaEncoding;
 //! let values = vec![100u64, 105, 107, 110, 115];
 //! let encoded = DeltaEncoding::encode(&values);
 //! // base=100, deltas=[5, 2, 3, 5]

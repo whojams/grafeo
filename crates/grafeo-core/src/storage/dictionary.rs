@@ -7,7 +7,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # use grafeo_core::storage::dictionary::DictionaryBuilder;
 //! let mut builder = DictionaryBuilder::new();
 //! builder.add("Person");
 //! builder.add("Company");

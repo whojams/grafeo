@@ -662,6 +662,131 @@ impl JsGrafeoDB {
         .map_err(|e| napi::Error::from_reason(e.to_string()))?
     }
 
+    // ── Text Search ──────────────────────────────────────────────
+
+    /// Create a BM25 text index on a node property for full-text search.
+    #[cfg(feature = "text-index")]
+    #[napi(js_name = "createTextIndex")]
+    pub async fn create_text_index(&self, label: String, property: String) -> Result<()> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            db.create_text_index(&label, &property)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Drop a text index for the given label and property.
+    #[cfg(feature = "text-index")]
+    #[napi(js_name = "dropTextIndex")]
+    pub async fn drop_text_index(&self, label: String, property: String) -> Result<bool> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            Ok(db.drop_text_index(&label, &property))
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Rebuild a text index by rescanning all matching nodes.
+    #[cfg(feature = "text-index")]
+    #[napi(js_name = "rebuildTextIndex")]
+    pub async fn rebuild_text_index(&self, label: String, property: String) -> Result<()> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            db.rebuild_text_index(&label, &property)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Search a text index using BM25 scoring.
+    ///
+    /// Returns an array of [nodeId, score] pairs sorted by descending relevance.
+    #[cfg(feature = "text-index")]
+    #[napi(js_name = "textSearch")]
+    pub async fn text_search(
+        &self,
+        label: String,
+        property: String,
+        query: String,
+        k: u32,
+    ) -> Result<Vec<Vec<f64>>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let results = db
+                .text_search(&label, &property, &query, k as usize)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(results
+                .into_iter()
+                .map(|(id, score)| vec![id.as_u64() as f64, score])
+                .collect::<Vec<Vec<f64>>>())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Perform hybrid search combining text (BM25) and vector similarity.
+    ///
+    /// Returns an array of [nodeId, score] pairs.
+    #[cfg(feature = "hybrid-search")]
+    #[napi(js_name = "hybridSearch")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn hybrid_search(
+        &self,
+        label: String,
+        text_property: String,
+        vector_property: String,
+        query_text: String,
+        k: u32,
+        query_vector: Option<Vec<f64>>,
+        fusion: Option<String>,
+        weights: Option<Vec<f64>>,
+    ) -> Result<Vec<Vec<f64>>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let fusion_method = match fusion.as_deref() {
+                Some("weighted") => {
+                    let w = weights.unwrap_or_else(|| vec![0.5, 0.5]);
+                    Some(grafeo_core::index::text::FusionMethod::Weighted { weights: w })
+                }
+                _ => None,
+            };
+
+            let query_vec_f32: Option<Vec<f32>> =
+                query_vector.map(|v| v.iter().map(|&x| x as f32).collect());
+
+            let db = db.read();
+            let results = db
+                .hybrid_search(
+                    &label,
+                    &text_property,
+                    &vector_property,
+                    &query_text,
+                    query_vec_f32.as_deref(),
+                    k as usize,
+                    fusion_method,
+                )
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(results
+                .into_iter()
+                .map(|(id, score)| vec![id.as_u64() as f64, score])
+                .collect::<Vec<Vec<f64>>>())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
     /// Close the database.
     #[napi]
     pub fn close(&self) -> Result<()> {
@@ -670,6 +795,192 @@ impl JsGrafeoDB {
             .close()
             .map_err(NodeGrafeoError::from)
             .map_err(napi::Error::from)
+    }
+
+    // ── Change Data Capture ─────────────────────────────────────────────
+
+    /// Returns the full change history for a node.
+    #[cfg(feature = "cdc")]
+    #[napi(js_name = "nodeHistory")]
+    pub async fn node_history(&self, node_id: f64) -> Result<Vec<serde_json::Value>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let id = grafeo_common::types::NodeId::new(node_id as u64);
+            let events = db
+                .history(id)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(events.iter().map(change_event_to_json).collect())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Returns the full change history for an edge.
+    #[cfg(feature = "cdc")]
+    #[napi(js_name = "edgeHistory")]
+    pub async fn edge_history(&self, edge_id: f64) -> Result<Vec<serde_json::Value>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let id = grafeo_common::types::EdgeId::new(edge_id as u64);
+            let events = db
+                .history(id)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(events.iter().map(change_event_to_json).collect())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Returns change events for a node since a given epoch.
+    #[cfg(feature = "cdc")]
+    #[napi(js_name = "nodeHistorySince")]
+    pub async fn node_history_since(
+        &self,
+        node_id: f64,
+        since_epoch: f64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let id = grafeo_common::types::NodeId::new(node_id as u64);
+            let events = db
+                .history_since(id, grafeo_common::types::EpochId(since_epoch as u64))
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(events.iter().map(change_event_to_json).collect())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Returns all change events across entities in an epoch range.
+    #[cfg(feature = "cdc")]
+    #[napi(js_name = "changesBetween")]
+    pub async fn changes_between(
+        &self,
+        start_epoch: f64,
+        end_epoch: f64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let events = db
+                .changes_between(
+                    grafeo_common::types::EpochId(start_epoch as u64),
+                    grafeo_common::types::EpochId(end_epoch as u64),
+                )
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(events.iter().map(change_event_to_json).collect())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+}
+
+// Embed methods live in a separate impl block so the entire block can be
+// conditionally compiled.  napi-rs generates callback registrations for every
+// method inside a `#[napi]` impl, so a per-method `#[cfg]` doesn't work.
+#[cfg(feature = "embed")]
+#[napi]
+impl JsGrafeoDB {
+    /// Register an ONNX embedding model for text-to-vector conversion.
+    ///
+    /// Once registered, use embedText() and vectorSearchText() with the model name.
+    #[napi(js_name = "registerEmbeddingModel")]
+    pub async fn register_embedding_model(
+        &self,
+        name: String,
+        model_path: String,
+        tokenizer_path: String,
+        batch_size: Option<u32>,
+    ) -> Result<()> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut model = grafeo_engine::embedding::OnnxEmbeddingModel::from_files(
+                &name,
+                &model_path,
+                &tokenizer_path,
+            )
+            .map_err(NodeGrafeoError::from)
+            .map_err(napi::Error::from)?;
+            if let Some(bs) = batch_size {
+                model = model.with_batch_size(bs as usize);
+            }
+            let db = db.read();
+            db.register_embedding_model(&name, std::sync::Arc::new(model));
+            Ok(())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Generate embeddings for a list of texts using a registered model.
+    ///
+    /// Returns an array of float arrays, one per input text.
+    #[napi(js_name = "embedText")]
+    pub async fn embed_text(
+        &self,
+        model_name: String,
+        texts: Vec<String>,
+    ) -> Result<Vec<Vec<f64>>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            let results = db
+                .embed_text(&model_name, &text_refs)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            // Convert f32 → f64 for JavaScript number compatibility
+            Ok(results
+                .into_iter()
+                .map(|v| v.into_iter().map(f64::from).collect())
+                .collect())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Search a vector index using a text query, generating the embedding on-the-fly.
+    ///
+    /// Returns an array of [nodeId, distance] pairs.
+    #[cfg(feature = "vector-index")]
+    #[napi(js_name = "vectorSearchText")]
+    pub async fn vector_search_text(
+        &self,
+        label: String,
+        property: String,
+        model_name: String,
+        query_text: String,
+        k: u32,
+        ef: Option<u32>,
+    ) -> Result<Vec<Vec<f64>>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let results = db
+                .vector_search_text(
+                    &label,
+                    &property,
+                    &model_name,
+                    &query_text,
+                    k as usize,
+                    ef.map(|e| e as usize),
+                )
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(results
+                .into_iter()
+                .map(|(id, dist)| vec![id.as_u64() as f64, f64::from(dist)])
+                .collect::<Vec<Vec<f64>>>())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
     }
 }
 
@@ -854,4 +1165,78 @@ pub(crate) fn extract_entities(
     }
 
     (nodes, edges)
+}
+
+/// Convert a Grafeo Value to serde_json::Value.
+fn grafeo_value_to_json(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Int64(i) => serde_json::json!(*i),
+        Value::Float64(f) => serde_json::json!(*f),
+        Value::String(s) => serde_json::Value::String(s.to_string()),
+        Value::List(items) => {
+            let arr: Vec<serde_json::Value> = items.iter().map(grafeo_value_to_json).collect();
+            serde_json::Value::Array(arr)
+        }
+        Value::Map(m) => {
+            let obj: serde_json::Map<String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| (k.to_string(), grafeo_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Vector(v) => {
+            let arr: Vec<serde_json::Value> = v.iter().map(|&f| serde_json::json!(f)).collect();
+            serde_json::Value::Array(arr)
+        }
+        _ => serde_json::Value::String(format!("{v:?}")),
+    }
+}
+
+/// Convert a CDC ChangeEvent to a JSON object.
+#[cfg(feature = "cdc")]
+fn change_event_to_json(event: &grafeo_engine::cdc::ChangeEvent) -> serde_json::Value {
+    let entity_type = if event.entity_id.is_node() {
+        "node"
+    } else {
+        "edge"
+    };
+    let kind = match event.kind {
+        grafeo_engine::cdc::ChangeKind::Create => "create",
+        grafeo_engine::cdc::ChangeKind::Update => "update",
+        grafeo_engine::cdc::ChangeKind::Delete => "delete",
+    };
+
+    let before = match &event.before {
+        Some(props) => {
+            let obj: serde_json::Map<String, serde_json::Value> = props
+                .iter()
+                .map(|(k, v)| (k.clone(), grafeo_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        None => serde_json::Value::Null,
+    };
+
+    let after = match &event.after {
+        Some(props) => {
+            let obj: serde_json::Map<String, serde_json::Value> = props
+                .iter()
+                .map(|(k, v)| (k.clone(), grafeo_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        None => serde_json::Value::Null,
+    };
+
+    serde_json::json!({
+        "entity_id": event.entity_id.as_u64(),
+        "entity_type": entity_type,
+        "kind": kind,
+        "epoch": event.epoch.0,
+        "timestamp": event.timestamp,
+        "before": before,
+        "after": after,
+    })
 }

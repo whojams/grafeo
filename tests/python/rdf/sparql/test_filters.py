@@ -19,10 +19,6 @@ except ImportError:
     GRAFEO_AVAILABLE = False
 
 
-# Skip SPARQL filter tests until SPARQL support is more complete
-pytestmark = pytest.mark.skip(reason="SPARQL filter syntax not yet fully implemented")
-
-
 class TestSPARQLFilters:
     """SPARQL filter tests for RDF data model."""
 
@@ -173,6 +169,7 @@ class TestSPARQLFilters:
         rows = list(result)
         assert len(rows) >= 1, "Should find persons in NYC or under 10"
 
+    @pytest.mark.skip(reason="SPARQL REGEX function not yet implemented in parser")
     def test_filter_regex(self):
         """Test SPARQL FILTER with REGEX."""
         self._setup_person_data(100)
@@ -193,6 +190,7 @@ class TestSPARQLFilters:
         # Should match Person1, Person10-19, Person100-199, etc.
         assert len(rows) >= 1, "Should find persons with names starting with Person1"
 
+    @pytest.mark.skip(reason="SPARQL NOT EXISTS not yet implemented in parser")
     def test_filter_not_exists(self):
         """Test SPARQL FILTER NOT EXISTS."""
         # Create some persons, some with emails

@@ -21,7 +21,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_core::storage::succinct::WaveletTree;
 //!
 //! // Index a sequence of predicate IDs

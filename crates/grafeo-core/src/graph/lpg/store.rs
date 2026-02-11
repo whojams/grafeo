@@ -23,7 +23,11 @@ use grafeo_common::types::{EdgeId, EpochId, HashableValue, NodeId, PropertyKey, 
 use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
 use std::cmp::Ordering as CmpOrdering;
-#[cfg(any(feature = "tiered-storage", feature = "vector-index"))]
+#[cfg(any(
+    feature = "tiered-storage",
+    feature = "vector-index",
+    feature = "text-index"
+))]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -266,6 +270,13 @@ pub struct LpgStore {
     #[cfg(feature = "vector-index")]
     vector_indexes: RwLock<FxHashMap<String, Arc<HnswIndex>>>,
 
+    /// Text indexes: "label:property" -> inverted index with BM25 scoring.
+    ///
+    /// Created via [`GrafeoDB::create_text_index`](grafeo_engine::GrafeoDB::create_text_index).
+    /// Lock order: 7 (same level as property_indexes, disjoint keys)
+    #[cfg(feature = "text-index")]
+    text_indexes: RwLock<FxHashMap<String, Arc<RwLock<crate::index::text::InvertedIndex>>>>,
+
     /// Next node ID.
     next_node_id: AtomicU64,
 
@@ -325,6 +336,8 @@ impl LpgStore {
             property_indexes: RwLock::new(FxHashMap::default()),
             #[cfg(feature = "vector-index")]
             vector_indexes: RwLock::new(FxHashMap::default()),
+            #[cfg(feature = "text-index")]
+            text_indexes: RwLock::new(FxHashMap::default()),
             next_node_id: AtomicU64::new(0),
             next_edge_id: AtomicU64::new(0),
             current_epoch: AtomicU64::new(0),
@@ -1291,6 +1304,53 @@ impl LpgStore {
             .collect()
     }
 
+    /// Stores a text index for a label+property pair.
+    #[cfg(feature = "text-index")]
+    pub fn add_text_index(
+        &self,
+        label: &str,
+        property: &str,
+        index: Arc<RwLock<crate::index::text::InvertedIndex>>,
+    ) {
+        let key = format!("{label}:{property}");
+        self.text_indexes.write().insert(key, index);
+    }
+
+    /// Retrieves the text index for a label+property pair.
+    #[cfg(feature = "text-index")]
+    #[must_use]
+    pub fn get_text_index(
+        &self,
+        label: &str,
+        property: &str,
+    ) -> Option<Arc<RwLock<crate::index::text::InvertedIndex>>> {
+        let key = format!("{label}:{property}");
+        self.text_indexes.read().get(&key).cloned()
+    }
+
+    /// Removes a text index for a label+property pair.
+    ///
+    /// Returns `true` if the index existed and was removed.
+    #[cfg(feature = "text-index")]
+    pub fn remove_text_index(&self, label: &str, property: &str) -> bool {
+        let key = format!("{label}:{property}");
+        self.text_indexes.write().remove(&key).is_some()
+    }
+
+    /// Returns all text index entries as `(key, index)` pairs.
+    ///
+    /// The key format is `"label:property"`.
+    #[cfg(feature = "text-index")]
+    pub fn text_index_entries(
+        &self,
+    ) -> Vec<(String, Arc<RwLock<crate::index::text::InvertedIndex>>)> {
+        self.text_indexes
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
     /// Finds all nodes that have a specific property value.
     ///
     /// If the property is indexed, this is O(1). Otherwise, it scans all nodes
@@ -1337,6 +1397,82 @@ impl LpgStore {
                     .is_some_and(|v| v == *value)
             })
             .collect()
+    }
+
+    /// Finds nodes whose property matches an operator filter.
+    ///
+    /// The `filter_value` is either a scalar (equality) or a `Value::Map` with
+    /// `$`-prefixed operator keys like `$gt`, `$lt`, `$gte`, `$lte`, `$in`,
+    /// `$nin`, `$ne`, `$contains`.
+    pub fn find_nodes_matching_filter(&self, property: &str, filter_value: &Value) -> Vec<NodeId> {
+        let key = PropertyKey::new(property);
+        self.node_ids()
+            .into_iter()
+            .filter(|&node_id| {
+                self.node_properties
+                    .get(node_id, &key)
+                    .is_some_and(|v| Self::matches_filter(&v, filter_value))
+            })
+            .collect()
+    }
+
+    /// Checks if a node property value matches a filter value.
+    ///
+    /// - Scalar filter: equality check
+    /// - Map filter with `$`-prefixed keys: operator evaluation
+    fn matches_filter(node_value: &Value, filter_value: &Value) -> bool {
+        match filter_value {
+            Value::Map(ops) if ops.keys().any(|k| k.as_str().starts_with('$')) => {
+                ops.iter().all(|(op_key, op_val)| {
+                    match op_key.as_str() {
+                        "$gt" => {
+                            Self::compare_values(node_value, op_val)
+                                == Some(std::cmp::Ordering::Greater)
+                        }
+                        "$gte" => matches!(
+                            Self::compare_values(node_value, op_val),
+                            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                        ),
+                        "$lt" => {
+                            Self::compare_values(node_value, op_val)
+                                == Some(std::cmp::Ordering::Less)
+                        }
+                        "$lte" => matches!(
+                            Self::compare_values(node_value, op_val),
+                            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                        ),
+                        "$ne" => node_value != op_val,
+                        "$in" => match op_val {
+                            Value::List(items) => items.iter().any(|v| v == node_value),
+                            _ => false,
+                        },
+                        "$nin" => match op_val {
+                            Value::List(items) => !items.iter().any(|v| v == node_value),
+                            _ => true,
+                        },
+                        "$contains" => match (node_value, op_val) {
+                            (Value::String(a), Value::String(b)) => a.contains(b.as_str()),
+                            _ => false,
+                        },
+                        _ => false, // Unknown operator — no match
+                    }
+                })
+            }
+            _ => node_value == filter_value, // Equality (backward compatible)
+        }
+    }
+
+    /// Compares two values for ordering (cross-type numeric comparison supported).
+    fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+        match (a, b) {
+            (Value::Int64(a), Value::Int64(b)) => Some(a.cmp(b)),
+            (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b),
+            (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+            (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
+            (Value::Int64(a), Value::Float64(b)) => (*a as f64).partial_cmp(b),
+            (Value::Float64(a), Value::Int64(b)) => a.partial_cmp(&(*b as f64)),
+            _ => None,
+        }
     }
 
     /// Updates property indexes when a property is set.

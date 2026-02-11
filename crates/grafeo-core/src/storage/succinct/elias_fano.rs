@@ -21,7 +21,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_core::storage::succinct::EliasFano;
 //!
 //! // Node IDs with label "Admin" (sparse in universe of 10M)

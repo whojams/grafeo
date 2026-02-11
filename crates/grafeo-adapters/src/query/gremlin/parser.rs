@@ -11,9 +11,8 @@ use grafeo_common::utils::error::{Error, Result};
 pub struct Parser<'a> {
     tokens: Vec<Token>,
     position: usize,
-    /// Source string for error reporting.
-    #[allow(dead_code)]
-    source: &'a str,
+    /// Marker for source lifetime.
+    _source: std::marker::PhantomData<&'a str>,
 }
 
 impl<'a> Parser<'a> {
@@ -24,7 +23,7 @@ impl<'a> Parser<'a> {
         Self {
             tokens,
             position: 0,
-            source,
+            _source: std::marker::PhantomData,
         }
     }
 

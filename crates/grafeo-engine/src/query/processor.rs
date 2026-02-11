@@ -388,39 +388,11 @@ impl QueryProcessor {
     }
 }
 
-// Legacy compatibility: Keep the old API working
 impl QueryProcessor {
-    /// Creates a new query processor (legacy API).
-    ///
-    /// This creates a processor with an empty in-memory store.
-    /// Prefer using [`QueryProcessor::for_lpg`] with an explicit store.
-    #[must_use]
-    #[deprecated(since = "0.1.0", note = "Use QueryProcessor::for_lpg() instead")]
-    pub fn new() -> Self {
-        Self::for_lpg(Arc::new(LpgStore::new()))
-    }
-
-    /// Processes a query using default GQL language (legacy API).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the query fails.
-    #[cfg(feature = "gql")]
-    #[deprecated(since = "0.1.0", note = "Use process() with explicit language")]
-    pub fn process_legacy(&self, query: &str) -> Result<QueryResult> {
-        self.process(query, QueryLanguage::Gql, None)
-    }
-
     /// Returns a reference to the transaction manager.
     #[must_use]
     pub fn tx_manager(&self) -> &Arc<TransactionManager> {
         &self.tx_manager
-    }
-}
-
-impl Default for QueryProcessor {
-    fn default() -> Self {
-        Self::for_lpg(Arc::new(LpgStore::new()))
     }
 }
 

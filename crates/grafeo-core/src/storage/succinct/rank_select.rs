@@ -38,7 +38,7 @@ const SELECT_SAMPLE_RATE: usize = 4096;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_core::storage::succinct::SuccinctBitVector;
 ///
 /// let bits: Vec<bool> = (0..1000).map(|i| i % 5 == 0).collect();
@@ -213,7 +213,8 @@ impl SuccinctBitVector {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_core::storage::succinct::SuccinctBitVector;
     /// let sbv = SuccinctBitVector::from_bools(&[true, false, true, true, false]);
     /// assert_eq!(sbv.rank1(0), 0);  // No bits before position 0
     /// assert_eq!(sbv.rank1(1), 1);  // One 1-bit in [0, 1)
@@ -274,7 +275,8 @@ impl SuccinctBitVector {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use grafeo_core::storage::succinct::SuccinctBitVector;
     /// let sbv = SuccinctBitVector::from_bools(&[true, false, true, true, false]);
     /// assert_eq!(sbv.select1(0), Some(0));  // First 1-bit at position 0
     /// assert_eq!(sbv.select1(1), Some(2));  // Second 1-bit at position 2

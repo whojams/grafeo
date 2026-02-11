@@ -94,107 +94,6 @@ impl fmt::Display for Triple {
     }
 }
 
-/// A quad extends a triple with a graph name.
-///
-/// Note: This type is provided for future named graph support.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct Quad {
-    /// The subject.
-    subject: Term,
-    /// The predicate.
-    predicate: Term,
-    /// The object.
-    object: Term,
-    /// The graph name (IRI or blank node, None = default graph).
-    graph: Option<Term>,
-}
-
-#[allow(dead_code)]
-impl Quad {
-    /// Creates a new quad in the default graph.
-    pub fn new(subject: Term, predicate: Term, object: Term) -> Self {
-        Self {
-            subject,
-            predicate,
-            object,
-            graph: None,
-        }
-    }
-
-    /// Creates a new quad in a named graph.
-    pub fn in_graph(subject: Term, predicate: Term, object: Term, graph: Term) -> Self {
-        debug_assert!(
-            graph.is_iri() || graph.is_blank_node(),
-            "Graph name must be an IRI or blank node"
-        );
-        Self {
-            subject,
-            predicate,
-            object,
-            graph: Some(graph),
-        }
-    }
-
-    /// Returns the subject.
-    #[inline]
-    #[must_use]
-    pub fn subject(&self) -> &Term {
-        &self.subject
-    }
-
-    /// Returns the predicate.
-    #[inline]
-    #[must_use]
-    pub fn predicate(&self) -> &Term {
-        &self.predicate
-    }
-
-    /// Returns the object.
-    #[inline]
-    #[must_use]
-    pub fn object(&self) -> &Term {
-        &self.object
-    }
-
-    /// Returns the graph name (None for default graph).
-    #[inline]
-    #[must_use]
-    pub fn graph(&self) -> Option<&Term> {
-        self.graph.as_ref()
-    }
-
-    /// Returns true if this quad is in the default graph.
-    #[inline]
-    #[must_use]
-    pub fn is_default_graph(&self) -> bool {
-        self.graph.is_none()
-    }
-
-    /// Converts this quad to a triple (discarding the graph name).
-    #[inline]
-    #[must_use]
-    pub fn into_triple(self) -> Triple {
-        Triple::new_unchecked(self.subject, self.predicate, self.object)
-    }
-}
-
-impl fmt::Display for Quad {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} {}", self.subject, self.predicate, self.object)?;
-        if let Some(ref graph) = self.graph {
-            write!(f, " {}", graph)?;
-        }
-        write!(f, " .")
-    }
-}
-
-impl From<Triple> for Quad {
-    fn from(triple: Triple) -> Self {
-        Quad::new(triple.subject, triple.predicate, triple.object)
-    }
-}
-
 /// A triple pattern for matching.
 #[derive(Debug, Clone)]
 pub struct TriplePattern {
@@ -294,31 +193,6 @@ mod tests {
         assert!(display.contains("<http://xmlns.com/foaf/0.1/name>"));
         assert!(display.contains("\"Alice\""));
         assert!(display.ends_with('.'));
-    }
-
-    #[test]
-    fn test_quad_default_graph() {
-        let quad = Quad::new(
-            Term::iri("http://example.org/alice"),
-            Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
-        );
-
-        assert!(quad.is_default_graph());
-        assert!(quad.graph().is_none());
-    }
-
-    #[test]
-    fn test_quad_named_graph() {
-        let quad = Quad::in_graph(
-            Term::iri("http://example.org/alice"),
-            Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
-            Term::iri("http://example.org/graph1"),
-        );
-
-        assert!(!quad.is_default_graph());
-        assert!(quad.graph().is_some());
     }
 
     #[test]

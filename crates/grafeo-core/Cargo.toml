@@ -60,6 +60,11 @@ tiered-storage = ["grafeo-common/tiered-storage", "bincode"]  # Enable tiered ho
 succinct-indexes = []  # Enable succinct data structures (rank/select bitvectors, Elias-Fano, wavelet trees)
 ring-index = ["succinct-indexes", "rdf"]  # Ring Index for RDF (3x space reduction, requires succinct-indexes and rdf)
 vector-index = ["ordered-float", "rand"]  # HNSW vector index for approximate nearest neighbor search
+text-index = []  # BM25 inverted index for full-text search
+hybrid-search = ["text-index", "vector-index"]  # Combined text + vector search with score fusion
+
+# Convenience groups
+ai = ["vector-index", "text-index", "hybrid-search"]  # All AI/RAG search features
 
 [lints]
 workspace = true

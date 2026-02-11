@@ -151,9 +151,6 @@ pub struct Span {
 
 /// Gremlin lexer.
 pub struct Lexer<'a> {
-    /// Source string for error reporting.
-    #[allow(dead_code)]
-    source: &'a str,
     chars: Peekable<Chars<'a>>,
     position: usize,
 }
@@ -162,7 +159,6 @@ impl<'a> Lexer<'a> {
     /// Creates a new lexer for the given source.
     pub fn new(source: &'a str) -> Self {
         Self {
-            source,
             chars: source.chars().peekable(),
             position: 0,
         }

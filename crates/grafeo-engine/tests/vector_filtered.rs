@@ -217,3 +217,321 @@ fn test_filtered_search_non_indexed_property() {
 
     assert!(results.len() <= 2, "at most 2 nodes have category=science");
 }
+
+/// Creating an index with no dimensions and no existing vectors should error.
+#[test]
+fn test_create_vector_index_no_dims_no_data_errors() {
+    let db = GrafeoDB::new_in_memory();
+    let result = db.create_vector_index("Doc", "emb", None, None, None, None);
+    assert!(result.is_err(), "should error without dimensions or data");
+}
+
+/// Creating an index with explicit dimensions but no data should succeed (empty index).
+#[test]
+fn test_create_vector_index_with_dims_no_data_succeeds() {
+    let db = GrafeoDB::new_in_memory();
+    db.create_vector_index("Doc", "emb", Some(4), Some("cosine"), None, None)
+        .expect("should create empty index with explicit dimensions");
+
+    // Insert a node with vector after index creation — auto-insert should work
+    let id = db.create_node(&["Doc"]);
+    db.set_node_property(id, "emb", Value::Vector(vec![1.0, 0.0, 0.0, 0.0].into()));
+
+    let results = db
+        .vector_search("Doc", "emb", &[1.0, 0.0, 0.0, 0.0], 5, None, None)
+        .expect("search should work");
+    assert_eq!(results.len(), 1, "should find the one auto-inserted node");
+}
+
+/// Mimics the grafeo-memory pattern: create_node_with_props, set vector
+/// separately, String-valued filters, no property index.
+#[test]
+fn test_grafeo_memory_pattern() {
+    let db = GrafeoDB::new_in_memory();
+
+    // Create vector index first (grafeo-memory calls _ensure_indexes early)
+    db.create_vector_index("Memory", "embedding", Some(4), Some("cosine"), None, None)
+        .expect("create index");
+
+    // Create nodes with properties at creation time (grafeo-memory pattern)
+    for i in 0..10 {
+        let user = if i < 5 { "alice" } else { "bob" };
+        let id = db.create_node_with_props(
+            &["Memory"],
+            vec![
+                (
+                    grafeo_common::types::PropertyKey::new("text"),
+                    Value::String(format!("memory {i}").into()),
+                ),
+                (
+                    grafeo_common::types::PropertyKey::new("user_id"),
+                    Value::String(user.into()),
+                ),
+            ],
+        );
+
+        // Set embedding separately (grafeo-memory calls set_node_property for vectors)
+        let emb = vec![(i as f32) / 10.0, 1.0 - (i as f32) / 10.0, 0.1, 0.1];
+        db.set_node_property(id, "embedding", Value::Vector(emb.into()));
+    }
+
+    // Search WITHOUT filters first — should work
+    let all_results = db
+        .vector_search("Memory", "embedding", &[0.5, 0.5, 0.1, 0.1], 10, None, None)
+        .expect("unfiltered search");
+    assert_eq!(all_results.len(), 10, "should find all 10 Memory nodes");
+
+    // Search WITH String-valued filter, NO property index (scan fallback)
+    let filters: HashMap<String, Value> = [("user_id".to_string(), Value::String("alice".into()))]
+        .into_iter()
+        .collect();
+
+    let results = db
+        .vector_search(
+            "Memory",
+            "embedding",
+            &[0.5, 0.5, 0.1, 0.1],
+            10,
+            None,
+            Some(&filters),
+        )
+        .expect("filtered search should not error");
+
+    assert_eq!(results.len(), 5, "should find 5 alice nodes");
+
+    // Verify all results have user_id="alice"
+    for (id, _) in &results {
+        let node = db.get_node(*id).expect("node exists");
+        let uid = node
+            .properties
+            .get(&grafeo_common::types::PropertyKey::new("user_id"))
+            .expect("has user_id");
+        assert_eq!(uid, &Value::String("alice".into()));
+    }
+}
+
+// === Advanced filter operator tests ===
+
+/// Helper: setup a database with 10 nodes having numeric `score` and string `category` properties.
+fn setup_operator_db() -> GrafeoDB {
+    use grafeo_common::types::PropertyKey;
+    let db = GrafeoDB::new_in_memory();
+    db.create_vector_index("Item", "emb", Some(3), Some("cosine"), None, None)
+        .expect("create index");
+
+    for i in 0..10 {
+        let category = match i % 3 {
+            0 => "preference",
+            1 => "fact",
+            _ => "event",
+        };
+        let id = db.create_node_with_props(
+            &["Item"],
+            vec![
+                (PropertyKey::new("score"), Value::Float64((i as f64) * 0.1)),
+                (PropertyKey::new("rank"), Value::Int64(i)),
+                (PropertyKey::new("category"), Value::String(category.into())),
+                (
+                    PropertyKey::new("text"),
+                    Value::String(format!("item number {i} is great").into()),
+                ),
+            ],
+        );
+        let emb = vec![(i as f32) / 10.0, 1.0 - (i as f32) / 10.0, 0.5];
+        db.set_node_property(id, "emb", Value::Vector(emb.into()));
+    }
+    db
+}
+
+/// Helper: build an operator filter as a Value::Map.
+fn op_filter(ops: Vec<(&str, Value)>) -> Value {
+    let map: std::collections::BTreeMap<grafeo_common::types::PropertyKey, Value> = ops
+        .into_iter()
+        .map(|(k, v)| (grafeo_common::types::PropertyKey::new(k), v))
+        .collect();
+    Value::Map(std::sync::Arc::new(map))
+}
+
+#[test]
+fn test_filter_gt_lt() {
+    let db = setup_operator_db();
+
+    // rank > 5 → items 6,7,8,9 → 4 results
+    let filters: HashMap<String, Value> = [(
+        "rank".to_string(),
+        op_filter(vec![("$gt", Value::Int64(5))]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("gt filter");
+    assert_eq!(results.len(), 4, "rank > 5 should match 4 nodes");
+
+    // rank < 3 → items 0,1,2 → 3 results
+    let filters: HashMap<String, Value> = [(
+        "rank".to_string(),
+        op_filter(vec![("$lt", Value::Int64(3))]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("lt filter");
+    assert_eq!(results.len(), 3, "rank < 3 should match 3 nodes");
+}
+
+#[test]
+fn test_filter_gte_lte() {
+    let db = setup_operator_db();
+
+    // rank >= 3 AND rank <= 6 → items 3,4,5,6 → 4 results
+    let filters: HashMap<String, Value> = [(
+        "rank".to_string(),
+        op_filter(vec![("$gte", Value::Int64(3)), ("$lte", Value::Int64(6))]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("gte/lte filter");
+    assert_eq!(results.len(), 4, "rank in [3, 6] should match 4 nodes");
+}
+
+#[test]
+fn test_filter_in() {
+    let db = setup_operator_db();
+
+    // category IN ["preference", "fact"] → items 0,1,3,4,6,7,9 → 7 results
+    let filters: HashMap<String, Value> = [(
+        "category".to_string(),
+        op_filter(vec![(
+            "$in",
+            Value::List(
+                vec![
+                    Value::String("preference".into()),
+                    Value::String("fact".into()),
+                ]
+                .into(),
+            ),
+        )]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("in filter");
+    assert_eq!(
+        results.len(),
+        7,
+        "category in [preference, fact] should match 7 nodes"
+    );
+}
+
+#[test]
+fn test_filter_nin() {
+    let db = setup_operator_db();
+
+    // category NOT IN ["event"] → items without event → 7 results
+    let filters: HashMap<String, Value> = [(
+        "category".to_string(),
+        op_filter(vec![(
+            "$nin",
+            Value::List(vec![Value::String("event".into())].into()),
+        )]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("nin filter");
+    assert_eq!(results.len(), 7, "category not in [event] should match 7");
+}
+
+#[test]
+fn test_filter_contains() {
+    let db = setup_operator_db();
+
+    // text contains "number 5" → only item 5
+    let filters: HashMap<String, Value> = [(
+        "text".to_string(),
+        op_filter(vec![("$contains", Value::String("number 5".into()))]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("contains filter");
+    assert_eq!(results.len(), 1, "text contains 'number 5' should match 1");
+}
+
+#[test]
+fn test_filter_ne() {
+    let db = setup_operator_db();
+
+    // category != "event" → 7 results
+    let filters: HashMap<String, Value> = [(
+        "category".to_string(),
+        op_filter(vec![("$ne", Value::String("event".into()))]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("ne filter");
+    assert_eq!(results.len(), 7, "category != event should match 7");
+}
+
+#[test]
+fn test_filter_mixed_equality_and_operators() {
+    let db = setup_operator_db();
+
+    // category == "preference" AND rank > 3 → preference items with rank > 3 → items 6, 9
+    let filters: HashMap<String, Value> = [
+        ("category".to_string(), Value::String("preference".into())),
+        (
+            "rank".to_string(),
+            op_filter(vec![("$gt", Value::Int64(3))]),
+        ),
+    ]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("mixed filter");
+    assert_eq!(
+        results.len(),
+        2,
+        "preference AND rank > 3 should match items 6 and 9"
+    );
+}
+
+#[test]
+fn test_filter_cross_type_numeric_comparison() {
+    let db = setup_operator_db();
+
+    // score (Float64) > 0 (Int64) — cross-type comparison
+    let filters: HashMap<String, Value> = [(
+        "score".to_string(),
+        op_filter(vec![("$gt", Value::Int64(0))]),
+    )]
+    .into_iter()
+    .collect();
+
+    let results = db
+        .vector_search("Item", "emb", &[0.5, 0.5, 0.5], 10, None, Some(&filters))
+        .expect("cross-type filter");
+    assert_eq!(
+        results.len(),
+        9,
+        "score > 0 (cross-type) should match 9 nodes (all except score=0.0)"
+    );
+}

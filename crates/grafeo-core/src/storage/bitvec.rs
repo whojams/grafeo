@@ -6,7 +6,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # use grafeo_core::storage::bitvec::BitVector;
 //! let bools = vec![true, false, true, true, false, false, true, false];
 //! let bitvec = BitVector::from_bools(&bools);
 //! // Stored as: 0b01001101 (1 byte instead of 8)

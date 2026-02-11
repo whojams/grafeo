@@ -1120,6 +1120,13 @@ impl ExpressionPredicate {
             (Value::Int64(a), Value::Float64(b)) | (Value::Float64(b), Value::Int64(a)) => {
                 (*a as f64 - b).abs() < f64::EPSILON
             }
+            // RDF stores numeric literals as strings; allow cross-type equality
+            (Value::String(s), Value::Int64(i)) | (Value::Int64(i), Value::String(s)) => {
+                s.parse::<i64>().is_ok_and(|n| n == *i)
+            }
+            (Value::String(s), Value::Float64(f)) | (Value::Float64(f), Value::String(s)) => {
+                s.parse::<f64>().is_ok_and(|n| (n - f).abs() < f64::EPSILON)
+            }
             _ => false,
         }
     }
@@ -1137,26 +1144,25 @@ impl ExpressionPredicate {
                 }
             }
             (Value::String(a), Value::String(b)) => Some(a.cmp(b) as i32),
-            (Value::Int64(a), Value::Float64(b)) => {
-                let af = *a as f64;
-                if af < *b {
-                    Some(-1)
-                } else if af > *b {
-                    Some(1)
-                } else {
-                    Some(0)
-                }
-            }
-            (Value::Float64(a), Value::Int64(b)) => {
-                let bf = *b as f64;
-                if *a < bf {
-                    Some(-1)
-                } else if *a > bf {
-                    Some(1)
-                } else {
-                    Some(0)
-                }
-            }
+            (Value::Int64(a), Value::Float64(b)) => (*a as f64).partial_cmp(b).map(|o| o as i32),
+            (Value::Float64(a), Value::Int64(b)) => a.partial_cmp(&(*b as f64)).map(|o| o as i32),
+            // RDF stores numeric literals as strings; allow cross-type comparison
+            (Value::String(s), Value::Int64(i)) => s
+                .parse::<f64>()
+                .ok()
+                .and_then(|n| n.partial_cmp(&(*i as f64)).map(|o| o as i32)),
+            (Value::Int64(i), Value::String(s)) => s
+                .parse::<f64>()
+                .ok()
+                .and_then(|n| (*i as f64).partial_cmp(&n).map(|o| o as i32)),
+            (Value::String(s), Value::Float64(f)) => s
+                .parse::<f64>()
+                .ok()
+                .and_then(|n| n.partial_cmp(f).map(|o| o as i32)),
+            (Value::Float64(f), Value::String(s)) => s
+                .parse::<f64>()
+                .ok()
+                .and_then(|n| f.partial_cmp(&n).map(|o| o as i32)),
             _ => None,
         }
     }
@@ -1201,10 +1207,22 @@ impl Operator for FilterOperator {
                 continue; // Skip entire chunk - zone map proves no matches
             }
 
-            // Apply predicate to create selection vector
-            let count = chunk.total_row_count();
-            let selection =
-                SelectionVector::from_predicate(count, |row| self.predicate.evaluate(&chunk, row));
+            // Apply predicate to create selection vector, respecting any
+            // existing selection from child operators (stacked filters).
+            let selection = if let Some(existing) = chunk.selection() {
+                let mut sel = SelectionVector::new_empty();
+                for pos in 0..existing.len() {
+                    if let Some(row) = existing.get(pos)
+                        && self.predicate.evaluate(&chunk, row)
+                    {
+                        sel.push(row);
+                    }
+                }
+                sel
+            } else {
+                let count = chunk.total_row_count();
+                SelectionVector::from_predicate(count, |row| self.predicate.evaluate(&chunk, row))
+            };
 
             // If nothing passes, skip to next chunk
             if selection.is_empty() {

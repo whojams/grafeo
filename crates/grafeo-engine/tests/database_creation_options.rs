@@ -195,3 +195,86 @@ fn session_reports_rdf_graph_model() {
     let session = db.session();
     assert_eq!(session.graph_model(), GraphModel::Rdf);
 }
+
+// --- SPARQL FILTER regression tests ---
+
+/// Regression test: SPARQL FILTER equality must coerce types.
+///
+/// RDF stores all literal values as `Value::String`, but SPARQL FILTER
+/// expressions parse numeric constants as `Value::Int64`.  Before the fix,
+/// `Eq` used Rust's `PartialEq` (`==`) which never considered
+/// `String("30") == Int64(30)`, causing FILTER(?age = 30) to return no rows.
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+#[test]
+fn sparql_filter_equality_coerces_string_to_numeric() {
+    use grafeo_common::types::Value;
+
+    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let session = db.session();
+
+    // Insert triples: :alice :age "30" ; :bob :age "25"
+    session
+        .execute_sparql(
+            r#"INSERT DATA {
+                <http://ex.org/alice> <http://ex.org/age> "30" .
+                <http://ex.org/bob>   <http://ex.org/age> "25" .
+            }"#,
+        )
+        .unwrap();
+
+    // FILTER(?age = 30) - the literal 30 is parsed as Int64, stored value is String "30"
+    let result = session
+        .execute_sparql(
+            r#"SELECT ?s ?age WHERE {
+                ?s <http://ex.org/age> ?age .
+                FILTER(?age = 30)
+            }"#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "FILTER(?age = 30) should match String '30' via type coercion"
+    );
+
+    // Verify the matched value
+    let age = &result.rows[0][1];
+    assert!(
+        matches!(age, Value::String(s) if s.as_str() == "30"),
+        "Expected String '30', got {age:?}"
+    );
+}
+
+/// Regression: FILTER inequality (!=) must also coerce types.
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+#[test]
+fn sparql_filter_inequality_coerces_string_to_numeric() {
+    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let session = db.session();
+
+    session
+        .execute_sparql(
+            r#"INSERT DATA {
+                <http://ex.org/alice> <http://ex.org/age> "30" .
+                <http://ex.org/bob>   <http://ex.org/age> "25" .
+            }"#,
+        )
+        .unwrap();
+
+    // FILTER(?age != 30) should return only bob (age "25")
+    let result = session
+        .execute_sparql(
+            r#"SELECT ?s ?age WHERE {
+                ?s <http://ex.org/age> ?age .
+                FILTER(?age != 30)
+            }"#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "FILTER(?age != 30) should exclude String '30'"
+    );
+}

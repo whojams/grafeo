@@ -2442,4 +2442,190 @@ mod tests {
         assert!(pred_le.evaluate(&chunk, 1)); // i64::MIN <= 0
         assert!(pred_le.evaluate(&chunk, 2)); // 0 <= 0
     }
+
+    // ── Cross-type equality (String ↔ numeric) ──────────────────────────
+
+    /// Regression test: RDF stores numeric literals as strings, so filters
+    /// like `FILTER(?age = 30)` compare `Value::String("30")` with
+    /// `Value::Int64(30)`.  The `values_equal` path must coerce.
+    #[test]
+    fn test_cross_type_string_int_equality() {
+        use crate::graph::lpg::LpgStore;
+
+        let store = Arc::new(LpgStore::new());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        // String "42" == Int64(42)
+        let pred = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::String("42".into()))),
+                op: BinaryFilterOp::Eq,
+                right: Box::new(FilterExpression::Literal(Value::Int64(42))),
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert!(pred.evaluate(&chunk, 0));
+
+        // String "42" != Int64(99)
+        let pred_ne = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::String("42".into()))),
+                op: BinaryFilterOp::Ne,
+                right: Box::new(FilterExpression::Literal(Value::Int64(99))),
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert!(pred_ne.evaluate(&chunk, 0));
+
+        // Non-numeric string should NOT equal any integer
+        let pred_bad = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::String("hello".into()))),
+                op: BinaryFilterOp::Eq,
+                right: Box::new(FilterExpression::Literal(Value::Int64(42))),
+            },
+            vc,
+            store,
+        );
+        assert!(!pred_bad.evaluate(&chunk, 0));
+    }
+
+    /// String ↔ Float64 equality: "7.25" == Float64(7.25)
+    #[test]
+    fn test_cross_type_string_float_equality() {
+        use crate::graph::lpg::LpgStore;
+
+        let store = Arc::new(LpgStore::new());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::String("7.25".into()))),
+                op: BinaryFilterOp::Eq,
+                right: Box::new(FilterExpression::Literal(Value::Float64(7.25))),
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert!(pred.evaluate(&chunk, 0));
+
+        // "7.25" != 2.5
+        let pred_ne = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::Float64(2.5))),
+                op: BinaryFilterOp::Ne,
+                right: Box::new(FilterExpression::Literal(Value::String("7.25".into()))),
+            },
+            vc,
+            store,
+        );
+        assert!(pred_ne.evaluate(&chunk, 0));
+    }
+
+    // ── Cross-type ordering (String ↔ numeric) ──────────────────────────
+
+    /// Regression test: String-encoded numbers must support range comparisons
+    /// so that `FILTER(?age > 25)` works when `?age` is stored as "30".
+    #[test]
+    fn test_cross_type_string_numeric_ordering() {
+        use crate::graph::lpg::LpgStore;
+
+        let store = Arc::new(LpgStore::new());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        // "30" > Int64(25)
+        let pred_gt = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::String("30".into()))),
+                op: BinaryFilterOp::Gt,
+                right: Box::new(FilterExpression::Literal(Value::Int64(25))),
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert!(pred_gt.evaluate(&chunk, 0));
+
+        // Int64(10) < "20.5" (cross Float64 path)
+        let pred_lt = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::Int64(10))),
+                op: BinaryFilterOp::Lt,
+                right: Box::new(FilterExpression::Literal(Value::String("20.5".into()))),
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert!(pred_lt.evaluate(&chunk, 0));
+
+        // "2.5" <= Float64(2.5)
+        let pred_le = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::String("2.5".into()))),
+                op: BinaryFilterOp::Le,
+                right: Box::new(FilterExpression::Literal(Value::Float64(2.5))),
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert!(pred_le.evaluate(&chunk, 0));
+
+        // Float64(100.0) >= "99.9"
+        let pred_ge = ExpressionPredicate::new(
+            FilterExpression::Binary {
+                left: Box::new(FilterExpression::Literal(Value::Float64(100.0))),
+                op: BinaryFilterOp::Ge,
+                right: Box::new(FilterExpression::Literal(Value::String("99.9".into()))),
+            },
+            vc,
+            store,
+        );
+        assert!(pred_ge.evaluate(&chunk, 0));
+    }
+
+    // ── Stacked filter (selection vector preservation) ───────────────────
+
+    /// Regression test: when two FilterOperators are stacked (child filter →
+    /// parent filter), the parent must respect the child's selection vector
+    /// instead of re-evaluating all physical rows.
+    #[test]
+    fn test_stacked_filters_respect_selection_vector() {
+        // Chunk: ages = [20, 35, 45, 25, 50]
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        for age in [20, 35, 45, 25, 50] {
+            builder.column_mut(0).unwrap().push_int64(age);
+            builder.advance_row();
+        }
+        let chunk = builder.finish();
+
+        let scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        // First filter: age > 25 → rows 1(35), 2(45), 4(50)
+        let pred1 = ComparisonPredicate::new(0, CompareOp::Gt, Value::Int64(25));
+        let filter1 = FilterOperator::new(Box::new(scan), Box::new(pred1));
+
+        // Second (stacked) filter: age < 50 → should intersect → rows 1(35), 2(45)
+        let pred2 = ComparisonPredicate::new(0, CompareOp::Lt, Value::Int64(50));
+        let mut filter2 = FilterOperator::new(Box::new(filter1), Box::new(pred2));
+
+        let result = filter2.next().unwrap().unwrap();
+        assert_eq!(
+            result.row_count(),
+            2,
+            "stacked filter should yield 2 rows (35, 45)"
+        );
+
+        // Verify it's exhausted
+        assert!(filter2.next().unwrap().is_none());
+    }
 }

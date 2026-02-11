@@ -4,6 +4,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 use parking_lot::RwLock;
 
@@ -62,6 +63,8 @@ pub struct GrafeoDB {
     wal: Option<Arc<WalManager>>,
     /// Query cache for parsed and optimized plans.
     query_cache: Arc<QueryCache>,
+    /// Shared commit counter for auto-GC across sessions.
+    commit_counter: Arc<AtomicUsize>,
     /// Whether the database is open.
     is_open: RwLock<bool>,
 }
@@ -214,6 +217,7 @@ impl GrafeoDB {
             #[cfg(feature = "wal")]
             wal,
             query_cache,
+            commit_counter: Arc::new(AtomicUsize::new(0)),
             is_open: RwLock::new(true),
         })
     }
@@ -294,6 +298,9 @@ impl GrafeoDB {
                 self.config.adaptive.clone(),
                 self.config.factorized_execution,
                 self.config.graph_model,
+                self.config.query_timeout,
+                Arc::clone(&self.commit_counter),
+                self.config.gc_interval,
             )
         }
         #[cfg(not(feature = "rdf"))]
@@ -305,6 +312,9 @@ impl GrafeoDB {
                 self.config.adaptive.clone(),
                 self.config.factorized_execution,
                 self.config.graph_model,
+                self.config.query_timeout,
+                Arc::clone(&self.commit_counter),
+                self.config.gc_interval,
             )
         }
     }
@@ -534,6 +544,17 @@ impl GrafeoDB {
     #[must_use]
     pub fn store(&self) -> &Arc<LpgStore> {
         &self.store
+    }
+
+    /// Garbage collects old MVCC versions that are no longer visible.
+    ///
+    /// Determines the minimum epoch required by active transactions and prunes
+    /// version chains older than that threshold. Also cleans up completed
+    /// transaction metadata in the transaction manager.
+    pub fn gc(&self) {
+        let min_epoch = self.tx_manager.min_active_epoch();
+        self.store.gc_versions(min_epoch);
+        self.tx_manager.gc();
     }
 
     /// Returns the buffer manager for memory-aware operations.
@@ -795,7 +816,9 @@ impl GrafeoDB {
         {
             for label in &node.labels {
                 if let Some(index) = self.store.get_vector_index(label.as_str(), key) {
-                    index.insert(id, &vec);
+                    let accessor =
+                        grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, key);
+                    index.insert(id, &vec, &accessor);
                 }
             }
         }
@@ -844,7 +867,11 @@ impl GrafeoDB {
                     if let Some(grafeo_common::types::Value::Vector(v)) =
                         node.properties.get(&prop_key)
                     {
-                        index.insert(id, v);
+                        let accessor = grafeo_core::index::vector::PropertyVectorAccessor::new(
+                            &self.store,
+                            property,
+                        );
+                        index.insert(id, v, &accessor);
                     }
                 }
             }
@@ -1183,8 +1210,10 @@ impl GrafeoDB {
             }
 
             let index = HnswIndex::with_capacity(config, vectors.len());
+            let accessor =
+                grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, property);
             for (node_id, vec) in &vectors {
-                index.insert(*node_id, vec);
+                index.insert(*node_id, vec, &accessor);
             }
 
             self.store
@@ -1321,14 +1350,19 @@ impl GrafeoDB {
             ))
         })?;
 
+        let accessor =
+            grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, property);
+
         let results = match self.compute_filter_allowlist(label, filters) {
             Some(allowlist) => match ef {
-                Some(ef_val) => index.search_with_ef_and_filter(query, k, ef_val, &allowlist),
-                None => index.search_with_filter(query, k, &allowlist),
+                Some(ef_val) => {
+                    index.search_with_ef_and_filter(query, k, ef_val, &allowlist, &accessor)
+                }
+                None => index.search_with_filter(query, k, &allowlist, &accessor),
             },
             None => match ef {
-                Some(ef_val) => index.search_with_ef(query, k, ef_val),
-                None => index.search(query, k),
+                Some(ef_val) => index.search_with_ef(query, k, ef_val, &accessor),
+                None => index.search(query, k, &accessor),
             },
         };
 
@@ -1395,11 +1429,13 @@ impl GrafeoDB {
         // Auto-insert into matching vector index if one exists
         #[cfg(feature = "vector-index")]
         if let Some(index) = self.store.get_vector_index(label, property) {
+            let accessor =
+                grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, property);
             for &id in &ids {
                 if let Some(node) = self.store.get_node(id) {
                     let pk = grafeo_common::types::PropertyKey::new(property);
                     if let Some(grafeo_common::types::Value::Vector(v)) = node.properties.get(&pk) {
-                        index.insert(id, v);
+                        index.insert(id, v, &accessor);
                     }
                 }
             }
@@ -1436,16 +1472,19 @@ impl GrafeoDB {
             ))
         })?;
 
+        let accessor =
+            grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, property);
+
         let results = match self.compute_filter_allowlist(label, filters) {
             Some(allowlist) => match ef {
                 Some(ef_val) => {
-                    index.batch_search_with_ef_and_filter(queries, k, ef_val, &allowlist)
+                    index.batch_search_with_ef_and_filter(queries, k, ef_val, &allowlist, &accessor)
                 }
-                None => index.batch_search_with_filter(queries, k, &allowlist),
+                None => index.batch_search_with_filter(queries, k, &allowlist, &accessor),
             },
             None => match ef {
-                Some(ef_val) => index.batch_search_with_ef(queries, k, ef_val),
-                None => index.batch_search(queries, k),
+                Some(ef_val) => index.batch_search_with_ef(queries, k, ef_val, &accessor),
+                None => index.batch_search(queries, k, &accessor),
             },
         };
 
@@ -1495,18 +1534,23 @@ impl GrafeoDB {
             ))
         })?;
 
+        let accessor =
+            grafeo_core::index::vector::PropertyVectorAccessor::new(&self.store, property);
+
         let fetch_k = fetch_k.unwrap_or(k.saturating_mul(4).max(k));
         let lambda = lambda.unwrap_or(0.5);
 
         // Step 1: Fetch candidates from HNSW (with optional filter)
         let initial_results = match self.compute_filter_allowlist(label, filters) {
             Some(allowlist) => match ef {
-                Some(ef_val) => index.search_with_ef_and_filter(query, fetch_k, ef_val, &allowlist),
-                None => index.search_with_filter(query, fetch_k, &allowlist),
+                Some(ef_val) => {
+                    index.search_with_ef_and_filter(query, fetch_k, ef_val, &allowlist, &accessor)
+                }
+                None => index.search_with_filter(query, fetch_k, &allowlist, &accessor),
             },
             None => match ef {
-                Some(ef_val) => index.search_with_ef(query, fetch_k, ef_val),
-                None => index.search(query, fetch_k),
+                Some(ef_val) => index.search_with_ef(query, fetch_k, ef_val, &accessor),
+                None => index.search(query, fetch_k, &accessor),
             },
         };
 
@@ -1515,10 +1559,11 @@ impl GrafeoDB {
         }
 
         // Step 2: Retrieve stored vectors for MMR pairwise comparison
+        use grafeo_core::index::vector::VectorAccessor;
         let candidates: Vec<(grafeo_common::types::NodeId, f32, std::sync::Arc<[f32]>)> =
             initial_results
                 .into_iter()
-                .filter_map(|(id, dist)| index.get(id).map(|vec| (id, dist, vec)))
+                .filter_map(|(id, dist)| accessor.get_vector(id).map(|vec| (id, dist, vec)))
                 .collect();
 
         // Step 3: Build slice-based candidates for mmr_select

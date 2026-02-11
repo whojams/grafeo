@@ -2,6 +2,21 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.0] - 2026-02-11
+
+Internal engine improvements: ~50% memory savings for vector workloads, safer internals, production-grade error reporting, query timeouts, and automatic MVCC garbage collection.
+
+### Added
+
+- **Standardized error codes**: all errors now carry machine-readable `GRAFEO-XXXX` codes (Q = query, T = transaction, S = storage, V = validation, X = internal) with `error_code()` accessor and `is_retryable()` hint
+- **Query timeout**: configurable `query_timeout` in `Config` stops long-running queries cleanly with `GRAFEO-Q003` error. Set via `Config::default().with_query_timeout(Duration::from_secs(30))`
+- **MVCC auto-GC**: version chains are garbage-collected automatically every N commits (default: 100, configurable via `with_gc_interval()`). Also exposes `db.gc()` for manual control
+
+### Improved
+
+- **Topology-only HNSW**: vectors are no longer duplicated inside the HNSW index — the index stores only graph topology and reads vectors on-demand through a `VectorAccessor` trait. ~50% memory reduction for vector workloads
+- **Safe ID conversions**: replaced 6 `unsafe transmute_copy` calls with safe `EntityId::as_u64()` / `EntityId::from_u64()` methods
+
 ## [0.4.4] - 2026-02-11
 
 Adds SQL/PGQ (SQL:2023) graph queries, MMR search for RAG, auto-syncing vector indexes, and a fully rebuilt CLI with an interactive shell.

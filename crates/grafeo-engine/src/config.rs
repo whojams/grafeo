@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// The graph data model for a database.
 ///
@@ -146,6 +147,19 @@ pub struct Config {
     /// (e.g. required properties, uniqueness). The server sets this for JSON
     /// Schema databases and populates constraints after creation.
     pub schema_constraints: bool,
+
+    /// Maximum time a single query may run before being cancelled.
+    ///
+    /// When set, the executor checks the deadline between operator batches and
+    /// returns `QueryError::timeout()` if the wall-clock limit is exceeded.
+    /// `None` means no timeout (queries may run indefinitely).
+    pub query_timeout: Option<Duration>,
+
+    /// Run MVCC version garbage collection every N commits.
+    ///
+    /// Old versions that are no longer visible to any active transaction are
+    /// pruned to reclaim memory. Set to 0 to disable automatic GC.
+    pub gc_interval: usize,
 }
 
 /// Configuration for adaptive query execution.
@@ -231,6 +245,8 @@ impl Default for Config {
             factorized_execution: true,
             wal_durability: DurabilityMode::default(),
             schema_constraints: false,
+            query_timeout: None,
+            gc_interval: 100,
         }
     }
 }
@@ -346,6 +362,22 @@ impl Config {
         self
     }
 
+    /// Sets the maximum time a query may run before being cancelled.
+    #[must_use]
+    pub fn with_query_timeout(mut self, timeout: Duration) -> Self {
+        self.query_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets the MVCC garbage collection interval (every N commits).
+    ///
+    /// Set to 0 to disable automatic GC.
+    #[must_use]
+    pub fn with_gc_interval(mut self, interval: usize) -> Self {
+        self.gc_interval = interval;
+        self
+    }
+
     /// Validates the configuration, returning an error for invalid combinations.
     ///
     /// Called automatically by [`GrafeoDB::with_config()`](crate::GrafeoDB::with_config).
@@ -411,6 +443,8 @@ mod tests {
         assert!(config.factorized_execution);
         assert_eq!(config.wal_durability, DurabilityMode::default());
         assert!(!config.schema_constraints);
+        assert!(config.query_timeout.is_none());
+        assert_eq!(config.gc_interval, 100);
     }
 
     #[test]
@@ -617,6 +651,28 @@ mod tests {
         assert!(config.schema_constraints);
     }
 
+    // --- query_timeout tests ---
+
+    #[test]
+    fn test_config_with_query_timeout() {
+        let config = Config::in_memory().with_query_timeout(Duration::from_secs(30));
+        assert_eq!(config.query_timeout, Some(Duration::from_secs(30)));
+    }
+
+    // --- gc_interval tests ---
+
+    #[test]
+    fn test_config_with_gc_interval() {
+        let config = Config::in_memory().with_gc_interval(50);
+        assert_eq!(config.gc_interval, 50);
+    }
+
+    #[test]
+    fn test_config_gc_disabled() {
+        let config = Config::in_memory().with_gc_interval(0);
+        assert_eq!(config.gc_interval, 0);
+    }
+
     // --- validate() tests ---
 
     #[test]
@@ -687,7 +743,8 @@ mod tests {
             .with_wal_durability(DurabilityMode::Sync)
             .with_schema_constraints()
             .without_backward_edges()
-            .with_spill_path("/tmp/spill");
+            .with_spill_path("/tmp/spill")
+            .with_query_timeout(Duration::from_secs(60));
 
         assert_eq!(config.graph_model, GraphModel::Lpg);
         assert!(config.path.is_some());
@@ -698,6 +755,7 @@ mod tests {
         assert!(config.schema_constraints);
         assert!(!config.backward_edges);
         assert!(config.spill_path.is_some());
+        assert_eq!(config.query_timeout, Some(Duration::from_secs(60)));
         assert!(config.validate().is_ok());
     }
 }

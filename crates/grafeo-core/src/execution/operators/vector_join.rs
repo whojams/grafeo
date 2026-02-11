@@ -256,7 +256,11 @@ impl VectorJoinOperator {
         #[cfg(feature = "vector-index")]
         {
             if let Some(ref index) = self.index {
-                return index.search_with_ef(query, self.k, self.ef);
+                let accessor = crate::index::vector::PropertyVectorAccessor::new(
+                    &self.store,
+                    &*self.right_property,
+                );
+                return index.search_with_ef(query, self.k, self.ef, &accessor);
             }
         }
 

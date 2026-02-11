@@ -2,8 +2,147 @@
 //!
 //! [`Error`] is the main error type you'll encounter. For query-specific errors,
 //! [`QueryError`] includes source location and hints to help users fix issues.
+//!
+//! Every error carries a machine-readable [`ErrorCode`] (e.g. `GRAFEO-Q001`)
+//! for programmatic handling across the ecosystem (core, server, web, bindings).
 
 use std::fmt;
+
+/// Machine-readable error code for programmatic error handling.
+///
+/// Error codes follow the pattern `GRAFEO-{category}{number}`:
+/// - **Q**: Query errors (parse, semantic, timeout)
+/// - **T**: Transaction errors (conflict, timeout, state)
+/// - **S**: Storage errors (full, corruption)
+/// - **V**: Validation errors (not found, type mismatch, invalid input)
+/// - **X**: Internal errors (should not happen)
+///
+/// Clients can match on these codes without parsing error messages.
+///
+/// # Examples
+///
+/// ```
+/// use grafeo_common::utils::error::{Error, ErrorCode};
+///
+/// let err = Error::Internal("something broke".into());
+/// assert_eq!(err.error_code().as_str(), "GRAFEO-X001");
+/// assert!(!err.error_code().is_retryable());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorCode {
+    // Query errors (Q)
+    /// Query failed to parse.
+    QuerySyntax,
+    /// Query parsed but is invalid (unknown label, type mismatch, etc.).
+    QuerySemantic,
+    /// Query exceeded timeout.
+    QueryTimeout,
+    /// Feature not supported for this query language.
+    QueryUnsupported,
+    /// Query optimization failed.
+    QueryOptimization,
+    /// Query execution failed.
+    QueryExecution,
+
+    // Transaction errors (T)
+    /// Write-write conflict (retry possible).
+    TransactionConflict,
+    /// Transaction exceeded TTL.
+    TransactionTimeout,
+    /// Transaction is read-only but attempted a write.
+    TransactionReadOnly,
+    /// Invalid transaction state.
+    TransactionInvalidState,
+    /// Serialization failure (SSI violation).
+    TransactionSerialization,
+    /// Deadlock detected.
+    TransactionDeadlock,
+
+    // Storage errors (S)
+    /// Memory or disk limit reached.
+    StorageFull,
+    /// WAL or data corruption detected.
+    StorageCorrupted,
+    /// Recovery from WAL failed.
+    StorageRecoveryFailed,
+
+    // Validation errors (V)
+    /// Request validation failed.
+    InvalidInput,
+    /// Node not found.
+    NodeNotFound,
+    /// Edge not found.
+    EdgeNotFound,
+    /// Property key not found.
+    PropertyNotFound,
+    /// Label not found.
+    LabelNotFound,
+    /// Type mismatch.
+    TypeMismatch,
+
+    // Internal errors (X)
+    /// Unexpected internal error.
+    Internal,
+    /// Serialization/deserialization error.
+    SerializationError,
+    /// I/O error.
+    IoError,
+}
+
+impl ErrorCode {
+    /// Returns the string code (e.g. `"GRAFEO-Q001"`).
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::QuerySyntax => "GRAFEO-Q001",
+            Self::QuerySemantic => "GRAFEO-Q002",
+            Self::QueryTimeout => "GRAFEO-Q003",
+            Self::QueryUnsupported => "GRAFEO-Q004",
+            Self::QueryOptimization => "GRAFEO-Q005",
+            Self::QueryExecution => "GRAFEO-Q006",
+
+            Self::TransactionConflict => "GRAFEO-T001",
+            Self::TransactionTimeout => "GRAFEO-T002",
+            Self::TransactionReadOnly => "GRAFEO-T003",
+            Self::TransactionInvalidState => "GRAFEO-T004",
+            Self::TransactionSerialization => "GRAFEO-T005",
+            Self::TransactionDeadlock => "GRAFEO-T006",
+
+            Self::StorageFull => "GRAFEO-S001",
+            Self::StorageCorrupted => "GRAFEO-S002",
+            Self::StorageRecoveryFailed => "GRAFEO-S003",
+
+            Self::InvalidInput => "GRAFEO-V001",
+            Self::NodeNotFound => "GRAFEO-V002",
+            Self::EdgeNotFound => "GRAFEO-V003",
+            Self::PropertyNotFound => "GRAFEO-V004",
+            Self::LabelNotFound => "GRAFEO-V005",
+            Self::TypeMismatch => "GRAFEO-V006",
+
+            Self::Internal => "GRAFEO-X001",
+            Self::SerializationError => "GRAFEO-X002",
+            Self::IoError => "GRAFEO-X003",
+        }
+    }
+
+    /// Whether this error is retryable (client should retry the operation).
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::TransactionConflict
+                | Self::TransactionTimeout
+                | Self::TransactionDeadlock
+                | Self::QueryTimeout
+        )
+    }
+}
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// The main error type - covers everything that can go wrong in Grafeo.
 ///
@@ -53,23 +192,48 @@ pub enum Error {
     Internal(String),
 }
 
+impl Error {
+    /// Returns the machine-readable error code for this error.
+    #[must_use]
+    pub fn error_code(&self) -> ErrorCode {
+        match self {
+            Error::NodeNotFound(_) => ErrorCode::NodeNotFound,
+            Error::EdgeNotFound(_) => ErrorCode::EdgeNotFound,
+            Error::PropertyNotFound(_) => ErrorCode::PropertyNotFound,
+            Error::LabelNotFound(_) => ErrorCode::LabelNotFound,
+            Error::TypeMismatch { .. } => ErrorCode::TypeMismatch,
+            Error::InvalidValue(_) => ErrorCode::InvalidInput,
+            Error::Transaction(e) => e.error_code(),
+            Error::Storage(e) => e.error_code(),
+            Error::Query(e) => e.error_code(),
+            Error::Serialization(_) => ErrorCode::SerializationError,
+            Error::Io(_) => ErrorCode::IoError,
+            Error::Internal(_) => ErrorCode::Internal,
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let code = self.error_code();
         match self {
-            Error::NodeNotFound(id) => write!(f, "Node not found: {id}"),
-            Error::EdgeNotFound(id) => write!(f, "Edge not found: {id}"),
-            Error::PropertyNotFound(key) => write!(f, "Property not found: {key}"),
-            Error::LabelNotFound(label) => write!(f, "Label not found: {label}"),
+            Error::NodeNotFound(id) => write!(f, "{code}: Node not found: {id}"),
+            Error::EdgeNotFound(id) => write!(f, "{code}: Edge not found: {id}"),
+            Error::PropertyNotFound(key) => write!(f, "{code}: Property not found: {key}"),
+            Error::LabelNotFound(label) => write!(f, "{code}: Label not found: {label}"),
             Error::TypeMismatch { expected, found } => {
-                write!(f, "Type mismatch: expected {expected}, found {found}")
+                write!(
+                    f,
+                    "{code}: Type mismatch: expected {expected}, found {found}"
+                )
             }
-            Error::InvalidValue(msg) => write!(f, "Invalid value: {msg}"),
-            Error::Transaction(e) => write!(f, "Transaction error: {e}"),
-            Error::Storage(e) => write!(f, "Storage error: {e}"),
-            Error::Query(e) => write!(f, "Query error: {e}"),
-            Error::Serialization(msg) => write!(f, "Serialization error: {msg}"),
-            Error::Io(e) => write!(f, "I/O error: {e}"),
-            Error::Internal(msg) => write!(f, "Internal error: {msg}"),
+            Error::InvalidValue(msg) => write!(f, "{code}: Invalid value: {msg}"),
+            Error::Transaction(e) => write!(f, "{code}: {e}"),
+            Error::Storage(e) => write!(f, "{code}: {e}"),
+            Error::Query(e) => write!(f, "{e}"),
+            Error::Serialization(msg) => write!(f, "{code}: Serialization error: {msg}"),
+            Error::Io(e) => write!(f, "{code}: I/O error: {e}"),
+            Error::Internal(msg) => write!(f, "{code}: Internal error: {msg}"),
         }
     }
 }
@@ -123,6 +287,23 @@ pub enum TransactionError {
     InvalidState(String),
 }
 
+impl TransactionError {
+    /// Returns the machine-readable error code for this transaction error.
+    #[must_use]
+    pub const fn error_code(&self) -> ErrorCode {
+        match self {
+            Self::Aborted | Self::Conflict | Self::WriteConflict(_) => {
+                ErrorCode::TransactionConflict
+            }
+            Self::SerializationFailure(_) => ErrorCode::TransactionSerialization,
+            Self::Deadlock => ErrorCode::TransactionDeadlock,
+            Self::Timeout => ErrorCode::TransactionTimeout,
+            Self::ReadOnly => ErrorCode::TransactionReadOnly,
+            Self::InvalidState(_) => ErrorCode::TransactionInvalidState,
+        }
+    }
+}
+
 impl fmt::Display for TransactionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -165,6 +346,19 @@ pub enum StorageError {
 
     /// Checkpoint failed.
     CheckpointFailed(String),
+}
+
+impl StorageError {
+    /// Returns the machine-readable error code for this storage error.
+    #[must_use]
+    pub const fn error_code(&self) -> ErrorCode {
+        match self {
+            Self::Corruption(_) => ErrorCode::StorageCorrupted,
+            Self::Full => ErrorCode::StorageFull,
+            Self::InvalidWalEntry(_) | Self::CheckpointFailed(_) => ErrorCode::StorageCorrupted,
+            Self::RecoveryFailed(_) => ErrorCode::StorageRecoveryFailed,
+        }
+    }
 }
 
 impl fmt::Display for StorageError {
@@ -215,6 +409,23 @@ impl QueryError {
             span: None,
             source_query: None,
             hint: None,
+        }
+    }
+
+    /// Creates a query timeout error.
+    #[must_use]
+    pub fn timeout() -> Self {
+        Self::new(QueryErrorKind::Execution, "Query exceeded timeout")
+    }
+
+    /// Returns the machine-readable error code for this query error.
+    #[must_use]
+    pub const fn error_code(&self) -> ErrorCode {
+        match self.kind {
+            QueryErrorKind::Lexer | QueryErrorKind::Syntax => ErrorCode::QuerySyntax,
+            QueryErrorKind::Semantic => ErrorCode::QuerySemantic,
+            QueryErrorKind::Optimization => ErrorCode::QueryOptimization,
+            QueryErrorKind::Execution => ErrorCode::QueryExecution,
         }
     }
 
@@ -341,7 +552,7 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = Error::NodeNotFound(crate::types::NodeId::new(42));
-        assert_eq!(err.to_string(), "Node not found: 42");
+        assert_eq!(err.to_string(), "GRAFEO-V002: Node not found: 42");
 
         let err = Error::TypeMismatch {
             expected: "INT64".to_string(),
@@ -349,8 +560,33 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "Type mismatch: expected INT64, found STRING"
+            "GRAFEO-V006: Type mismatch: expected INT64, found STRING"
         );
+    }
+
+    #[test]
+    fn test_error_codes() {
+        assert_eq!(
+            Error::Internal("x".into()).error_code(),
+            ErrorCode::Internal
+        );
+        assert_eq!(ErrorCode::Internal.as_str(), "GRAFEO-X001");
+        assert!(!ErrorCode::Internal.is_retryable());
+
+        assert_eq!(
+            Error::Transaction(TransactionError::Conflict).error_code(),
+            ErrorCode::TransactionConflict
+        );
+        assert!(ErrorCode::TransactionConflict.is_retryable());
+        assert!(ErrorCode::QueryTimeout.is_retryable());
+        assert!(!ErrorCode::StorageFull.is_retryable());
+    }
+
+    #[test]
+    fn test_query_timeout() {
+        let err = QueryError::timeout();
+        assert_eq!(err.kind, QueryErrorKind::Execution);
+        assert!(err.message.contains("timeout"));
     }
 
     #[test]

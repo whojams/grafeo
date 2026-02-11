@@ -1,11 +1,10 @@
 //! Vector accessor trait for reading vectors by node ID.
 //!
 //! This module provides the [`VectorAccessor`] trait, which decouples vector
-//! storage from vector indexing. In the current architecture, HNSW stores a
-//! copy of each vector internally. In a future version (0.5.0), HNSW will
-//! become topology-only (neighbor lists) and read vectors through this trait
-//! from [`PropertyStorage`] — the single source of truth — halving memory
-//! usage for vector workloads.
+//! storage from vector indexing. The HNSW index is topology-only (neighbor
+//! lists only, no stored vectors) and reads vectors through this trait from
+//! [`PropertyStorage`] — the single source of truth — halving memory usage
+//! for vector workloads.
 //!
 //! # Example
 //!
@@ -29,8 +28,8 @@ use crate::graph::lpg::LpgStore;
 
 /// Trait for reading vectors by node ID.
 ///
-/// Enables HNSW to be topology-only in the future — vectors live in
-/// property storage, not in HNSW nodes.
+/// HNSW is topology-only — vectors live in property storage, not in
+/// HNSW nodes. This trait provides the bridge for reading them.
 pub trait VectorAccessor: Send + Sync {
     /// Returns the vector associated with the given node ID, if it exists.
     fn get_vector(&self, id: NodeId) -> Option<Arc<[f32]>>;

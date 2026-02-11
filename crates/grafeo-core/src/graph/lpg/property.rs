@@ -72,13 +72,38 @@ pub enum CompareOp {
     Ge,
 }
 
-/// Marker trait for IDs that can key into property storage.
+/// Trait for IDs that can key into property storage.
 ///
 /// Implemented for [`NodeId`] and [`EdgeId`] - you can store properties on both.
-pub trait EntityId: Copy + Eq + Hash + 'static {}
+/// Provides safe conversions to/from `u64` for compression, replacing unsafe transmute.
+pub trait EntityId: Copy + Eq + Hash + 'static {
+    /// Returns the raw `u64` value.
+    fn as_u64(self) -> u64;
+    /// Creates an ID from a raw `u64` value.
+    fn from_u64(v: u64) -> Self;
+}
 
-impl EntityId for NodeId {}
-impl EntityId for EdgeId {}
+impl EntityId for NodeId {
+    #[inline]
+    fn as_u64(self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn from_u64(v: u64) -> Self {
+        Self(v)
+    }
+}
+
+impl EntityId for EdgeId {
+    #[inline]
+    fn as_u64(self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn from_u64(v: u64) -> Self {
+        Self(v)
+    }
+}
 
 /// Thread-safe columnar property storage.
 ///
@@ -790,8 +815,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
         for (&id, value) in &self.values {
             match value {
                 Value::Int64(v) => {
-                    // Convert Id to u64 for indexing (assumes Id can be converted)
-                    let id_u64 = unsafe { std::mem::transmute_copy::<Id, u64>(&id) };
+                    let id_u64 = id.as_u64();
                     values.push((id_u64, *v));
                 }
                 _ => {
@@ -935,7 +959,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
 
                     for (i, id_u64) in index_to_id.iter().enumerate() {
                         if let Some(&value) = signed.get(i) {
-                            let id: Id = unsafe { std::mem::transmute_copy(id_u64) };
+                            let id = Id::from_u64(*id_u64);
                             self.values.insert(id, Value::Int64(value));
                         }
                     }
@@ -959,7 +983,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
                 if let Ok(values) = TypeSpecificCompressor::decompress_booleans(&data) {
                     for (i, id_u64) in index_to_id.iter().enumerate() {
                         if let Some(&value) = values.get(i) {
-                            let id: Id = unsafe { std::mem::transmute_copy(id_u64) };
+                            let id = Id::from_u64(*id_u64);
                             self.values.insert(id, Value::Bool(value));
                         }
                     }

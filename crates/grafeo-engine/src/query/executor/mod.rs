@@ -2,10 +2,12 @@
 //!
 //! Executes physical plans and produces results.
 
+use std::time::Instant;
+
 use crate::config::AdaptiveConfig;
 use crate::database::QueryResult;
 use grafeo_common::types::{LogicalType, Value};
-use grafeo_common::utils::error::{Error, Result};
+use grafeo_common::utils::error::{Error, QueryError, Result};
 use grafeo_core::execution::operators::{Operator, OperatorError};
 use grafeo_core::execution::{
     AdaptiveContext, AdaptiveSummary, CardinalityTrackingWrapper, DataChunk, SharedAdaptiveContext,
@@ -17,6 +19,8 @@ pub struct Executor {
     columns: Vec<String>,
     /// Column types for the result.
     column_types: Vec<LogicalType>,
+    /// Wall-clock deadline after which execution is aborted.
+    deadline: Option<Instant>,
 }
 
 impl Executor {
@@ -26,6 +30,7 @@ impl Executor {
         Self {
             columns: Vec::new(),
             column_types: Vec::new(),
+            deadline: None,
         }
     }
 
@@ -36,6 +41,7 @@ impl Executor {
         Self {
             columns,
             column_types: vec![LogicalType::Any; len],
+            deadline: None,
         }
     }
 
@@ -45,19 +51,39 @@ impl Executor {
         Self {
             columns,
             column_types,
+            deadline: None,
         }
+    }
+
+    /// Sets a wall-clock deadline for query execution.
+    #[must_use]
+    pub fn with_deadline(mut self, deadline: Option<Instant>) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    /// Checks whether the deadline has been exceeded.
+    fn check_deadline(&self) -> Result<()> {
+        if let Some(deadline) = self.deadline
+            && Instant::now() >= deadline
+        {
+            return Err(Error::Query(QueryError::timeout()));
+        }
+        Ok(())
     }
 
     /// Executes a physical operator and collects all results.
     ///
     /// # Errors
     ///
-    /// Returns an error if operator execution fails.
+    /// Returns an error if operator execution fails or the query timeout is exceeded.
     pub fn execute(&self, operator: &mut dyn Operator) -> Result<QueryResult> {
         let mut result = QueryResult::with_types(self.columns.clone(), self.column_types.clone());
         let mut types_captured = !result.column_types.iter().all(|t| *t == LogicalType::Any);
 
         loop {
+            self.check_deadline()?;
+
             match operator.next() {
                 Ok(Some(chunk)) => {
                     // Capture column types from first non-empty chunk
@@ -79,7 +105,7 @@ impl Executor {
     ///
     /// # Errors
     ///
-    /// Returns an error if operator execution fails.
+    /// Returns an error if operator execution fails or the query timeout is exceeded.
     pub fn execute_with_limit(
         &self,
         operator: &mut dyn Operator,
@@ -93,6 +119,8 @@ impl Executor {
             if collected >= limit {
                 break;
             }
+
+            self.check_deadline()?;
 
             match operator.next() {
                 Ok(Some(chunk)) => {
@@ -237,6 +265,8 @@ impl Executor {
         let check_interval = config.min_rows;
 
         loop {
+            self.check_deadline()?;
+
             match wrapped.next() {
                 Ok(Some(chunk)) => {
                     let chunk_rows = chunk.row_count();
@@ -385,5 +415,34 @@ mod tests {
 
         let result = executor.execute_with_limit(&mut op, 5).unwrap();
         assert_eq!(result.row_count(), 5);
+    }
+
+    #[test]
+    fn test_executor_timeout_expired() {
+        use std::time::{Duration, Instant};
+
+        // Set a deadline that has already passed
+        let executor = Executor::with_columns(vec!["value".to_string()]).with_deadline(Some(
+            Instant::now().checked_sub(Duration::from_secs(1)).unwrap(),
+        ));
+        let mut op = MockIntOperator::new(vec![1, 2, 3], 10);
+
+        let result = executor.execute(&mut op);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Query exceeded timeout"),
+            "Expected timeout error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_executor_no_timeout() {
+        // No deadline set - should execute normally
+        let executor = Executor::with_columns(vec!["value".to_string()]).with_deadline(None);
+        let mut op = MockIntOperator::new(vec![1, 2, 3], 10);
+
+        let result = executor.execute(&mut op).unwrap();
+        assert_eq!(result.row_count(), 3);
     }
 }

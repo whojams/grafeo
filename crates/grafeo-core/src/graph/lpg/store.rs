@@ -2063,6 +2063,47 @@ impl LpgStore {
         }
     }
 
+    /// Garbage collects old versions that are no longer visible to any transaction.
+    ///
+    /// Versions older than `min_epoch` are pruned from version chains, keeping
+    /// at most one old version per entity as a baseline. Empty chains are removed.
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn gc_versions(&self, min_epoch: EpochId) {
+        {
+            let mut nodes = self.nodes.write();
+            for chain in nodes.values_mut() {
+                chain.gc(min_epoch);
+            }
+            nodes.retain(|_, chain| !chain.is_empty());
+        }
+        {
+            let mut edges = self.edges.write();
+            for chain in edges.values_mut() {
+                chain.gc(min_epoch);
+            }
+            edges.retain(|_, chain| !chain.is_empty());
+        }
+    }
+
+    /// Garbage collects old versions (tiered storage variant).
+    #[cfg(feature = "tiered-storage")]
+    pub fn gc_versions(&self, min_epoch: EpochId) {
+        {
+            let mut versions = self.node_versions.write();
+            for index in versions.values_mut() {
+                index.gc(min_epoch);
+            }
+            versions.retain(|_, index| !index.is_empty());
+        }
+        {
+            let mut versions = self.edge_versions.write();
+            for index in versions.values_mut() {
+                index.gc(min_epoch);
+            }
+            versions.retain(|_, index| !index.is_empty());
+        }
+    }
+
     /// Freezes an epoch from hot (arena) storage to cold (compressed) storage.
     ///
     /// This is called by the transaction manager when an epoch becomes eligible

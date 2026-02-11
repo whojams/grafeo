@@ -26,13 +26,14 @@
 //! let config = HnswConfig::new(384, DistanceMetric::Cosine);
 //! let mut index = QuantizedHnswIndex::new(config, QuantizationType::Scalar);
 //!
-//! // Insert vectors (full precision stored, quantized for search)
+//! // Insert vectors (full precision stored internally, quantized for search)
 //! index.insert(NodeId::new(1), &vec![0.1f32; 384]);
 //!
 //! // Search with rescoring (default: rescore top 2*k candidates)
 //! let results = index.search(&query, 10);
 //! ```
 
+use super::VectorAccessor;
 use super::quantization::{BinaryQuantizer, ProductQuantizer, QuantizationType, ScalarQuantizer};
 use super::{HnswConfig, HnswIndex, compute_distance};
 use grafeo_common::types::NodeId;
@@ -52,8 +53,10 @@ use std::sync::Arc;
 ///
 /// This achieves near-full-precision recall with significantly reduced memory.
 pub struct QuantizedHnswIndex {
-    /// The underlying HNSW index (stores full vectors).
+    /// The underlying HNSW index (topology only).
     hnsw: HnswIndex,
+    /// Full-precision vector storage for rescoring and accessor use.
+    vectors: RwLock<HashMap<NodeId, Arc<[f32]>>>,
     /// Quantization type.
     quantization_type: QuantizationType,
     /// Scalar quantizer (if using scalar quantization).
@@ -90,6 +93,7 @@ impl QuantizedHnswIndex {
     pub fn new(config: HnswConfig, quantization: QuantizationType) -> Self {
         Self {
             hnsw: HnswIndex::new(config),
+            vectors: RwLock::new(HashMap::new()),
             quantization_type: quantization,
             scalar_quantizer: RwLock::new(None),
             product_quantizer: RwLock::new(None),
@@ -109,6 +113,7 @@ impl QuantizedHnswIndex {
     pub fn with_seed(config: HnswConfig, quantization: QuantizationType, seed: u64) -> Self {
         Self {
             hnsw: HnswIndex::with_seed(config, seed),
+            vectors: RwLock::new(HashMap::new()),
             quantization_type: quantization,
             scalar_quantizer: RwLock::new(None),
             product_quantizer: RwLock::new(None),
@@ -227,6 +232,15 @@ impl QuantizedHnswIndex {
         self.memory_usage() as f32 / full_size as f32
     }
 
+    /// Returns a vector accessor backed by this index's internal vector store.
+    fn accessor(&self) -> impl VectorAccessor + '_ {
+        let vectors = self.vectors.read();
+        // Clone the map reference so the closure is self-contained
+        let snapshot: HashMap<NodeId, Arc<[f32]>> =
+            vectors.iter().map(|(&id, v)| (id, Arc::clone(v))).collect();
+        move |id: NodeId| -> Option<Arc<[f32]>> { snapshot.get(&id).cloned() }
+    }
+
     /// Inserts a vector into the index.
     ///
     /// The vector is stored in full precision and also quantized for search.
@@ -237,8 +251,13 @@ impl QuantizedHnswIndex {
     ///
     /// Panics if vector dimensions don't match configuration.
     pub fn insert(&self, id: NodeId, vector: &[f32]) {
-        // Insert into HNSW (stores full precision)
-        self.hnsw.insert(id, vector);
+        // Store full-precision vector
+        let arc: Arc<[f32]> = vector.into();
+        self.vectors.write().insert(id, arc);
+
+        // Build accessor from our internal store and insert into topology-only HNSW
+        let accessor = self.accessor();
+        self.hnsw.insert(id, vector, &accessor);
 
         // Handle quantization
         match self.quantization_type {
@@ -272,10 +291,11 @@ impl QuantizedHnswIndex {
                 let refs: Vec<&[f32]> = samples.iter().map(|v| v.as_ref()).collect();
                 let quantizer = ScalarQuantizer::train(&refs);
 
-                // Quantize all collected samples
+                // Quantize all collected samples using our internal vector store
                 let mut scalar_vecs = self.scalar_vectors.write();
-                for (old_id, old_vec) in self.hnsw.iter() {
-                    scalar_vecs.insert(old_id, quantizer.quantize(&old_vec));
+                let vectors = self.vectors.read();
+                for (&old_id, old_vec) in vectors.iter() {
+                    scalar_vecs.insert(old_id, quantizer.quantize(old_vec));
                 }
 
                 // Store the quantizer and mark as trained
@@ -313,10 +333,11 @@ impl QuantizedHnswIndex {
                 let refs: Vec<&[f32]> = samples.iter().map(|v| v.as_ref()).collect();
                 let quantizer = ProductQuantizer::train(&refs, num_subvectors, 256, 10);
 
-                // Quantize all collected samples
+                // Quantize all collected samples using our internal vector store
                 let mut codes = self.product_codes.write();
-                for (old_id, old_vec) in self.hnsw.iter() {
-                    codes.insert(old_id, quantizer.quantize(&old_vec));
+                let vectors = self.vectors.read();
+                for (&old_id, old_vec) in vectors.iter() {
+                    codes.insert(old_id, quantizer.quantize(old_vec));
                 }
 
                 // Store the quantizer and mark as trained
@@ -345,24 +366,33 @@ impl QuantizedHnswIndex {
     /// Searches with a custom ef (beam width) parameter.
     #[must_use]
     pub fn search_with_ef(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeId, f32)> {
+        let accessor = self.accessor();
         match self.quantization_type {
             QuantizationType::None => {
                 // No quantization, use standard HNSW
-                self.hnsw.search_with_ef(query, k, ef)
+                self.hnsw.search_with_ef(query, k, ef, &accessor)
             }
-            QuantizationType::Scalar => self.search_scalar_quantized(query, k, ef),
-            QuantizationType::Binary => self.search_binary_quantized(query, k, ef),
-            QuantizationType::Product { .. } => self.search_product_quantized(query, k, ef),
+            QuantizationType::Scalar => self.search_scalar_quantized(query, k, ef, &accessor),
+            QuantizationType::Binary => self.search_binary_quantized(query, k, ef, &accessor),
+            QuantizationType::Product { .. } => {
+                self.search_product_quantized(query, k, ef, &accessor)
+            }
         }
     }
 
     /// Search with scalar quantization.
-    fn search_scalar_quantized(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeId, f32)> {
+    fn search_scalar_quantized(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<(NodeId, f32)> {
         let trained = *self.quantizer_trained.read();
 
         if !trained {
             // Quantizer not ready, fall back to exact search
-            return self.hnsw.search_with_ef(query, k, ef);
+            return self.hnsw.search_with_ef(query, k, ef, accessor);
         }
 
         // Get candidates using HNSW (with full precision distances for now)
@@ -373,7 +403,9 @@ impl QuantizedHnswIndex {
             k
         };
 
-        let candidates = self.hnsw.search_with_ef(query, num_candidates, ef);
+        let candidates = self
+            .hnsw
+            .search_with_ef(query, num_candidates, ef, accessor);
 
         if !self.rescore {
             return candidates.into_iter().take(k).collect();
@@ -384,11 +416,17 @@ impl QuantizedHnswIndex {
     }
 
     /// Search with binary quantization.
-    fn search_binary_quantized(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeId, f32)> {
+    fn search_binary_quantized(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<(NodeId, f32)> {
         let binary_vecs = self.binary_vectors.read();
 
         if binary_vecs.is_empty() {
-            return self.hnsw.search_with_ef(query, k, ef);
+            return self.hnsw.search_with_ef(query, k, ef, accessor);
         }
 
         // Quantize the query
@@ -403,7 +441,9 @@ impl QuantizedHnswIndex {
         };
 
         // Use HNSW to get initial candidates, then filter by hamming distance
-        let hnsw_candidates = self.hnsw.search_with_ef(query, num_candidates, ef);
+        let hnsw_candidates = self
+            .hnsw
+            .search_with_ef(query, num_candidates, ef, accessor);
 
         // Compute hamming distances for candidates
         let mut scored: Vec<(NodeId, f32)> = hnsw_candidates
@@ -429,12 +469,18 @@ impl QuantizedHnswIndex {
     }
 
     /// Search with product quantization.
-    fn search_product_quantized(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeId, f32)> {
+    fn search_product_quantized(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<(NodeId, f32)> {
         let trained = *self.quantizer_trained.read();
 
         if !trained {
             // Quantizer not ready, fall back to exact search
-            return self.hnsw.search_with_ef(query, k, ef);
+            return self.hnsw.search_with_ef(query, k, ef, accessor);
         }
 
         // Get candidates using HNSW
@@ -444,7 +490,9 @@ impl QuantizedHnswIndex {
             k
         };
 
-        let candidates = self.hnsw.search_with_ef(query, num_candidates, ef);
+        let candidates = self
+            .hnsw
+            .search_with_ef(query, num_candidates, ef, accessor);
 
         if !self.rescore {
             return candidates.into_iter().take(k).collect();
@@ -492,12 +540,13 @@ impl QuantizedHnswIndex {
         k: usize,
     ) -> Vec<(NodeId, f32)> {
         let metric = self.config().metric;
+        let vectors = self.vectors.read();
 
         let mut rescored: Vec<(NodeId, f32)> = candidates
             .into_iter()
             .filter_map(|(id, _approx_dist)| {
-                self.hnsw.get(id).map(|vec| {
-                    let exact_dist = compute_distance(query, &vec, metric);
+                vectors.get(&id).map(|vec| {
+                    let exact_dist = compute_distance(query, vec, metric);
                     (id, exact_dist)
                 })
             })
@@ -511,7 +560,7 @@ impl QuantizedHnswIndex {
     /// Returns the vector for the given ID (full precision).
     #[must_use]
     pub fn get(&self, id: NodeId) -> Option<Arc<[f32]>> {
-        self.hnsw.get(id)
+        self.vectors.read().get(&id).cloned()
     }
 
     /// Returns true if the index contains the given ID.
@@ -522,6 +571,7 @@ impl QuantizedHnswIndex {
 
     /// Removes a vector from the index.
     pub fn remove(&self, id: NodeId) -> bool {
+        self.vectors.write().remove(&id);
         match self.quantization_type {
             QuantizationType::None => {}
             QuantizationType::Scalar => {

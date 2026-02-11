@@ -5,7 +5,12 @@
 //!
 //! - **O(log n)** search complexity (approximate)
 //! - **>95%** recall at k=10 with default settings
-//! - **Memory**: ~1.5x the vector storage size
+//!
+//! This index is **topology-only**: it stores only the neighbor graph
+//! structure, not the vectors themselves. Vectors are read on-the-fly
+//! through a [`VectorAccessor`], which typically reads from property
+//! storage — the single source of truth — halving memory usage for
+//! vector workloads.
 //!
 //! # Algorithm Overview
 //!
@@ -19,19 +24,26 @@
 //! # Example
 //!
 //! ```ignore
-//! use grafeo_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric};
+//! use grafeo_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
 //! use grafeo_common::types::NodeId;
+//! use std::sync::Arc;
+//! use std::collections::HashMap;
 //!
 //! let config = HnswConfig::new(384, DistanceMetric::Cosine);
 //! let mut index = HnswIndex::new(config);
 //!
+//! // Build an accessor backed by a HashMap
+//! let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+//! let vec1: Arc<[f32]> = vec![0.1f32; 384].into();
+//! map.insert(NodeId::new(1), vec1.clone());
+//! let accessor = |id: NodeId| -> Option<Arc<[f32]>> { map.get(&id).cloned() };
+//!
 //! // Insert vectors
-//! let vec1 = vec![0.1f32; 384];
-//! index.insert(NodeId::new(1), &vec1);
+//! index.insert(NodeId::new(1), &vec1, &accessor);
 //!
 //! // Search for nearest neighbors
 //! let query = vec![0.15f32; 384];
-//! let results = index.search(&query, 10);
+//! let results = index.search(&query, 10, &accessor);
 //! ```
 //!
 //! # References
@@ -39,6 +51,7 @@
 //! - Malkov & Yashunin, "Efficient and robust approximate nearest neighbor
 //!   search using Hierarchical Navigable Small World graphs" (2018)
 
+use super::VectorAccessor;
 use super::compute_distance;
 use crate::index::vector::HnswConfig;
 use grafeo_common::types::NodeId;
@@ -92,11 +105,9 @@ impl Ord for FurthestCandidate {
     }
 }
 
-/// Node data stored in the HNSW index.
+/// Node data stored in the HNSW index (topology only — no vector data).
 #[derive(Debug, Clone)]
 struct HnswNode {
-    /// The vector data.
-    vector: Arc<[f32]>,
     /// Neighbors at each layer (layer 0 is the bottom).
     /// The node's max layer is `neighbors.len() - 1`.
     neighbors: Vec<Vec<NodeId>>,
@@ -105,7 +116,8 @@ struct HnswNode {
 /// HNSW (Hierarchical Navigable Small World) index.
 ///
 /// Thread-safe approximate nearest neighbor index supporting concurrent
-/// reads and exclusive writes.
+/// reads and exclusive writes. This index is topology-only: vectors are
+/// read through a [`VectorAccessor`] rather than stored internally.
 pub struct HnswIndex {
     /// Index configuration.
     config: HnswConfig,
@@ -179,13 +191,13 @@ impl HnswIndex {
 
     /// Inserts a vector with the given ID into the index.
     ///
-    /// If the distance metric is cosine, the vector is normalized before
-    /// storage so that distance computation can use a faster dot-product.
+    /// The vector is used during insertion to find neighbors and build
+    /// the graph topology, but is **not** stored in the index.
     ///
     /// # Panics
     ///
     /// Panics if the vector dimensions don't match the configuration.
-    pub fn insert(&self, id: NodeId, vector: &[f32]) {
+    pub fn insert(&self, id: NodeId, vector: &[f32], accessor: &impl VectorAccessor) {
         assert_eq!(
             vector.len(),
             self.config.dimensions,
@@ -194,20 +206,10 @@ impl HnswIndex {
             vector.len()
         );
 
-        // Pre-normalize for cosine metric so distance() can use dot product
-        let vector: Arc<[f32]> = if self.config.metric == super::DistanceMetric::Cosine {
-            let mut v = vector.to_vec();
-            super::normalize(&mut v);
-            v.into()
-        } else {
-            vector.into()
-        };
-
         let level = self.random_level();
 
-        // Create the new node
+        // Create the new node (topology only)
         let node = HnswNode {
-            vector: vector.clone(),
             neighbors: vec![Vec::new(); level + 1],
         };
 
@@ -232,7 +234,7 @@ impl HnswIndex {
         // Search from top to the level above the new node's max layer
         let mut current_ep = ep;
         for lc in (level + 1..=current_max_level).rev() {
-            current_ep = self.search_layer_single(&nodes, &vector, current_ep, lc);
+            current_ep = self.search_layer_single(&nodes, accessor, vector, current_ep, lc);
         }
 
         // For each layer from the new node's max layer down to 0
@@ -244,11 +246,17 @@ impl HnswIndex {
             };
 
             // Find ef_construction nearest neighbors at this layer
-            let neighbors =
-                self.search_layer(&nodes, &vector, current_ep, self.config.ef_construction, lc);
+            let neighbors = self.search_layer(
+                &nodes,
+                accessor,
+                vector,
+                current_ep,
+                self.config.ef_construction,
+                lc,
+            );
 
             // Select neighbors using diversity-aware heuristic
-            let selected = self.select_neighbors_heuristic(&nodes, &neighbors, m_max);
+            let selected = self.select_neighbors_heuristic(accessor, &neighbors, m_max);
 
             // Update the new node's neighbors
             if let Some(new_node) = nodes.get_mut(&id) {
@@ -278,10 +286,17 @@ impl HnswIndex {
                 if let Some(neighbor) = nodes.get(neighbor_id)
                     && neighbor.neighbors.len() > lc
                 {
-                    let base_vec = &neighbor.vector;
+                    let Some(base_vec) = accessor.get_vector(*neighbor_id) else {
+                        continue;
+                    };
                     let distances: Vec<(NodeId, f32)> = neighbor.neighbors[lc]
                         .iter()
-                        .map(|&nid| (nid, self.node_distance(&nodes, base_vec, nid)))
+                        .map(|&nid| {
+                            let dist = accessor
+                                .get_vector(nid)
+                                .map_or(f32::MAX, |v| self.vector_distance(&base_vec, &v));
+                            (nid, dist)
+                        })
                         .collect();
                     prune_data.push((*neighbor_id, distances));
                 }
@@ -322,16 +337,26 @@ impl HnswIndex {
     ///
     /// Panics if the query vector dimensions don't match the configuration.
     #[must_use]
-    pub fn search(&self, query: &[f32], k: usize) -> Vec<(NodeId, f32)> {
-        self.search_with_ef(query, k, self.config.ef)
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<(NodeId, f32)> {
+        self.search_with_ef(query, k, self.config.ef, accessor)
     }
 
     /// Searches with a custom ef (beam width) parameter.
     ///
     /// Higher ef values give better recall at the cost of latency.
-    /// If the metric is cosine, the query is normalized to match stored vectors.
     #[must_use]
-    pub fn search_with_ef(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeId, f32)> {
+    pub fn search_with_ef(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<(NodeId, f32)> {
         assert_eq!(
             query.len(),
             self.config.dimensions,
@@ -339,15 +364,6 @@ impl HnswIndex {
             self.config.dimensions,
             query.len()
         );
-
-        // Pre-normalize query for cosine metric to match stored vectors
-        let query = if self.config.metric == super::DistanceMetric::Cosine {
-            let mut q = query.to_vec();
-            super::normalize(&mut q);
-            q
-        } else {
-            query.to_vec()
-        };
 
         let nodes = self.nodes.read();
         let entry_point = self.entry_point.read();
@@ -362,12 +378,12 @@ impl HnswIndex {
         // Greedy search from top layer to layer 1
         let mut current_ep = ep;
         for lc in (1..=max_level).rev() {
-            current_ep = self.search_layer_single(&nodes, &query, current_ep, lc);
+            current_ep = self.search_layer_single(&nodes, accessor, query, current_ep, lc);
         }
 
         // Beam search at layer 0
         let ef_search = ef.max(k);
-        let candidates = self.search_layer(&nodes, &query, current_ep, ef_search, 0);
+        let candidates = self.search_layer(&nodes, accessor, query, current_ep, ef_search, 0);
 
         // Return top k
         candidates
@@ -391,6 +407,7 @@ impl HnswIndex {
         query: &[f32],
         k: usize,
         allowlist: &HashSet<NodeId>,
+        accessor: &impl VectorAccessor,
     ) -> Vec<(NodeId, f32)> {
         if allowlist.is_empty() {
             return Vec::new();
@@ -405,7 +422,7 @@ impl HnswIndex {
         let ef_scaled = ((self.config.ef as f64 / selectivity).ceil() as usize)
             .min(total)
             .max(k);
-        self.search_with_ef_and_filter(query, k, ef_scaled, allowlist)
+        self.search_with_ef_and_filter(query, k, ef_scaled, allowlist, accessor)
     }
 
     /// Searches with a custom ef (beam width) and an allowlist filter.
@@ -421,6 +438,7 @@ impl HnswIndex {
         k: usize,
         ef: usize,
         allowlist: &HashSet<NodeId>,
+        accessor: &impl VectorAccessor,
     ) -> Vec<(NodeId, f32)> {
         if allowlist.is_empty() {
             return Vec::new();
@@ -433,15 +451,6 @@ impl HnswIndex {
             self.config.dimensions,
             query.len()
         );
-
-        // Pre-normalize query for cosine metric
-        let query = if self.config.metric == super::DistanceMetric::Cosine {
-            let mut q = query.to_vec();
-            super::normalize(&mut q);
-            q
-        } else {
-            query.to_vec()
-        };
 
         let nodes = self.nodes.read();
         let entry_point = self.entry_point.read();
@@ -456,13 +465,13 @@ impl HnswIndex {
         // Greedy search from top layer to layer 1
         let mut current_ep = ep;
         for lc in (1..=max_level).rev() {
-            current_ep = self.search_layer_single(&nodes, &query, current_ep, lc);
+            current_ep = self.search_layer_single(&nodes, accessor, query, current_ep, lc);
         }
 
         // Filtered beam search at layer 0
         let ef_search = ef.max(k);
-        let candidates =
-            self.search_layer_filtered(&nodes, &query, current_ep, ef_search, 0, allowlist);
+        let candidates = self
+            .search_layer_filtered(&nodes, accessor, query, current_ep, ef_search, 0, allowlist);
 
         // Return top k
         candidates
@@ -498,26 +507,10 @@ impl HnswIndex {
         true
     }
 
-    /// Returns the vector associated with the given ID, if it exists.
-    #[must_use]
-    pub fn get(&self, id: NodeId) -> Option<Arc<[f32]>> {
-        self.nodes.read().get(&id).map(|n| n.vector.clone())
-    }
-
     /// Returns true if the index contains a vector with the given ID.
     #[must_use]
     pub fn contains(&self, id: NodeId) -> bool {
         self.nodes.read().contains_key(&id)
-    }
-
-    /// Iterates over all (NodeId, vector) pairs in the index.
-    pub fn iter(&self) -> impl Iterator<Item = (NodeId, Arc<[f32]>)> + '_ {
-        let nodes = self.nodes.read();
-        let items: Vec<_> = nodes
-            .iter()
-            .map(|(&id, n)| (id, n.vector.clone()))
-            .collect();
-        items.into_iter()
     }
 
     /// Generates a random level for a new node.
@@ -531,12 +524,13 @@ impl HnswIndex {
     fn search_layer_single(
         &self,
         nodes: &HashMap<NodeId, HnswNode>,
+        accessor: &impl VectorAccessor,
         query: &[f32],
         ep: NodeId,
         layer: usize,
     ) -> NodeId {
         let mut current = ep;
-        let mut current_dist = self.node_distance(nodes, query, ep);
+        let mut current_dist = self.node_distance(accessor, query, ep);
 
         loop {
             let mut changed = false;
@@ -545,7 +539,7 @@ impl HnswIndex {
                 && layer < node.neighbors.len()
             {
                 for &neighbor in &node.neighbors[layer] {
-                    let dist = self.node_distance(nodes, query, neighbor);
+                    let dist = self.node_distance(accessor, query, neighbor);
                     if dist < current_dist {
                         current = neighbor;
                         current_dist = dist;
@@ -566,12 +560,13 @@ impl HnswIndex {
     fn search_layer(
         &self,
         nodes: &HashMap<NodeId, HnswNode>,
+        accessor: &impl VectorAccessor,
         query: &[f32],
         ep: NodeId,
         ef: usize,
         layer: usize,
     ) -> Vec<Neighbor> {
-        let ep_dist = self.node_distance(nodes, query, ep);
+        let ep_dist = self.node_distance(accessor, query, ep);
 
         // Min-heap of candidates to explore
         let mut candidates: BinaryHeap<Neighbor> = BinaryHeap::new();
@@ -610,7 +605,7 @@ impl HnswIndex {
                     }
                     visited.insert(neighbor);
 
-                    let dist = self.node_distance(nodes, query, neighbor);
+                    let dist = self.node_distance(accessor, query, neighbor);
 
                     // Add to results if closer than furthest, or if we have room
                     let should_add =
@@ -652,16 +647,18 @@ impl HnswIndex {
     /// All nodes are visited for graph traversal (neighbor links followed),
     /// but only nodes in the `allowlist` can enter the result set. This
     /// preserves HNSW connectivity while restricting which nodes are returned.
+    #[allow(clippy::too_many_arguments)]
     fn search_layer_filtered(
         &self,
         nodes: &HashMap<NodeId, HnswNode>,
+        accessor: &impl VectorAccessor,
         query: &[f32],
         ep: NodeId,
         ef: usize,
         layer: usize,
         allowlist: &HashSet<NodeId>,
     ) -> Vec<Neighbor> {
-        let ep_dist = self.node_distance(nodes, query, ep);
+        let ep_dist = self.node_distance(accessor, query, ep);
 
         // Min-heap of candidates to explore
         let mut candidates: BinaryHeap<Neighbor> = BinaryHeap::new();
@@ -709,7 +706,7 @@ impl HnswIndex {
                     }
                     visited.insert(neighbor);
 
-                    let dist = self.node_distance(nodes, query, neighbor);
+                    let dist = self.node_distance(accessor, query, neighbor);
 
                     // Update best_seen for traversal guidance
                     let should_explore = best_seen.len() < ef
@@ -768,24 +765,23 @@ impl HnswIndex {
     /// by ensuring neighbors point to diverse regions of the space.
     fn select_neighbors_heuristic(
         &self,
-        nodes: &HashMap<NodeId, HnswNode>,
+        accessor: &impl VectorAccessor,
         candidates: &[Neighbor],
         m: usize,
     ) -> Vec<NodeId> {
         let alpha = self.config.alpha;
-        let mut selected: Vec<(NodeId, &Arc<[f32]>)> = Vec::with_capacity(m);
+        let mut selected: Vec<(NodeId, Arc<[f32]>)> = Vec::with_capacity(m);
 
         for candidate in candidates {
             if selected.len() >= m {
                 break;
             }
-            let cv = match nodes.get(&candidate.id) {
-                Some(node) => &node.vector,
-                None => continue,
+            let Some(cv) = accessor.get_vector(candidate.id) else {
+                continue;
             };
             let covered = selected
                 .iter()
-                .any(|(_, sv)| self.vector_distance(cv, sv) < alpha * candidate.distance);
+                .any(|(_, sv)| self.vector_distance(&cv, sv) < alpha * candidate.distance);
             if !covered {
                 selected.push((candidate.id, cv));
             }
@@ -816,23 +812,16 @@ impl HnswIndex {
     }
 
     /// Computes distance between two raw vectors using the configured metric.
-    ///
-    /// For cosine metric with pre-normalized vectors, uses fast dot product.
     #[inline]
     fn vector_distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        if self.config.metric == super::DistanceMetric::Cosine {
-            // Vectors are pre-normalized, so cosine distance = 1 - dot_product
-            1.0 - super::dot_product(a, b)
-        } else {
-            compute_distance(a, b, self.config.metric)
-        }
+        compute_distance(a, b, self.config.metric)
     }
 
     /// Computes the distance between a query vector and a stored node.
-    fn node_distance(&self, nodes: &HashMap<NodeId, HnswNode>, query: &[f32], id: NodeId) -> f32 {
-        nodes
-            .get(&id)
-            .map_or(f32::MAX, |n| self.vector_distance(query, &n.vector))
+    fn node_distance(&self, accessor: &impl VectorAccessor, query: &[f32], id: NodeId) -> f32 {
+        accessor
+            .get_vector(id)
+            .map_or(f32::MAX, |v| self.vector_distance(query, &v))
     }
 
     // ========================================================================
@@ -848,6 +837,7 @@ impl HnswIndex {
     /// # Arguments
     ///
     /// * `vectors` - Iterator of (NodeId, vector) pairs to insert
+    /// * `accessor` - Vector accessor for reading vectors by ID
     ///
     /// # Panics
     ///
@@ -866,14 +856,15 @@ impl HnswIndex {
     ///     .map(|i| (NodeId::new(i), vec![0.1f32; 384]))
     ///     .collect();
     ///
-    /// index.batch_insert(vectors.iter().map(|(id, v)| (*id, v.as_slice())));
+    /// // accessor reads from property storage
+    /// index.batch_insert(vectors.iter().map(|(id, v)| (*id, v.as_slice())), &accessor);
     /// ```
-    pub fn batch_insert<'a, I>(&self, vectors: I)
+    pub fn batch_insert<'a, I>(&self, vectors: I, accessor: &impl VectorAccessor)
     where
         I: IntoIterator<Item = (NodeId, &'a [f32])>,
     {
         for (id, vector) in vectors {
-            self.insert(id, vector);
+            self.insert(id, vector, accessor);
         }
     }
 
@@ -886,6 +877,7 @@ impl HnswIndex {
     ///
     /// * `queries` - Slice of query vectors (as `Vec<f32>` or similar)
     /// * `k` - Number of nearest neighbors to return for each query
+    /// * `accessor` - Vector accessor for reading vectors by ID
     ///
     /// # Returns
     ///
@@ -911,22 +903,30 @@ impl HnswIndex {
     ///     vec![0.3f32; 384],
     /// ];
     ///
-    /// let all_results = index.batch_search(&queries, 10);
+    /// let all_results = index.batch_search(&queries, 10, &accessor);
     /// assert_eq!(all_results.len(), 3);
     /// ```
     #[must_use]
-    pub fn batch_search(&self, queries: &[Vec<f32>], k: usize) -> Vec<Vec<(NodeId, f32)>> {
+    pub fn batch_search(
+        &self,
+        queries: &[Vec<f32>],
+        k: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<Vec<(NodeId, f32)>> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
             queries
                 .par_iter()
-                .map(|query| self.search(query, k))
+                .map(|query| self.search(query, k, accessor))
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
         {
-            queries.iter().map(|query| self.search(query, k)).collect()
+            queries
+                .iter()
+                .map(|query| self.search(query, k, accessor))
+                .collect()
         }
     }
 
@@ -934,18 +934,26 @@ impl HnswIndex {
     ///
     /// This variant accepts query vectors as slices.
     #[must_use]
-    pub fn batch_search_slices(&self, queries: &[&[f32]], k: usize) -> Vec<Vec<(NodeId, f32)>> {
+    pub fn batch_search_slices(
+        &self,
+        queries: &[&[f32]],
+        k: usize,
+        accessor: &impl VectorAccessor,
+    ) -> Vec<Vec<(NodeId, f32)>> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
             queries
                 .par_iter()
-                .map(|query| self.search(query, k))
+                .map(|query| self.search(query, k, accessor))
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
         {
-            queries.iter().map(|query| self.search(query, k)).collect()
+            queries
+                .iter()
+                .map(|query| self.search(query, k, accessor))
+                .collect()
         }
     }
 
@@ -958,20 +966,21 @@ impl HnswIndex {
         queries: &[Vec<f32>],
         k: usize,
         ef: usize,
+        accessor: &impl VectorAccessor,
     ) -> Vec<Vec<(NodeId, f32)>> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
             queries
                 .par_iter()
-                .map(|query| self.search_with_ef(query, k, ef))
+                .map(|query| self.search_with_ef(query, k, ef, accessor))
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
         {
             queries
                 .iter()
-                .map(|query| self.search_with_ef(query, k, ef))
+                .map(|query| self.search_with_ef(query, k, ef, accessor))
                 .collect()
         }
     }
@@ -985,20 +994,21 @@ impl HnswIndex {
         queries: &[Vec<f32>],
         k: usize,
         allowlist: &HashSet<NodeId>,
+        accessor: &impl VectorAccessor,
     ) -> Vec<Vec<(NodeId, f32)>> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
             queries
                 .par_iter()
-                .map(|query| self.search_with_filter(query, k, allowlist))
+                .map(|query| self.search_with_filter(query, k, allowlist, accessor))
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
         {
             queries
                 .iter()
-                .map(|query| self.search_with_filter(query, k, allowlist))
+                .map(|query| self.search_with_filter(query, k, allowlist, accessor))
                 .collect()
         }
     }
@@ -1011,20 +1021,21 @@ impl HnswIndex {
         k: usize,
         ef: usize,
         allowlist: &HashSet<NodeId>,
+        accessor: &impl VectorAccessor,
     ) -> Vec<Vec<(NodeId, f32)>> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
             queries
                 .par_iter()
-                .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist))
+                .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist, accessor))
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
         {
             queries
                 .iter()
-                .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist))
+                .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist, accessor))
                 .collect()
         }
     }
@@ -1055,14 +1066,25 @@ mod tests {
             .collect()
     }
 
+    /// Builds an accessor backed by a HashMap.
+    fn make_accessor(map: &HashMap<NodeId, Arc<[f32]>>) -> impl VectorAccessor + '_ {
+        move |id: NodeId| -> Option<Arc<[f32]>> { map.get(&id).cloned() }
+    }
+
     #[test]
     fn test_hnsw_empty() {
         let config = HnswConfig::new(4, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
+        let map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        let accessor = make_accessor(&map);
 
         assert!(index.is_empty());
         assert_eq!(index.len(), 0);
-        assert!(index.search(&[0.0, 0.0, 0.0, 0.0], 10).is_empty());
+        assert!(
+            index
+                .search(&[0.0, 0.0, 0.0, 0.0], 10, &accessor)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1070,13 +1092,18 @@ mod tests {
         let config = HnswConfig::new(4, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
 
-        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3, 0.4]);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        let v: Arc<[f32]> = vec![0.1, 0.2, 0.3, 0.4].into();
+        map.insert(NodeId::new(1), v.clone());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(1), &v, &accessor);
 
         assert_eq!(index.len(), 1);
         assert!(index.contains(NodeId::new(1)));
         assert!(!index.contains(NodeId::new(2)));
 
-        let results = index.search(&[0.1, 0.2, 0.3, 0.4], 1);
+        let results = index.search(&[0.1, 0.2, 0.3, 0.4], 1, &accessor);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, NodeId::new(1));
         assert!(results[0].1 < 0.001); // Near-zero distance
@@ -1089,15 +1116,23 @@ mod tests {
 
         let vectors = create_test_vectors(100, 4);
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         assert_eq!(index.len(), 100);
 
         // Search for nearest neighbors
         let query = &vectors[50];
-        let results = index.search(query, 5);
+        let results = index.search(query, 5, &accessor);
 
         assert_eq!(results.len(), 5);
         // The closest should be the vector itself
@@ -1112,12 +1147,20 @@ mod tests {
 
         let vectors = create_test_vectors(50, 4);
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         let query = [0.5, 0.5, 0.5, 0.5];
-        let results = index.search(&query, 10);
+        let results = index.search(&query, 10, &accessor);
 
         // Verify sorted by distance
         for i in 1..results.len() {
@@ -1130,8 +1173,13 @@ mod tests {
         let config = HnswConfig::new(4, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
 
-        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3, 0.4]);
-        index.insert(NodeId::new(2), &[0.5, 0.6, 0.7, 0.8]);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(1), vec![0.1, 0.2, 0.3, 0.4].into());
+        map.insert(NodeId::new(2), vec![0.5, 0.6, 0.7, 0.8].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3, 0.4], &accessor);
+        index.insert(NodeId::new(2), &[0.5, 0.6, 0.7, 0.8], &accessor);
 
         assert_eq!(index.len(), 2);
 
@@ -1145,46 +1193,26 @@ mod tests {
     }
 
     #[test]
-    fn test_hnsw_get() {
-        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
-        let index = HnswIndex::new(config);
-
-        let vec = [0.1, 0.2, 0.3, 0.4];
-        index.insert(NodeId::new(1), &vec);
-
-        let retrieved = index.get(NodeId::new(1)).unwrap();
-        assert_eq!(&*retrieved, &vec);
-
-        assert!(index.get(NodeId::new(999)).is_none());
-    }
-
-    #[test]
     fn test_hnsw_cosine_metric() {
         let config = HnswConfig::new(4, DistanceMetric::Cosine);
         let index = HnswIndex::with_seed(config, 42);
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(1), vec![1.0, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(2), vec![0.0, 1.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(3), vec![0.707, 0.707, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
         // Insert normalized vectors
-        index.insert(NodeId::new(1), &[1.0, 0.0, 0.0, 0.0]);
-        index.insert(NodeId::new(2), &[0.0, 1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(3), &[0.707, 0.707, 0.0, 0.0]);
+        index.insert(NodeId::new(1), &[1.0, 0.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(2), &[0.0, 1.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(3), &[0.707, 0.707, 0.0, 0.0], &accessor);
 
         // Query similar to node 1
-        let results = index.search(&[0.9, 0.1, 0.0, 0.0], 3);
+        let results = index.search(&[0.9, 0.1, 0.0, 0.0], 3, &accessor);
 
         // Node 1 should be closest (most similar direction)
         assert_eq!(results[0].0, NodeId::new(1));
-    }
-
-    #[test]
-    fn test_hnsw_iter() {
-        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
-        let index = HnswIndex::new(config);
-
-        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3, 0.4]);
-        index.insert(NodeId::new(2), &[0.5, 0.6, 0.7, 0.8]);
-
-        let items: Vec<_> = index.iter().collect();
-        assert_eq!(items.len(), 2);
     }
 
     #[test]
@@ -1193,15 +1221,24 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(100, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         let query = [0.5, 0.5, 0.5, 0.5];
 
         // Higher ef should give same or better results
-        let results_low = index.search_with_ef(&query, 5, 10);
-        let results_high = index.search_with_ef(&query, 5, 100);
+        let results_low = index.search_with_ef(&query, 5, 10, &accessor);
+        let results_high = index.search_with_ef(&query, 5, 100, &accessor);
 
         assert_eq!(results_low.len(), 5);
         assert_eq!(results_high.len(), 5);
@@ -1215,8 +1252,10 @@ mod tests {
     fn test_hnsw_dimension_mismatch_insert() {
         let config = HnswConfig::new(4, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
+        let map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        let accessor = make_accessor(&map);
 
-        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3]); // Wrong dimension
+        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3], &accessor); // Wrong dimension
     }
 
     #[test]
@@ -1225,8 +1264,12 @@ mod tests {
         let config = HnswConfig::new(4, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
 
-        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3, 0.4]);
-        let _ = index.search(&[0.1, 0.2, 0.3], 1); // Wrong dimension
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(1), vec![0.1, 0.2, 0.3, 0.4].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(1), &[0.1, 0.2, 0.3, 0.4], &accessor);
+        let _ = index.search(&[0.1, 0.2, 0.3], 1, &accessor); // Wrong dimension
     }
 
     #[test]
@@ -1235,18 +1278,27 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(100, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        for (i, vec) in vectors.iter().enumerate() {
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
         let pairs: Vec<_> = vectors
             .iter()
             .enumerate()
             .map(|(i, v)| (NodeId::new(i as u64 + 1), v.as_slice()))
             .collect();
 
-        index.batch_insert(pairs);
+        index.batch_insert(pairs, &accessor);
 
         assert_eq!(index.len(), 100);
 
         // Verify search still works
-        let results = index.search(&vectors[50], 5);
+        let results = index.search(&vectors[50], 5, &accessor);
         assert_eq!(results.len(), 5);
         assert_eq!(results[0].0, NodeId::new(51));
     }
@@ -1257,14 +1309,23 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(100, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         // Batch search with 5 queries
         let queries: Vec<Vec<f32>> = (0..5).map(|i| vectors[i * 20].clone()).collect();
 
-        let all_results = index.batch_search(&queries, 3);
+        let all_results = index.batch_search(&queries, 3, &accessor);
 
         assert_eq!(all_results.len(), 5);
         for (i, results) in all_results.iter().enumerate() {
@@ -1281,14 +1342,23 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(100, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         let queries: Vec<Vec<f32>> = vec![vectors[25].clone(), vectors[75].clone()];
 
         // Search with higher ef for better recall
-        let results = index.batch_search_with_ef(&queries, 5, 100);
+        let results = index.batch_search_with_ef(&queries, 5, 100, &accessor);
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 5);
@@ -1299,9 +1369,11 @@ mod tests {
     fn test_hnsw_batch_search_empty_index() {
         let config = HnswConfig::new(4, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
+        let map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        let accessor = make_accessor(&map);
 
         let queries = vec![vec![0.0f32, 0.0, 0.0, 0.0]];
-        let results = index.batch_search(&queries, 10);
+        let results = index.batch_search(&queries, 10, &accessor);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].is_empty());
@@ -1345,8 +1417,16 @@ mod tests {
         let config = HnswConfig::new(dim, DistanceMetric::Euclidean).with_m(16);
         let index = HnswIndex::with_seed(config, 42);
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64), vec);
+            let id = NodeId::new(i as u64);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64), vec, &accessor);
         }
 
         // Measure recall over num_queries random queries
@@ -1360,7 +1440,7 @@ mod tests {
             let gt_set: std::collections::HashSet<u64> =
                 ground_truth.iter().map(|&i| i as u64).collect();
 
-            let results = index.search_with_ef(query, k, 50);
+            let results = index.search_with_ef(query, k, 50, &accessor);
             let found: std::collections::HashSet<u64> =
                 results.iter().map(|(id, _)| id.as_u64()).collect();
 
@@ -1395,8 +1475,16 @@ mod tests {
         let config = HnswConfig::new(dim, DistanceMetric::Cosine).with_m(16);
         let index = HnswIndex::with_seed(config, 42);
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64), vec);
+            let id = NodeId::new(i as u64);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64), vec, &accessor);
         }
 
         let queries: Vec<Vec<f32>> = (0..num_queries)
@@ -1409,7 +1497,7 @@ mod tests {
             let gt_set: std::collections::HashSet<u64> =
                 ground_truth.iter().map(|&i| i as u64).collect();
 
-            let results = index.search_with_ef(query, k, 50);
+            let results = index.search_with_ef(query, k, 50, &accessor);
             let found: std::collections::HashSet<u64> =
                 results.iter().map(|(id, _)| id.as_u64()).collect();
 
@@ -1431,17 +1519,26 @@ mod tests {
         let config = HnswConfig::new(dim, DistanceMetric::Euclidean).with_m(4);
         let index = HnswIndex::with_seed(config, 42);
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![0.0, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(1), vec![0.01, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(2), vec![0.02, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(3), vec![0.03, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(4), vec![0.04, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(5), vec![0.0, 1.0, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
         // Insert a cluster of very similar vectors and one outlier
-        index.insert(NodeId::new(0), &[0.0, 0.0, 0.0, 0.0]);
-        index.insert(NodeId::new(1), &[0.01, 0.0, 0.0, 0.0]);
-        index.insert(NodeId::new(2), &[0.02, 0.0, 0.0, 0.0]);
-        index.insert(NodeId::new(3), &[0.03, 0.0, 0.0, 0.0]);
-        index.insert(NodeId::new(4), &[0.04, 0.0, 0.0, 0.0]);
+        index.insert(NodeId::new(0), &[0.0, 0.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(1), &[0.01, 0.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(2), &[0.02, 0.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(3), &[0.03, 0.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(4), &[0.04, 0.0, 0.0, 0.0], &accessor);
         // Outlier in a different direction
-        index.insert(NodeId::new(5), &[0.0, 1.0, 0.0, 0.0]);
+        index.insert(NodeId::new(5), &[0.0, 1.0, 0.0, 0.0], &accessor);
 
         // Search for the outlier — it should be findable
-        let results = index.search(&[0.0, 0.9, 0.0, 0.0], 1);
+        let results = index.search(&[0.0, 0.9, 0.0, 0.0], 1, &accessor);
         assert_eq!(results[0].0, NodeId::new(5));
     }
 
@@ -1451,9 +1548,14 @@ mod tests {
     fn test_single_vector() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
 
-        let results = index.search(&[1.0, 0.0, 0.0], 1);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+
+        let results = index.search(&[1.0, 0.0, 0.0], 1, &accessor);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, NodeId::new(0));
         assert!(results[0].1 < 0.01);
@@ -1463,11 +1565,17 @@ mod tests {
     fn test_search_k_larger_than_index() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0]);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(1), vec![0.0, 1.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0], &accessor);
 
         // k=10 but only 2 vectors
-        let results = index.search(&[1.0, 0.0, 0.0], 10);
+        let results = index.search(&[1.0, 0.0, 0.0], 10, &accessor);
         assert_eq!(results.len(), 2);
     }
 
@@ -1475,8 +1583,10 @@ mod tests {
     fn test_empty_index_search() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
+        let map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        let accessor = make_accessor(&map);
 
-        let results = index.search(&[1.0, 0.0, 0.0], 5);
+        let results = index.search(&[1.0, 0.0, 0.0], 5, &accessor);
         assert!(results.is_empty());
     }
 
@@ -1484,12 +1594,19 @@ mod tests {
     fn test_remove_and_search() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0]);
-        index.insert(NodeId::new(2), &[0.0, 0.0, 1.0]);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(1), vec![0.0, 1.0, 0.0].into());
+        map.insert(NodeId::new(2), vec![0.0, 0.0, 1.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0], &accessor);
+        index.insert(NodeId::new(2), &[0.0, 0.0, 1.0], &accessor);
 
         index.remove(NodeId::new(1));
-        let results = index.search(&[0.0, 1.0, 0.0], 3);
+        let results = index.search(&[0.0, 1.0, 0.0], 3, &accessor);
         // Removed node should not appear
         assert!(results.iter().all(|(id, _)| *id != NodeId::new(1)));
         assert_eq!(results.len(), 2);
@@ -1499,12 +1616,23 @@ mod tests {
     fn test_duplicate_insert() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(0), &[0.0, 1.0, 0.0]); // Same ID, different vector
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+
+        // Update the accessor with the new vector for node 0
+        let mut map2: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map2.insert(NodeId::new(0), vec![0.0, 1.0, 0.0].into());
+        let accessor2 = make_accessor(&map2);
+
+        index.insert(NodeId::new(0), &[0.0, 1.0, 0.0], &accessor2); // Same ID, different vector
 
         assert_eq!(index.len(), 1);
         // Should use the latest vector
-        let results = index.search(&[0.0, 1.0, 0.0], 1);
+        let results = index.search(&[0.0, 1.0, 0.0], 1, &accessor2);
         assert_eq!(results[0].0, NodeId::new(0));
     }
 
@@ -1512,10 +1640,15 @@ mod tests {
     fn test_search_with_ef_zero() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
 
         // ef=0 should still return results (search uses max(ef, k))
-        let results = index.search_with_ef(&[1.0, 0.0, 0.0], 1, 0);
+        let results = index.search_with_ef(&[1.0, 0.0, 0.0], 1, 0, &accessor);
         // Behavior may vary but should not panic
         assert!(results.len() <= 1);
     }
@@ -1530,10 +1663,16 @@ mod tests {
         ] {
             let config = HnswConfig::new(3, metric);
             let index = HnswIndex::new(config);
-            index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
-            index.insert(NodeId::new(1), &[0.0, 1.0, 0.0]);
 
-            let results = index.search(&[1.0, 0.0, 0.0], 2);
+            let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+            map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+            map.insert(NodeId::new(1), vec![0.0, 1.0, 0.0].into());
+            let accessor = make_accessor(&map);
+
+            index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+            index.insert(NodeId::new(1), &[0.0, 1.0, 0.0], &accessor);
+
+            let results = index.search(&[1.0, 0.0, 0.0], 2, &accessor);
             assert_eq!(results.len(), 2, "Failed for metric {metric:?}");
             assert_eq!(
                 results[0].0,
@@ -1547,9 +1686,16 @@ mod tests {
     fn test_batch_search_consistency() {
         let config = HnswConfig::new(3, DistanceMetric::Euclidean);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0]);
-        index.insert(NodeId::new(2), &[0.0, 0.0, 1.0]);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(1), vec![0.0, 1.0, 0.0].into());
+        map.insert(NodeId::new(2), vec![0.0, 0.0, 1.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0], &accessor);
+        index.insert(NodeId::new(2), &[0.0, 0.0, 1.0], &accessor);
 
         let queries: Vec<Vec<f32>> = vec![
             vec![1.0, 0.0, 0.0],
@@ -1557,7 +1703,7 @@ mod tests {
             vec![0.0, 0.0, 1.0],
         ];
 
-        let batch_results = index.batch_search(&queries, 1);
+        let batch_results = index.batch_search(&queries, 1, &accessor);
         assert_eq!(batch_results.len(), 3);
 
         // Each query should find its exact match
@@ -1573,7 +1719,11 @@ mod tests {
         assert_eq!(index.len(), 0);
         assert!(index.is_empty());
 
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
         assert_eq!(index.len(), 1);
         assert!(!index.is_empty());
     }
@@ -1583,10 +1733,16 @@ mod tests {
         // M larger than number of nodes
         let config = HnswConfig::new(3, DistanceMetric::Euclidean).with_m(64);
         let index = HnswIndex::new(config);
-        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0]);
 
-        let results = index.search(&[1.0, 0.0, 0.0], 2);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(0), vec![1.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(1), vec![0.0, 1.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(0), &[1.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(1), &[0.0, 1.0, 0.0], &accessor);
+
+        let results = index.search(&[1.0, 0.0, 0.0], 2, &accessor);
         assert_eq!(results.len(), 2);
     }
 
@@ -1598,14 +1754,23 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(50, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         // Allowlist: only even-numbered nodes
         let allowlist: HashSet<NodeId> = (1..=50).filter(|i| i % 2 == 0).map(NodeId::new).collect();
 
-        let results = index.search_with_filter(&vectors[25], 5, &allowlist);
+        let results = index.search_with_filter(&vectors[25], 5, &allowlist, &accessor);
         assert!(!results.is_empty());
         assert!(results.len() <= 5);
 
@@ -1621,12 +1786,21 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(20, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         let allowlist: HashSet<NodeId> = HashSet::new();
-        let results = index.search_with_filter(&vectors[5], 5, &allowlist);
+        let results = index.search_with_filter(&vectors[5], 5, &allowlist, &accessor);
         assert!(results.is_empty());
     }
 
@@ -1636,16 +1810,25 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(50, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         // Allowlist contains all nodes
         let allowlist: HashSet<NodeId> = (1..=50).map(NodeId::new).collect();
         let query = &vectors[25];
 
-        let unfiltered = index.search_with_ef(query, 5, 200);
-        let filtered = index.search_with_ef_and_filter(query, 5, 200, &allowlist);
+        let unfiltered = index.search_with_ef(query, 5, 200, &accessor);
+        let filtered = index.search_with_ef_and_filter(query, 5, 200, &allowlist, &accessor);
 
         // With full allowlist, results should match unfiltered (same ef)
         assert_eq!(unfiltered.len(), filtered.len());
@@ -1660,13 +1843,22 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(50, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         // Only one node allowed
         let allowlist: HashSet<NodeId> = [NodeId::new(30)].into_iter().collect();
-        let results = index.search_with_filter(&vectors[25], 5, &allowlist);
+        let results = index.search_with_filter(&vectors[25], 5, &allowlist, &accessor);
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, NodeId::new(30));
@@ -1678,14 +1870,23 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(100, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         let allowlist: HashSet<NodeId> =
             (1..=100).filter(|i| i % 3 == 0).map(NodeId::new).collect();
 
-        let results = index.search_with_filter(&[0.5, 0.5, 0.5, 0.5], 10, &allowlist);
+        let results = index.search_with_filter(&[0.5, 0.5, 0.5, 0.5], 10, &allowlist, &accessor);
         for i in 1..results.len() {
             assert!(results[i - 1].1 <= results[i].1);
         }
@@ -1697,15 +1898,24 @@ mod tests {
         let index = HnswIndex::with_seed(config, 42);
 
         let vectors = create_test_vectors(100, 4);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64 + 1), vec);
+            let id = NodeId::new(i as u64 + 1);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec, &accessor);
         }
 
         // Allowlist: nodes 1..=50
         let allowlist: HashSet<NodeId> = (1..=50).map(NodeId::new).collect();
         let queries: Vec<Vec<f32>> = vec![vectors[10].clone(), vectors[70].clone()];
 
-        let all_results = index.batch_search_with_filter(&queries, 5, &allowlist);
+        let all_results = index.batch_search_with_filter(&queries, 5, &allowlist, &accessor);
         assert_eq!(all_results.len(), 2);
 
         for results in &all_results {
@@ -1734,8 +1944,16 @@ mod tests {
             .map(|_| (0..dim).map(|_| rand_f32()).collect())
             .collect();
 
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for (i, vec) in vectors.iter().enumerate() {
-            index.insert(NodeId::new(i as u64), vec);
+            let id = NodeId::new(i as u64);
+            let arc: Arc<[f32]> = vec.as_slice().into();
+            map.insert(id, arc);
+        }
+        let accessor = make_accessor(&map);
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64), vec, &accessor);
         }
 
         // 20% allowlist — moderate selectivity
@@ -1761,7 +1979,7 @@ mod tests {
         gt.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let gt_set: std::collections::HashSet<u64> = gt.iter().take(k).map(|(id, _)| *id).collect();
 
-        let results = index.search_with_filter(&query, k, &allowlist);
+        let results = index.search_with_filter(&query, k, &allowlist, &accessor);
         let found: std::collections::HashSet<u64> =
             results.iter().map(|(id, _)| id.as_u64()).collect();
 
@@ -1778,12 +1996,18 @@ mod tests {
         let config = HnswConfig::new(4, DistanceMetric::Cosine);
         let index = HnswIndex::with_seed(config, 42);
 
-        index.insert(NodeId::new(1), &[1.0, 0.0, 0.0, 0.0]);
-        index.insert(NodeId::new(2), &[0.0, 1.0, 0.0, 0.0]);
-        index.insert(NodeId::new(3), &[0.707, 0.707, 0.0, 0.0]);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        map.insert(NodeId::new(1), vec![1.0, 0.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(2), vec![0.0, 1.0, 0.0, 0.0].into());
+        map.insert(NodeId::new(3), vec![0.707, 0.707, 0.0, 0.0].into());
+        let accessor = make_accessor(&map);
+
+        index.insert(NodeId::new(1), &[1.0, 0.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(2), &[0.0, 1.0, 0.0, 0.0], &accessor);
+        index.insert(NodeId::new(3), &[0.707, 0.707, 0.0, 0.0], &accessor);
 
         let allowlist: HashSet<NodeId> = [NodeId::new(2), NodeId::new(3)].into_iter().collect();
-        let results = index.search_with_filter(&[0.9, 0.1, 0.0, 0.0], 2, &allowlist);
+        let results = index.search_with_filter(&[0.9, 0.1, 0.0, 0.0], 2, &allowlist, &accessor);
 
         // Node 1 is closest overall but not in allowlist
         assert!(!results.is_empty());

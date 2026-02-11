@@ -5,6 +5,8 @@
 //! each other. Sessions are cheap to create - spin up as many as you need.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use grafeo_common::types::{EdgeId, EpochId, NodeId, TxId, Value};
 use grafeo_common::utils::error::Result;
@@ -45,6 +47,12 @@ pub struct Session {
     factorized_execution: bool,
     /// The graph data model this session operates on.
     graph_model: GraphModel,
+    /// Maximum time a query may run before being cancelled.
+    query_timeout: Option<Duration>,
+    /// Shared commit counter for triggering auto-GC.
+    commit_counter: Arc<AtomicUsize>,
+    /// GC every N commits (0 = disabled).
+    gc_interval: usize,
 }
 
 impl Session {
@@ -66,11 +74,14 @@ impl Session {
             adaptive_config: AdaptiveConfig::default(),
             factorized_execution: true,
             graph_model: GraphModel::Lpg,
+            query_timeout: None,
+            commit_counter: Arc::new(AtomicUsize::new(0)),
+            gc_interval: 0,
         }
     }
 
     /// Creates a new session with adaptive execution configuration.
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn with_adaptive(
         store: Arc<LpgStore>,
         tx_manager: Arc<TransactionManager>,
@@ -78,6 +89,9 @@ impl Session {
         adaptive_config: AdaptiveConfig,
         factorized_execution: bool,
         graph_model: GraphModel,
+        query_timeout: Option<Duration>,
+        commit_counter: Arc<AtomicUsize>,
+        gc_interval: usize,
     ) -> Self {
         Self {
             store,
@@ -90,11 +104,15 @@ impl Session {
             adaptive_config,
             factorized_execution,
             graph_model,
+            query_timeout,
+            commit_counter,
+            gc_interval,
         }
     }
 
     /// Creates a new session with RDF store and adaptive configuration.
     #[cfg(feature = "rdf")]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_rdf_store_and_adaptive(
         store: Arc<LpgStore>,
         rdf_store: Arc<RdfStore>,
@@ -103,6 +121,9 @@ impl Session {
         adaptive_config: AdaptiveConfig,
         factorized_execution: bool,
         graph_model: GraphModel,
+        query_timeout: Option<Duration>,
+        commit_counter: Arc<AtomicUsize>,
+        gc_interval: usize,
     ) -> Self {
         Self {
             store,
@@ -114,6 +135,9 @@ impl Session {
             adaptive_config,
             factorized_execution,
             graph_model,
+            query_timeout,
+            commit_counter,
+            gc_interval,
         }
     }
 
@@ -209,7 +233,8 @@ impl Session {
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone());
+        let executor = Executor::with_columns(physical_plan.columns.clone())
+            .with_deadline(self.query_deadline());
         let mut result = executor.execute(physical_plan.operator.as_mut())?;
 
         // Add execution metrics
@@ -331,7 +356,8 @@ impl Session {
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone());
+        let executor = Executor::with_columns(physical_plan.columns.clone())
+            .with_deadline(self.query_deadline());
         executor.execute(physical_plan.operator.as_mut())
     }
 
@@ -386,7 +412,8 @@ impl Session {
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone());
+        let executor = Executor::with_columns(physical_plan.columns.clone())
+            .with_deadline(self.query_deadline());
         executor.execute(physical_plan.operator.as_mut())
     }
 
@@ -471,7 +498,8 @@ impl Session {
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone());
+        let executor = Executor::with_columns(physical_plan.columns.clone())
+            .with_deadline(self.query_deadline());
         executor.execute(physical_plan.operator.as_mut())
     }
 
@@ -587,7 +615,8 @@ impl Session {
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone());
+        let executor = Executor::with_columns(physical_plan.columns.clone())
+            .with_deadline(self.query_deadline());
         executor.execute(physical_plan.operator.as_mut())
     }
 
@@ -644,7 +673,8 @@ impl Session {
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone());
+        let executor = Executor::with_columns(physical_plan.columns.clone())
+            .with_deadline(self.query_deadline());
         executor.execute(physical_plan.operator.as_mut())
     }
 
@@ -741,7 +771,19 @@ impl Session {
         #[cfg(feature = "rdf")]
         self.rdf_store.commit_tx(tx_id);
 
-        self.tx_manager.commit(tx_id).map(|_| ())
+        self.tx_manager.commit(tx_id)?;
+
+        // Auto-GC: periodically prune old MVCC versions
+        if self.gc_interval > 0 {
+            let count = self.commit_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if count.is_multiple_of(self.gc_interval) {
+                let min_epoch = self.tx_manager.min_active_epoch();
+                self.store.gc_versions(min_epoch);
+                self.tx_manager.gc();
+            }
+        }
+
+        Ok(())
     }
 
     /// Aborts the current transaction.
@@ -799,6 +841,12 @@ impl Session {
     #[must_use]
     pub fn auto_commit(&self) -> bool {
         self.auto_commit
+    }
+
+    /// Computes the wall-clock deadline for query execution.
+    #[must_use]
+    fn query_deadline(&self) -> Option<Instant> {
+        self.query_timeout.map(|d| Instant::now() + d)
     }
 
     /// Returns the current transaction context for MVCC visibility.

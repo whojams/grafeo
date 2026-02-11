@@ -111,6 +111,13 @@ impl VectorScanOperator {
         }
     }
 
+    /// Sets the property name (required for HNSW index vector accessor).
+    #[must_use]
+    pub fn with_property(mut self, property: impl Into<String>) -> Self {
+        self.property = property.into();
+        self
+    }
+
     /// Creates a new vector scan operator for brute-force search.
     ///
     /// This is suitable for small datasets (< 10K vectors) where
@@ -204,8 +211,10 @@ impl VectorScanOperator {
         #[cfg(feature = "vector-index")]
         {
             if let Some(ref index) = self.index {
-                // Use HNSW index
-                self.results = index.search_with_ef(&self.query, self.k, self.ef);
+                // Use HNSW index with property accessor
+                let accessor =
+                    crate::index::vector::PropertyVectorAccessor::new(&self.store, &*self.property);
+                self.results = index.search_with_ef(&self.query, self.k, self.ef, &accessor);
                 self.apply_filters();
                 return;
             }
@@ -573,15 +582,11 @@ mod tests {
     #[cfg(feature = "vector-index")]
     #[test]
     fn test_vector_scan_with_hnsw_index() {
-        use crate::index::vector::{HnswConfig, HnswIndex};
+        use crate::index::vector::{HnswConfig, HnswIndex, PropertyVectorAccessor};
 
         let store = Arc::new(LpgStore::new());
 
-        // Create HNSW index
-        let config = HnswConfig::new(3, DistanceMetric::Euclidean);
-        let index = Arc::new(HnswIndex::new(config));
-
-        // Create nodes and add to index
+        // Create nodes and set vector properties FIRST (so accessor can read them)
         let n1 = store.create_node(&["Doc"]);
         let n2 = store.create_node(&["Doc"]);
         let n3 = store.create_node(&["Doc"]);
@@ -590,18 +595,24 @@ mod tests {
         let v2 = vec![0.5, 0.6, 0.7];
         let v3 = vec![0.9, 0.8, 0.7];
 
-        index.insert(n1, &v1);
-        index.insert(n2, &v2);
-        index.insert(n3, &v3);
+        store.set_node_property(n1, "vec", Value::Vector(v1.clone().into()));
+        store.set_node_property(n2, "vec", Value::Vector(v2.clone().into()));
+        store.set_node_property(n3, "vec", Value::Vector(v3.clone().into()));
 
-        store.set_node_property(n1, "vec", Value::Vector(v1.into()));
-        store.set_node_property(n2, "vec", Value::Vector(v2.into()));
-        store.set_node_property(n3, "vec", Value::Vector(v3.into()));
+        // Create HNSW index and insert using accessor
+        let config = HnswConfig::new(3, DistanceMetric::Euclidean);
+        let index = Arc::new(HnswIndex::new(config));
+        let accessor = PropertyVectorAccessor::new(&store, "vec");
+
+        index.insert(n1, &v1, &accessor);
+        index.insert(n2, &v2, &accessor);
+        index.insert(n3, &v3, &accessor);
 
         // Search using index
         let query = vec![0.1f32, 0.2, 0.35];
         let mut scan =
-            VectorScanOperator::with_index(Arc::clone(&store), Arc::clone(&index), query, 2);
+            VectorScanOperator::with_index(Arc::clone(&store), Arc::clone(&index), query, 2)
+                .with_property("vec");
 
         assert_eq!(scan.name(), "VectorScan(HNSW)");
 

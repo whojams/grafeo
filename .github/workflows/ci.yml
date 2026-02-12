@@ -96,9 +96,12 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-miri-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-miri-v2-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-miri-
+            ${{ runner.os }}-cargo-miri-v2-
+
+      - name: Clean stale build artifacts
+        run: cargo clean
 
       - name: Run Miri on grafeo-common
         run: cargo +nightly miri test --all-features -p grafeo-common

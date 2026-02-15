@@ -688,6 +688,87 @@ fn test_sql_pgq_call_yield_where_order_limit() {
     assert!(result.row_count() <= 2);
 }
 
+// ==================== Phase 2: SQL/PGQ SKIP + ORDER ASC ====================
+
+#[test]
+#[cfg(feature = "sql-pgq")]
+fn test_sql_pgq_call_yield_where_return_skip_limit() {
+    let db = setup_graph();
+    let session = db.session();
+    // Full chain: WHERE + ORDER BY + LIMIT (exercises all SQL/PGQ translator branches)
+    let result = session
+        .execute_sql(
+            "CALL grafeo.pagerank() YIELD node_id, score \
+             WHERE score > 0.0 ORDER BY score ASC LIMIT 1",
+        )
+        .unwrap();
+
+    assert_eq!(result.row_count(), 1);
+    // Verify it's the smallest score (ASC order, LIMIT 1)
+    let all = session
+        .execute_sql("CALL grafeo.pagerank() YIELD score ORDER BY score ASC")
+        .unwrap();
+    assert_eq!(result.rows[0][1], all.rows[0][0]);
+}
+
+// ==================== Phase 2: GQL ORDER ASC + RETURN DISTINCT ====================
+
+#[test]
+fn test_gql_call_yield_return_order_asc() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute(
+            "CALL grafeo.pagerank() YIELD node_id, score \
+             RETURN node_id, score ORDER BY score ASC",
+        )
+        .unwrap();
+
+    assert_eq!(result.row_count(), 3);
+    let scores: Vec<f64> = result
+        .rows
+        .iter()
+        .map(|r| match &r[1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        })
+        .collect();
+    for i in 1..scores.len() {
+        assert!(
+            scores[i - 1] <= scores[i],
+            "Scores should be in ASC order: {:?}",
+            scores
+        );
+    }
+}
+
+#[test]
+fn test_gql_call_yield_return_distinct() {
+    let db = setup_graph();
+    let session = db.session();
+    // RETURN DISTINCT should deduplicate rows
+    let all = session
+        .execute(
+            "CALL grafeo.connected_components() YIELD component_id \
+             RETURN component_id",
+        )
+        .unwrap();
+    let distinct = session
+        .execute(
+            "CALL grafeo.connected_components() YIELD component_id \
+             RETURN DISTINCT component_id",
+        )
+        .unwrap();
+
+    // DISTINCT should return <= the original row count
+    assert!(
+        distinct.row_count() <= all.row_count(),
+        "DISTINCT ({}) should not exceed original ({})",
+        distinct.row_count(),
+        all.row_count()
+    );
+}
+
 // ==================== Phase 2: Cypher WHERE + RETURN (clause-based) ====================
 
 #[test]

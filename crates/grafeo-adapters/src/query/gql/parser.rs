@@ -227,10 +227,26 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // Parse optional WHERE clause (only valid after YIELD)
+        let where_clause = if yield_items.is_some() && self.current.kind == TokenKind::Where {
+            Some(self.parse_where_clause()?)
+        } else {
+            None
+        };
+
+        // Parse optional RETURN clause (only valid after YIELD)
+        let return_clause = if yield_items.is_some() && self.current.kind == TokenKind::Return {
+            Some(self.parse_return_clause()?)
+        } else {
+            None
+        };
+
         Ok(CallStatement {
             procedure_name: name_parts,
             arguments,
             yield_items,
+            where_clause,
+            return_clause,
             span: Some(SourceSpan::new(span_start, self.current.span.start, 1, 1)),
         })
     }

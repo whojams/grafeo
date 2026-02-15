@@ -184,9 +184,6 @@ impl Source for PartitionedVectorSource {
 /// Wraps a collection of DataChunks in a parallel source.
 pub struct ParallelChunkSource {
     chunks: Arc<Vec<DataChunk>>,
-    /// Row count in each chunk (cached for fast morsel generation).
-    #[allow(dead_code)]
-    chunk_row_counts: Vec<usize>,
     /// Cumulative row count at each chunk start.
     cumulative_rows: Vec<usize>,
     /// Total row count.
@@ -201,13 +198,11 @@ impl ParallelChunkSource {
     /// Creates a new parallel chunk source.
     #[must_use]
     pub fn new(chunks: Vec<DataChunk>) -> Self {
-        let chunk_row_counts: Vec<usize> = chunks.iter().map(DataChunk::len).collect();
-
         let mut cumulative_rows = Vec::with_capacity(chunks.len() + 1);
         let mut sum = 0;
         cumulative_rows.push(0);
-        for &count in &chunk_row_counts {
-            sum += count;
+        for chunk in &chunks {
+            sum += chunk.len();
             cumulative_rows.push(sum);
         }
 
@@ -215,7 +210,6 @@ impl ParallelChunkSource {
 
         Self {
             chunks: Arc::new(chunks),
-            chunk_row_counts,
             cumulative_rows,
             total_rows: sum,
             chunk_index: 0,
@@ -460,28 +454,25 @@ pub struct ParallelTripleScanSource {
     triples: Arc<Vec<(Value, Value, Value)>>,
     /// Current read position.
     position: usize,
-    /// Variable names for output columns (e.g., ["s", "p", "o"]).
-    output_vars: Vec<String>,
 }
 
 #[cfg(feature = "rdf")]
 impl ParallelTripleScanSource {
     /// Creates a new parallel triple scan source.
     #[must_use]
-    pub fn new(triples: Vec<(Value, Value, Value)>, output_vars: Vec<String>) -> Self {
+    pub fn new(triples: Vec<(Value, Value, Value)>) -> Self {
         Self {
             triples: Arc::new(triples),
             position: 0,
-            output_vars,
         }
     }
 
     /// Creates from an iterator of triples.
-    pub fn from_triples<I>(iter: I, output_vars: Vec<String>) -> Self
+    pub fn from_triples<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (Value, Value, Value)>,
     {
-        Self::new(iter.into_iter().collect(), output_vars)
+        Self::new(iter.into_iter().collect())
     }
 }
 
@@ -533,7 +524,6 @@ impl ParallelSource for ParallelTripleScanSource {
     fn create_partition(&self, morsel: &Morsel) -> Box<dyn Source> {
         Box::new(PartitionedTripleScanSource::new(
             Arc::clone(&self.triples),
-            self.output_vars.clone(),
             morsel.start_row,
             morsel.end_row,
         ))
@@ -548,8 +538,6 @@ impl ParallelSource for ParallelTripleScanSource {
 #[cfg(feature = "rdf")]
 struct PartitionedTripleScanSource {
     triples: Arc<Vec<(Value, Value, Value)>>,
-    #[allow(dead_code)]
-    output_vars: Vec<String>,
     start_row: usize,
     end_row: usize,
     position: usize,
@@ -557,15 +545,9 @@ struct PartitionedTripleScanSource {
 
 #[cfg(feature = "rdf")]
 impl PartitionedTripleScanSource {
-    fn new(
-        triples: Arc<Vec<(Value, Value, Value)>>,
-        output_vars: Vec<String>,
-        start_row: usize,
-        end_row: usize,
-    ) -> Self {
+    fn new(triples: Arc<Vec<(Value, Value, Value)>>, start_row: usize, end_row: usize) -> Self {
         Self {
             triples,
-            output_vars,
             start_row,
             end_row,
             position: start_row,
@@ -934,8 +916,7 @@ mod tests {
                 Value::String("o3".into()),
             ),
         ];
-        let source =
-            ParallelTripleScanSource::new(triples, vec!["s".into(), "p".into(), "o".into()]);
+        let source = ParallelTripleScanSource::new(triples);
 
         assert_eq!(source.total_rows(), Some(3));
         assert!(source.is_partitionable());
@@ -954,8 +935,7 @@ mod tests {
                 )
             })
             .collect();
-        let source =
-            ParallelTripleScanSource::new(triples, vec!["s".into(), "p".into(), "o".into()]);
+        let source = ParallelTripleScanSource::new(triples);
 
         let morsel = Morsel::new(0, 0, 20, 50);
         let mut partition = source.create_partition(&morsel);

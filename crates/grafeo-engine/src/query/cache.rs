@@ -77,9 +77,6 @@ fn normalize_query(query: &str) -> String {
 struct CacheEntry<T> {
     /// The cached value.
     value: T,
-    /// When the entry was created.
-    #[allow(dead_code)]
-    created_at: Instant,
     /// Number of times this entry was accessed.
     access_count: u64,
     /// Last access time.
@@ -88,12 +85,10 @@ struct CacheEntry<T> {
 
 impl<T: Clone> CacheEntry<T> {
     fn new(value: T) -> Self {
-        let now = Instant::now();
         Self {
             value,
-            created_at: now,
             access_count: 0,
-            last_accessed: now,
+            last_accessed: Instant::now(),
         }
     }
 

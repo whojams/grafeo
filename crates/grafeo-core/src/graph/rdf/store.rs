@@ -68,6 +68,8 @@ pub struct RdfStore {
     object_index: RwLock<Option<hashbrown::HashMap<Term, Vec<Arc<Triple>>, ahash::RandomState>>>,
     /// Transaction buffers for pending operations.
     tx_buffer: RwLock<TransactionBuffer>,
+    /// Named graphs, each a separate `RdfStore` partition.
+    named_graphs: RwLock<HashMap<String, Arc<RdfStore>>>,
 }
 
 impl RdfStore {
@@ -99,6 +101,7 @@ impl RdfStore {
             )),
             object_index: RwLock::new(object_index),
             tx_buffer: RwLock::new(TransactionBuffer::default()),
+            named_graphs: RwLock::new(HashMap::new()),
             config,
         }
     }
@@ -364,6 +367,184 @@ impl RdfStore {
             } else {
                 0
             },
+            graph_count: self.named_graphs.read().len(),
+        }
+    }
+
+    // =========================================================================
+    // Named graph support
+    // =========================================================================
+
+    /// Returns a named graph by IRI, or `None` if it doesn't exist.
+    #[must_use]
+    pub fn graph(&self, name: &str) -> Option<Arc<RdfStore>> {
+        self.named_graphs.read().get(name).cloned()
+    }
+
+    /// Returns a named graph, creating it if it doesn't exist.
+    pub fn graph_or_create(&self, name: &str) -> Arc<RdfStore> {
+        {
+            let graphs = self.named_graphs.read();
+            if let Some(g) = graphs.get(name) {
+                return Arc::clone(g);
+            }
+        }
+        let mut graphs = self.named_graphs.write();
+        Arc::clone(
+            graphs
+                .entry(name.to_string())
+                .or_insert_with(|| Arc::new(RdfStore::with_config(self.config.clone()))),
+        )
+    }
+
+    /// Creates a named graph. Returns `false` if it already exists.
+    pub fn create_graph(&self, name: &str) -> bool {
+        let mut graphs = self.named_graphs.write();
+        if graphs.contains_key(name) {
+            return false;
+        }
+        graphs.insert(
+            name.to_string(),
+            Arc::new(RdfStore::with_config(self.config.clone())),
+        );
+        true
+    }
+
+    /// Drops a named graph. Returns `false` if it didn't exist.
+    pub fn drop_graph(&self, name: &str) -> bool {
+        self.named_graphs.write().remove(name).is_some()
+    }
+
+    /// Returns all named graph IRIs.
+    #[must_use]
+    pub fn graph_names(&self) -> Vec<String> {
+        self.named_graphs.read().keys().cloned().collect()
+    }
+
+    /// Returns the number of named graphs.
+    #[must_use]
+    pub fn graph_count(&self) -> usize {
+        self.named_graphs.read().len()
+    }
+
+    /// Clears a specific graph, or the default graph if `name` is `None`.
+    pub fn clear_graph(&self, name: Option<&str>) {
+        match name {
+            None => self.clear(),
+            Some(n) => {
+                if let Some(g) = self.named_graphs.read().get(n) {
+                    g.clear();
+                }
+            }
+        }
+    }
+
+    /// Clears all named graphs (but not the default graph).
+    pub fn clear_all_named(&self) {
+        self.named_graphs.write().clear();
+    }
+
+    /// Copies all triples from source graph to destination graph.
+    ///
+    /// `None` = default graph, `Some(iri)` = named graph.
+    pub fn copy_graph(&self, source: Option<&str>, dest: Option<&str>) {
+        let triples = match source {
+            None => self.triples(),
+            Some(n) => self.graph(n).map(|g| g.triples()).unwrap_or_default(),
+        };
+        let dest_store: Arc<RdfStore> = match dest {
+            None => {
+                // Copying into default graph: clear and re-insert
+                self.clear();
+                // We need to insert directly, so just do it inline
+                for t in triples {
+                    self.insert((*t).clone());
+                }
+                return;
+            }
+            Some(n) => self.graph_or_create(n),
+        };
+        dest_store.clear();
+        for t in triples {
+            dest_store.insert((*t).clone());
+        }
+    }
+
+    /// Moves all triples from source graph to destination graph.
+    ///
+    /// `None` = default graph, `Some(iri)` = named graph.
+    pub fn move_graph(&self, source: Option<&str>, dest: Option<&str>) {
+        self.copy_graph(source, dest);
+        match source {
+            None => self.clear(),
+            Some(n) => {
+                self.drop_graph(n);
+            }
+        }
+    }
+
+    /// Adds all triples from source graph into destination graph (union).
+    ///
+    /// `None` = default graph, `Some(iri)` = named graph.
+    pub fn add_graph(&self, source: Option<&str>, dest: Option<&str>) {
+        let triples = match source {
+            None => self.triples(),
+            Some(n) => self.graph(n).map(|g| g.triples()).unwrap_or_default(),
+        };
+        match dest {
+            None => {
+                for t in triples {
+                    self.insert((*t).clone());
+                }
+            }
+            Some(n) => {
+                let dest_store = self.graph_or_create(n);
+                for t in triples {
+                    dest_store.insert((*t).clone());
+                }
+            }
+        }
+    }
+
+    /// Finds triples across specific graphs.
+    ///
+    /// - `graphs = None` searches the default graph only (backward compatible).
+    /// - `graphs = Some(&[])` searches ALL graphs (default + named).
+    /// - `graphs = Some(&["g1", "g2"])` searches those named graphs only.
+    pub fn find_in_graphs(
+        &self,
+        pattern: &TriplePattern,
+        graphs: Option<&[&str]>,
+    ) -> Vec<(Option<String>, Arc<Triple>)> {
+        match graphs {
+            None => {
+                // Default graph only
+                self.find(pattern).into_iter().map(|t| (None, t)).collect()
+            }
+            Some([]) => {
+                // ALL graphs
+                let mut results: Vec<(Option<String>, Arc<Triple>)> =
+                    self.find(pattern).into_iter().map(|t| (None, t)).collect();
+                for (name, store) in self.named_graphs.read().iter() {
+                    for t in store.find(pattern) {
+                        results.push((Some(name.clone()), t));
+                    }
+                }
+                results
+            }
+            Some(names) => {
+                // Specific named graphs
+                let mut results = Vec::new();
+                let graphs = self.named_graphs.read();
+                for name in names {
+                    if let Some(store) = graphs.get(*name) {
+                        for t in store.find(pattern) {
+                            results.push((Some((*name).to_string()), t));
+                        }
+                    }
+                }
+                results
+            }
         }
     }
 
@@ -500,6 +681,8 @@ pub struct RdfStoreStats {
     pub predicate_count: usize,
     /// Number of unique objects (0 if object index disabled).
     pub object_count: usize,
+    /// Number of named graphs.
+    pub graph_count: usize,
 }
 
 #[cfg(test)]
@@ -709,6 +892,142 @@ mod tests {
             .iter()
             .any(|t| t.as_ref() == &new_triple);
         assert!(found_new, "Pending insert should be visible");
+    }
+
+    #[test]
+    fn test_named_graph_crud() {
+        let store = RdfStore::new();
+
+        // Create named graph
+        assert!(store.create_graph("http://example.org/g1"));
+        assert!(!store.create_graph("http://example.org/g1")); // already exists
+        assert_eq!(store.graph_count(), 1);
+
+        // Insert into named graph
+        let g1 = store.graph("http://example.org/g1").unwrap();
+        g1.insert(Triple::new(
+            Term::iri("http://example.org/s1"),
+            Term::iri("http://example.org/p1"),
+            Term::literal("o1"),
+        ));
+        assert_eq!(g1.len(), 1);
+
+        // Default graph is still empty
+        assert_eq!(store.len(), 0);
+
+        // Query named graph
+        let results = g1.find(&TriplePattern {
+            subject: None,
+            predicate: None,
+            object: None,
+        });
+        assert_eq!(results.len(), 1);
+
+        // Drop graph
+        assert!(store.drop_graph("http://example.org/g1"));
+        assert!(!store.drop_graph("http://example.org/g1"));
+        assert_eq!(store.graph_count(), 0);
+    }
+
+    #[test]
+    fn test_named_graph_isolation() {
+        let store = RdfStore::new();
+
+        // Insert into default graph
+        store.insert(Triple::new(
+            Term::iri("http://example.org/a"),
+            Term::iri("http://example.org/p"),
+            Term::literal("default"),
+        ));
+
+        // Insert into named graph
+        let g1 = store.graph_or_create("http://example.org/g1");
+        g1.insert(Triple::new(
+            Term::iri("http://example.org/a"),
+            Term::iri("http://example.org/p"),
+            Term::literal("named"),
+        ));
+
+        // Each graph sees only its own triples
+        assert_eq!(store.len(), 1);
+        assert_eq!(g1.len(), 1);
+        assert_eq!(store.triples()[0].object(), &Term::literal("default"));
+        assert_eq!(g1.triples()[0].object(), &Term::literal("named"));
+    }
+
+    #[test]
+    fn test_find_in_graphs() {
+        let store = RdfStore::new();
+        let pattern = TriplePattern {
+            subject: None,
+            predicate: None,
+            object: None,
+        };
+
+        store.insert(Triple::new(
+            Term::iri("http://example.org/s"),
+            Term::iri("http://example.org/p"),
+            Term::literal("default"),
+        ));
+
+        let g1 = store.graph_or_create("http://example.org/g1");
+        g1.insert(Triple::new(
+            Term::iri("http://example.org/s"),
+            Term::iri("http://example.org/p"),
+            Term::literal("g1"),
+        ));
+
+        // Default only
+        let results = store.find_in_graphs(&pattern, None);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].0.is_none());
+
+        // All graphs
+        let results = store.find_in_graphs(&pattern, Some(&[]));
+        assert_eq!(results.len(), 2);
+
+        // Specific named graph
+        let results = store.find_in_graphs(&pattern, Some(&["http://example.org/g1"]));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.as_deref(), Some("http://example.org/g1"));
+    }
+
+    #[test]
+    fn test_copy_move_add_graph() {
+        let store = RdfStore::new();
+        let triple = Triple::new(
+            Term::iri("http://example.org/s"),
+            Term::iri("http://example.org/p"),
+            Term::literal("value"),
+        );
+
+        // Insert into default graph
+        store.insert(triple.clone());
+
+        // Copy default -> named
+        store.copy_graph(None, Some("http://example.org/copy"));
+        assert_eq!(store.len(), 1); // default still has it
+        let copy = store.graph("http://example.org/copy").unwrap();
+        assert_eq!(copy.len(), 1);
+
+        // Add named -> another named (union)
+        let g2 = store.graph_or_create("http://example.org/g2");
+        g2.insert(Triple::new(
+            Term::iri("http://example.org/s2"),
+            Term::iri("http://example.org/p2"),
+            Term::literal("extra"),
+        ));
+        store.add_graph(
+            Some("http://example.org/copy"),
+            Some("http://example.org/g2"),
+        );
+        assert_eq!(g2.len(), 2); // original + added
+
+        // Move named -> named
+        store.move_graph(Some("http://example.org/g2"), Some("http://example.org/g3"));
+        assert!(store.graph("http://example.org/g2").is_none());
+        let g3 = store.graph("http://example.org/g3").unwrap();
+        assert_eq!(g3.len(), 2);
     }
 
     #[test]

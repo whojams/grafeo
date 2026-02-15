@@ -1050,6 +1050,20 @@ impl GrafeoDB {
     /// assert!(removed);
     /// ```
     pub fn remove_node_label(&self, id: grafeo_common::types::NodeId, label: &str) -> bool {
+        // Collect text indexes to clean BEFORE removing the label
+        #[cfg(feature = "text-index")]
+        let text_indexes_to_clean: Vec<
+            std::sync::Arc<parking_lot::RwLock<grafeo_core::index::text::InvertedIndex>>,
+        > = {
+            let prefix = format!("{label}:");
+            self.store
+                .text_index_entries()
+                .into_iter()
+                .filter(|(key, _)| key.starts_with(&prefix))
+                .map(|(_, index)| index)
+                .collect()
+        };
+
         let result = self.store.remove_label(id, label);
 
         #[cfg(feature = "wal")]
@@ -1060,6 +1074,14 @@ impl GrafeoDB {
                 label: label.to_string(),
             }) {
                 tracing::warn!("Failed to log RemoveNodeLabel to WAL: {}", e);
+            }
+        }
+
+        // Remove from text indexes for the removed label
+        #[cfg(feature = "text-index")]
+        if result {
+            for index in text_indexes_to_clean {
+                index.write().remove(id);
             }
         }
 
@@ -1295,7 +1317,19 @@ impl GrafeoDB {
     /// Returns true if the property existed and was removed, false otherwise.
     pub fn remove_node_property(&self, id: grafeo_common::types::NodeId, key: &str) -> bool {
         // Note: RemoveProperty WAL records not yet implemented, but operation works in memory
-        self.store.remove_node_property(id, key).is_some()
+        let removed = self.store.remove_node_property(id, key).is_some();
+
+        // Remove from matching text indexes
+        #[cfg(feature = "text-index")]
+        if removed && let Some(node) = self.store.get_node(id) {
+            for label in &node.labels {
+                if let Some(index) = self.store.get_text_index(label.as_str(), key) {
+                    index.write().remove(id);
+                }
+            }
+        }
+
+        removed
     }
 
     /// Removes a property from an edge.
@@ -1834,8 +1868,9 @@ impl GrafeoDB {
     /// Creates a BM25 text index on a node property for full-text search.
     ///
     /// Indexes all existing nodes with the given label and property.
-    /// New mutations to indexed properties are **not** automatically tracked;
-    /// call [`rebuild_text_index`](Self::rebuild_text_index) after bulk updates.
+    /// The index stays in sync automatically as nodes are created, updated,
+    /// or deleted. Use [`rebuild_text_index`](Self::rebuild_text_index) only
+    /// if the index was created before existing data was loaded.
     ///
     /// # Errors
     ///

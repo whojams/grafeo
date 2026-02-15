@@ -359,39 +359,6 @@ impl Source for TripleScanSource {
     }
 }
 
-/// Push operator that performs a hash join on RDF triple patterns.
-///
-/// Used when joining two triple patterns that share a variable.
-/// Note: This is a stub for future implementation.
-#[cfg(feature = "rdf")]
-#[allow(dead_code)]
-pub struct TripleJoinOperator {
-    /// Name of the join variable.
-    join_var: String,
-    /// Left input column index for join key.
-    left_key_col: usize,
-    /// Right input column index for join key.
-    right_key_col: usize,
-    /// Buffered right side for hash join.
-    right_buffer: Vec<DataChunk>,
-    /// Whether we've seen the right side completely.
-    right_complete: bool,
-}
-
-#[cfg(feature = "rdf")]
-impl TripleJoinOperator {
-    /// Create a new triple join operator.
-    pub fn new(join_var: String, left_key_col: usize, right_key_col: usize) -> Self {
-        Self {
-            join_var,
-            left_key_col,
-            right_key_col,
-            right_buffer: Vec::new(),
-            right_complete: false,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

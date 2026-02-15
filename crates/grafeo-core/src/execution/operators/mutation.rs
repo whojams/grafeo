@@ -379,9 +379,6 @@ pub struct DeleteNodeOperator {
     detach: bool,
     /// Epoch for MVCC versioning.
     viewing_epoch: Option<EpochId>,
-    /// Transaction ID for MVCC versioning (reserved for future use).
-    #[allow(dead_code)]
-    tx_id: Option<TxId>,
 }
 
 impl DeleteNodeOperator {
@@ -400,14 +397,12 @@ impl DeleteNodeOperator {
             output_schema,
             detach,
             viewing_epoch: None,
-            tx_id: None,
         }
     }
 
     /// Sets the transaction context for MVCC versioning.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_tx_context(mut self, epoch: EpochId, _tx_id: Option<TxId>) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
         self
     }
 }
@@ -485,9 +480,6 @@ pub struct DeleteEdgeOperator {
     output_schema: Vec<LogicalType>,
     /// Epoch for MVCC versioning.
     viewing_epoch: Option<EpochId>,
-    /// Transaction ID for MVCC versioning (reserved for future use).
-    #[allow(dead_code)]
-    tx_id: Option<TxId>,
 }
 
 impl DeleteEdgeOperator {
@@ -504,14 +496,12 @@ impl DeleteEdgeOperator {
             edge_column,
             output_schema,
             viewing_epoch: None,
-            tx_id: None,
         }
     }
 
     /// Sets the transaction context for MVCC versioning.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_tx_context(mut self, epoch: EpochId, _tx_id: Option<TxId>) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
         self
     }
 }

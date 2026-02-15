@@ -232,9 +232,6 @@ struct MergeEntry {
     row: Vec<Value>,
     /// Source run index.
     run_index: usize,
-    /// Row index within the run (for debugging/tracing).
-    #[allow(dead_code)]
-    row_index: usize,
     /// Sort keys for comparison.
     keys: Vec<SortKey>,
 }
@@ -346,7 +343,6 @@ pub fn merge_sorted_runs(
             heap.push(MergeEntry {
                 row: run[0].clone(),
                 run_index,
-                row_index: 0,
                 keys: keys.to_vec(),
             });
             positions[run_index] = 1;
@@ -363,7 +359,6 @@ pub fn merge_sorted_runs(
             heap.push(MergeEntry {
                 row: runs[entry.run_index][pos].clone(),
                 run_index: entry.run_index,
-                row_index: pos,
                 keys: keys.to_vec(),
             });
             positions[entry.run_index] += 1;

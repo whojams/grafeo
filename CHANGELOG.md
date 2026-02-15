@@ -2,6 +2,12 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.4] - 2026-02-15
+
+### Fixed
+
+- **Multi-pattern CREATE**: `CREATE (:A {id: 'x'}), (:B {id: 'y'})` now creates all nodes instead of only the first. The GQL translator's `translate_insert()` was only processing `patterns[0]`; it now loops through all patterns and chains `CreateNode` operators
+
 ## [0.5.3] - 2026-02-13
 
 ### Improved

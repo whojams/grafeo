@@ -458,3 +458,250 @@ fn test_call_yield_all_then_specific() {
         "Row counts should match"
     );
 }
+
+// ==================== Phase 2: YIELD + WHERE + RETURN ====================
+
+#[test]
+fn test_gql_call_yield_where() {
+    let db = setup_graph();
+    let session = db.session();
+    // Filter PageRank scores > 0 (all should pass since every node has a score)
+    let result = session
+        .execute("CALL grafeo.pagerank() YIELD node_id, score WHERE score > 0.0")
+        .unwrap();
+
+    assert_eq!(result.columns.len(), 2);
+    assert_eq!(result.row_count(), 3);
+
+    // Verify all scores are positive
+    for row in &result.rows {
+        if let Value::Float64(score) = &row[1] {
+            assert!(*score > 0.0, "Expected score > 0.0, got {}", score);
+        }
+    }
+}
+
+#[test]
+fn test_gql_call_yield_where_filters_rows() {
+    let db = setup_graph();
+    let session = db.session();
+    // Use a high threshold that eliminates some results
+    let all = session.execute("CALL grafeo.pagerank()").unwrap();
+    let max_score = all
+        .rows
+        .iter()
+        .map(|r| match &r[1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    // Filter for score > max_score should return 0 rows
+    let result = session
+        .execute(&format!(
+            "CALL grafeo.pagerank() YIELD score WHERE score > {}",
+            max_score
+        ))
+        .unwrap();
+    assert_eq!(result.row_count(), 0, "No score should exceed the maximum");
+}
+
+#[test]
+fn test_gql_call_yield_return() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id, score")
+        .unwrap();
+
+    assert_eq!(result.columns.len(), 2);
+    assert_eq!(result.columns[0], "node_id");
+    assert_eq!(result.columns[1], "score");
+    assert_eq!(result.row_count(), 3);
+}
+
+#[test]
+fn test_gql_call_yield_return_with_alias() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id AS id, score AS rank")
+        .unwrap();
+
+    assert_eq!(result.columns.len(), 2);
+    assert_eq!(result.columns[0], "id");
+    assert_eq!(result.columns[1], "rank");
+}
+
+#[test]
+fn test_gql_call_yield_return_order_by() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute(
+            "CALL grafeo.pagerank() YIELD node_id, score RETURN node_id, score ORDER BY score DESC",
+        )
+        .unwrap();
+
+    assert_eq!(result.row_count(), 3);
+    // Verify descending order
+    let scores: Vec<f64> = result
+        .rows
+        .iter()
+        .map(|r| match &r[1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        })
+        .collect();
+    for i in 1..scores.len() {
+        assert!(
+            scores[i - 1] >= scores[i],
+            "Scores should be in DESC order: {:?}",
+            scores
+        );
+    }
+}
+
+#[test]
+fn test_gql_call_yield_return_limit() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id, score LIMIT 2")
+        .unwrap();
+
+    assert_eq!(result.row_count(), 2);
+}
+
+#[test]
+fn test_gql_call_yield_where_return_order_limit() {
+    let db = setup_graph();
+    let session = db.session();
+    // Full pipeline: YIELD → WHERE → RETURN with ORDER BY + LIMIT
+    let result = session
+        .execute(
+            "CALL grafeo.pagerank() YIELD node_id, score \
+             WHERE score > 0.0 \
+             RETURN node_id, score ORDER BY score DESC LIMIT 2",
+        )
+        .unwrap();
+
+    assert!(
+        result.row_count() <= 2,
+        "LIMIT 2 should return at most 2 rows"
+    );
+    // Verify descending order
+    if result.row_count() == 2 {
+        let s0 = match &result.rows[0][1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        };
+        let s1 = match &result.rows[1][1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        };
+        assert!(
+            s0 >= s1,
+            "First score {} should be >= second score {}",
+            s0,
+            s1
+        );
+    }
+}
+
+#[test]
+fn test_gql_call_yield_return_skip() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id, score SKIP 1")
+        .unwrap();
+
+    assert_eq!(result.row_count(), 2, "SKIP 1 of 3 rows should leave 2");
+}
+
+#[test]
+fn test_gql_call_yield_return_order_skip_limit() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute(
+            "CALL grafeo.pagerank() YIELD node_id, score \
+             RETURN node_id, score ORDER BY score DESC SKIP 1 LIMIT 1",
+        )
+        .unwrap();
+
+    assert_eq!(result.row_count(), 1, "SKIP 1 + LIMIT 1 should leave 1 row");
+}
+
+// ==================== Phase 2: SQL/PGQ WHERE + ORDER BY + LIMIT ====================
+
+#[test]
+#[cfg(feature = "sql-pgq")]
+fn test_sql_pgq_call_yield_where() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute_sql("CALL grafeo.pagerank() YIELD node_id, score WHERE score > 0.0")
+        .unwrap();
+
+    assert_eq!(result.columns.len(), 2);
+    assert_eq!(result.row_count(), 3);
+}
+
+#[test]
+#[cfg(feature = "sql-pgq")]
+fn test_sql_pgq_call_yield_order_by_limit() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute_sql("CALL grafeo.pagerank() YIELD node_id, score ORDER BY score DESC LIMIT 2")
+        .unwrap();
+
+    assert!(result.row_count() <= 2);
+    // Verify descending order
+    if result.row_count() == 2 {
+        let s0 = match &result.rows[0][1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        };
+        let s1 = match &result.rows[1][1] {
+            Value::Float64(f) => *f,
+            _ => 0.0,
+        };
+        assert!(s0 >= s1, "Scores should be in DESC order");
+    }
+}
+
+#[test]
+#[cfg(feature = "sql-pgq")]
+fn test_sql_pgq_call_yield_where_order_limit() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute_sql(
+            "CALL grafeo.pagerank() YIELD node_id, score \
+             WHERE score > 0.0 ORDER BY score DESC LIMIT 2",
+        )
+        .unwrap();
+
+    assert!(result.row_count() <= 2);
+}
+
+// ==================== Phase 2: Cypher WHERE + RETURN (clause-based) ====================
+
+#[test]
+#[cfg(feature = "cypher")]
+fn test_cypher_call_yield_where_return() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute_cypher(
+            "CALL grafeo.pagerank() YIELD node_id, score \
+             WHERE score > 0.0 \
+             RETURN node_id, score ORDER BY score DESC LIMIT 2",
+        )
+        .unwrap();
+
+    assert!(result.row_count() <= 2);
+}

@@ -513,8 +513,24 @@ impl Binder {
             }
             // DDL operators don't need binding — they're handled before the binder
             LogicalOperator::CreatePropertyGraph(_) => Ok(()),
-            // Procedure calls don't need variable binding — arguments are constants
-            LogicalOperator::CallProcedure(_) => Ok(()),
+            // Procedure calls: register yielded columns as variables for downstream operators
+            LogicalOperator::CallProcedure(call) => {
+                if let Some(yields) = &call.yield_items {
+                    for item in yields {
+                        let var_name = item.alias.as_deref().unwrap_or(&item.field_name);
+                        self.context.add_variable(
+                            var_name.to_string(),
+                            VariableInfo {
+                                name: var_name.to_string(),
+                                data_type: LogicalType::Any,
+                                is_node: false,
+                                is_edge: false,
+                            },
+                        );
+                    }
+                }
+                Ok(())
+            }
         }
     }
 

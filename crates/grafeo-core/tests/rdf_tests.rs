@@ -112,10 +112,7 @@ mod parallel_tests {
             ),
         ];
 
-        let source = ParallelTripleScanSource::new(
-            triples,
-            vec!["s".to_string(), "p".to_string(), "o".to_string()],
-        );
+        let source = ParallelTripleScanSource::new(triples);
 
         assert_eq!(source.total_rows(), Some(2));
         assert!(source.is_partitionable());
@@ -134,10 +131,7 @@ mod parallel_tests {
             })
             .collect();
 
-        let source = ParallelTripleScanSource::new(
-            triples,
-            vec!["s".to_string(), "p".to_string(), "o".to_string()],
-        );
+        let source = ParallelTripleScanSource::new(triples);
 
         let morsels = source.generate_morsels(25, 0);
         assert_eq!(morsels.len(), 4); // 100 / 25 = 4 morsels
@@ -158,10 +152,7 @@ mod parallel_tests {
             ),
         ];
 
-        let mut source = ParallelTripleScanSource::new(
-            triples,
-            vec!["s".to_string(), "p".to_string(), "o".to_string()],
-        );
+        let mut source = ParallelTripleScanSource::new(triples);
 
         let chunk = source.next_chunk(10).unwrap().unwrap();
         assert_eq!(chunk.len(), 2);
@@ -180,10 +171,7 @@ mod parallel_tests {
             })
             .collect();
 
-        let source = ParallelTripleScanSource::new(
-            triples,
-            vec!["s".to_string(), "p".to_string(), "o".to_string()],
-        );
+        let source = ParallelTripleScanSource::new(triples);
 
         // Create a morsel for rows 20-50
         let morsel = Morsel::new(0, 0, 20, 50);
@@ -204,10 +192,7 @@ mod parallel_tests {
             Value::String("o1".into()),
         )];
 
-        let mut source = ParallelTripleScanSource::new(
-            triples,
-            vec!["s".to_string(), "p".to_string(), "o".to_string()],
-        );
+        let mut source = ParallelTripleScanSource::new(triples);
 
         // Read all data
         let _ = source.next_chunk(10).unwrap();

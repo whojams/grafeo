@@ -142,12 +142,22 @@ impl RdfPlanner {
             output_mask[3] = true;
         }
 
+        // Resolve graph context
+        let (graph_iri, scan_all_graphs) = match &scan.graph {
+            Some(TripleComponent::Iri(iri)) => (Some(iri.clone()), false),
+            Some(TripleComponent::Literal(Value::String(iri))) => (Some(iri.to_string()), false),
+            Some(TripleComponent::Variable(_)) => (None, true),
+            _ => (None, false),
+        };
+
         // Create the lazy scanning operator
         let operator = Box::new(RdfTripleScanOperator::new(
             Arc::clone(&self.store),
             pattern,
             output_mask,
             self.chunk_size,
+            graph_iri,
+            scan_all_graphs,
         ));
 
         Ok((operator, columns))
@@ -830,28 +840,22 @@ impl RdfPlanner {
         &self,
         create: &CreateGraphOp,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        // Named graphs are not yet fully supported in the RDF store
-        // For now, CREATE GRAPH is a no-op (the graph is implicitly created when triples are added)
-        let operator = Box::new(RdfNoOpOperator::new(create.silent));
+        let operator = Box::new(RdfCreateGraphOperator::new(
+            Arc::clone(&self.store),
+            create.graph.clone(),
+            create.silent,
+        ));
         Ok((operator, Vec::new()))
     }
 
     /// Plans a DROP GRAPH operator.
     fn plan_drop_graph(&self, drop_op: &DropGraphOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        // For default graph (None), clear all triples
-        // For named graph, we would need named graph support
-        if drop_op.graph.is_none() {
-            let operator = Box::new(RdfClearGraphOperator::new(
-                Arc::clone(&self.store),
-                None,
-                drop_op.silent,
-            ));
-            Ok((operator, Vec::new()))
-        } else {
-            // Named graphs not yet fully supported
-            let operator = Box::new(RdfNoOpOperator::new(drop_op.silent));
-            Ok((operator, Vec::new()))
-        }
+        let operator = Box::new(RdfDropGraphOperator::new(
+            Arc::clone(&self.store),
+            drop_op.graph.clone(),
+            drop_op.silent,
+        ));
+        Ok((operator, Vec::new()))
     }
 
     /// Plans a SPARQL MODIFY operator (DELETE/INSERT WHERE).
@@ -1280,19 +1284,15 @@ impl Operator for RdfDeletePatternOperator {
 /// Operator that clears triples from a graph in the RDF store.
 struct RdfClearGraphOperator {
     store: Arc<RdfStore>,
-    #[allow(dead_code)]
     graph: Option<String>,
-    #[allow(dead_code)]
-    silent: bool,
     cleared: bool,
 }
 
 impl RdfClearGraphOperator {
-    fn new(store: Arc<RdfStore>, graph: Option<String>, silent: bool) -> Self {
+    fn new(store: Arc<RdfStore>, graph: Option<String>, _silent: bool) -> Self {
         Self {
             store,
             graph,
-            silent,
             cleared: false,
         }
     }
@@ -1304,8 +1304,7 @@ impl Operator for RdfClearGraphOperator {
             return Ok(None);
         }
 
-        // For now, clear all triples (named graph support would filter by graph)
-        self.store.clear();
+        self.store.clear_graph(self.graph.as_deref());
         self.cleared = true;
 
         Ok(None)
@@ -1321,40 +1320,101 @@ impl Operator for RdfClearGraphOperator {
 }
 
 // ============================================================================
-// RDF No-Op Operator
+// RDF CREATE/DROP Graph Operators
 // ============================================================================
 
-/// A no-op operator for operations that are not fully supported yet.
-struct RdfNoOpOperator {
-    #[allow(dead_code)]
+/// Operator that creates a named graph.
+struct RdfCreateGraphOperator {
+    store: Arc<RdfStore>,
+    graph: String,
     silent: bool,
-    executed: bool,
+    done: bool,
 }
 
-impl RdfNoOpOperator {
-    fn new(silent: bool) -> Self {
+impl RdfCreateGraphOperator {
+    fn new(store: Arc<RdfStore>, graph: String, silent: bool) -> Self {
         Self {
+            store,
+            graph,
             silent,
-            executed: false,
+            done: false,
         }
     }
 }
 
-impl Operator for RdfNoOpOperator {
+impl Operator for RdfCreateGraphOperator {
     fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
-        if self.executed {
+        if self.done {
             return Ok(None);
         }
-        self.executed = true;
+        self.done = true;
+        let created = self.store.create_graph(&self.graph);
+        if !created && !self.silent {
+            return Err(OperatorError::Execution(format!(
+                "Graph <{}> already exists",
+                self.graph
+            )));
+        }
         Ok(None)
     }
 
     fn reset(&mut self) {
-        self.executed = false;
+        self.done = false;
     }
 
     fn name(&self) -> &'static str {
-        "RdfNoOp"
+        "RdfCreateGraph"
+    }
+}
+
+/// Operator that drops a named graph.
+struct RdfDropGraphOperator {
+    store: Arc<RdfStore>,
+    graph: Option<String>,
+    silent: bool,
+    done: bool,
+}
+
+impl RdfDropGraphOperator {
+    fn new(store: Arc<RdfStore>, graph: Option<String>, silent: bool) -> Self {
+        Self {
+            store,
+            graph,
+            silent,
+            done: false,
+        }
+    }
+}
+
+impl Operator for RdfDropGraphOperator {
+    fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+        match &self.graph {
+            None => {
+                // DROP DEFAULT: clear the default graph
+                self.store.clear();
+            }
+            Some(name) => {
+                let dropped = self.store.drop_graph(name);
+                if !dropped && !self.silent {
+                    return Err(OperatorError::Execution(format!(
+                        "Graph <{name}> does not exist"
+                    )));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn reset(&mut self) {
+        self.done = false;
+    }
+
+    fn name(&self) -> &'static str {
+        "RdfDropGraph"
     }
 }
 
@@ -1576,10 +1636,15 @@ struct RdfTripleScanOperator {
     pattern: TriplePattern,
     /// Which components to include in output [s, p, o, g].
     output_mask: [bool; 4],
+    /// Named graph to query. `None` = default graph, `Some(iri)` = named graph.
+    /// When the graph component is a variable, this is `None` and we scan all graphs.
+    graph: Option<String>,
+    /// Whether to scan ALL graphs (when GRAPH ?var is used).
+    scan_all_graphs: bool,
     /// Chunk size for batching.
     chunk_size: usize,
-    /// Cached matching triples (lazily populated).
-    triples: Option<Vec<Arc<Triple>>>,
+    /// Cached matching triples with graph names (lazily populated).
+    triples: Option<Vec<(Option<String>, Arc<Triple>)>>,
     /// Current position in the triples.
     position: usize,
 }
@@ -1590,11 +1655,15 @@ impl RdfTripleScanOperator {
         pattern: TriplePattern,
         output_mask: [bool; 4],
         chunk_size: usize,
+        graph: Option<String>,
+        scan_all_graphs: bool,
     ) -> Self {
         Self {
             store,
             pattern,
             output_mask,
+            graph,
+            scan_all_graphs,
             chunk_size,
             triples: None,
             position: 0,
@@ -1604,7 +1673,28 @@ impl RdfTripleScanOperator {
     /// Lazily load matching triples on first access.
     fn ensure_triples(&mut self) {
         if self.triples.is_none() {
-            self.triples = Some(self.store.find(&self.pattern));
+            self.triples = Some(if self.scan_all_graphs {
+                // GRAPH ?var - scan all graphs (default + named)
+                self.store.find_in_graphs(&self.pattern, Some(&[]))
+            } else if let Some(ref graph_iri) = self.graph {
+                // GRAPH <iri> - scan specific named graph
+                self.store
+                    .graph(graph_iri)
+                    .map(|g| {
+                        g.find(&self.pattern)
+                            .into_iter()
+                            .map(|t| (Some(graph_iri.clone()), t))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                // Default graph
+                self.store
+                    .find(&self.pattern)
+                    .into_iter()
+                    .map(|t| (None, t))
+                    .collect()
+            });
         }
     }
 
@@ -1634,7 +1724,7 @@ impl Operator for RdfTripleScanOperator {
 
         // Fill the chunk
         for i in self.position..end {
-            let triple = &triples[i];
+            let (ref graph_name, ref triple) = triples[i];
             let mut col_idx = 0;
 
             if self.output_mask[0] {
@@ -1659,9 +1749,12 @@ impl Operator for RdfTripleScanOperator {
                 col_idx += 1;
             }
             if self.output_mask[3] {
-                // Graph (always null for now - named graphs not yet supported)
+                // Graph
                 if let Some(col) = chunk.column_mut(col_idx) {
-                    col.push_value(Value::Null);
+                    match graph_name {
+                        Some(name) => col.push_string(name.clone()),
+                        None => col.push_value(Value::Null),
+                    }
                 }
             }
         }
@@ -2636,8 +2729,14 @@ mod tests {
             object: None,
         };
 
-        let mut operator =
-            RdfTripleScanOperator::new(Arc::clone(&store), pattern, [true, true, true, false], 30);
+        let mut operator = RdfTripleScanOperator::new(
+            Arc::clone(&store),
+            pattern,
+            [true, true, true, false],
+            30,
+            None,
+            false,
+        );
 
         let mut total_rows = 0;
         while let Ok(Some(chunk)) = operator.next() {

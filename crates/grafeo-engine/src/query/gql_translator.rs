@@ -64,13 +64,87 @@ impl GqlTranslator {
                 .collect()
         });
 
-        Ok(LogicalPlan::new(LogicalOperator::CallProcedure(
-            CallProcedureOp {
-                name: call.procedure_name.clone(),
-                arguments,
-                yield_items,
-            },
-        )))
+        let mut plan = LogicalOperator::CallProcedure(CallProcedureOp {
+            name: call.procedure_name.clone(),
+            arguments,
+            yield_items,
+        });
+
+        // Apply WHERE filter on yielded rows
+        if let Some(where_clause) = &call.where_clause {
+            let predicate = self.translate_expression(&where_clause.expression)?;
+            plan = LogicalOperator::Filter(FilterOp {
+                predicate,
+                input: Box::new(plan),
+            });
+        }
+
+        // Apply RETURN clause (with ORDER BY, SKIP, LIMIT)
+        if let Some(return_clause) = &call.return_clause {
+            // Apply ORDER BY
+            if let Some(order_by) = &return_clause.order_by {
+                let keys = order_by
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(SortKey {
+                            expression: self.translate_expression(&item.expression)?,
+                            order: match item.order {
+                                ast::SortOrder::Asc => SortOrder::Ascending,
+                                ast::SortOrder::Desc => SortOrder::Descending,
+                            },
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                plan = LogicalOperator::Sort(SortOp {
+                    keys,
+                    input: Box::new(plan),
+                });
+            }
+
+            // Apply SKIP
+            if let Some(skip_expr) = &return_clause.skip
+                && let ast::Expression::Literal(ast::Literal::Integer(n)) = skip_expr
+            {
+                plan = LogicalOperator::Skip(SkipOp {
+                    count: *n as usize,
+                    input: Box::new(plan),
+                });
+            }
+
+            // Apply LIMIT
+            if let Some(limit_expr) = &return_clause.limit
+                && let ast::Expression::Literal(ast::Literal::Integer(n)) = limit_expr
+            {
+                plan = LogicalOperator::Limit(LimitOp {
+                    count: *n as usize,
+                    input: Box::new(plan),
+                });
+            }
+
+            // Apply RETURN projection (only when explicit items are present)
+            if !return_clause.items.is_empty() {
+                let return_items = return_clause
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(ReturnItem {
+                            expression: self.translate_expression(&item.expression)?,
+                            alias: item.alias.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                plan = LogicalOperator::Return(ReturnOp {
+                    items: return_items,
+                    distinct: return_clause.distinct,
+                    input: Box::new(plan),
+                });
+            }
+        }
+
+        Ok(LogicalPlan::new(plan))
     }
 
     fn translate_query(&self, query: &ast::QueryStatement) -> Result<LogicalPlan> {
@@ -947,9 +1021,6 @@ impl GqlTranslator {
     }
 
     fn translate_insert(&self, insert: &ast::InsertStatement) -> Result<LogicalPlan> {
-        // For now, just translate insert patterns as creates
-        // A full implementation would handle multiple patterns
-
         if insert.patterns.is_empty() {
             return Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
@@ -957,45 +1028,52 @@ impl GqlTranslator {
             )));
         }
 
-        let pattern = &insert.patterns[0];
+        // Chain CreateNode operators for all patterns.
+        // First pattern gets input: None, subsequent ones chain via input: Some(prev).
+        let mut plan: Option<LogicalOperator> = None;
+        let mut last_variable = String::new();
 
-        match pattern {
-            ast::Pattern::Node(node) => {
-                let variable = node
-                    .variable
-                    .clone()
-                    .unwrap_or_else(|| format!("_anon_{}", rand_id()));
+        for pattern in &insert.patterns {
+            match pattern {
+                ast::Pattern::Node(node) => {
+                    let variable = node
+                        .variable
+                        .clone()
+                        .unwrap_or_else(|| format!("_anon_{}", rand_id()));
 
-                let properties = node
-                    .properties
-                    .iter()
-                    .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
-                    .collect::<Result<Vec<_>>>()?;
+                    let properties = node
+                        .properties
+                        .iter()
+                        .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                        .collect::<Result<Vec<_>>>()?;
 
-                let create = LogicalOperator::CreateNode(crate::query::plan::CreateNodeOp {
-                    variable: variable.clone(),
-                    labels: node.labels.clone(),
-                    properties,
-                    input: None,
-                });
-
-                // Return the created node
-                let ret = LogicalOperator::Return(ReturnOp {
-                    items: vec![ReturnItem {
-                        expression: LogicalExpression::Variable(variable),
-                        alias: None,
-                    }],
-                    distinct: false,
-                    input: Box::new(create),
-                });
-
-                Ok(LogicalPlan::new(ret))
+                    plan = Some(LogicalOperator::CreateNode(CreateNodeOp {
+                        variable: variable.clone(),
+                        labels: node.labels.clone(),
+                        properties,
+                        input: plan.map(Box::new),
+                    }));
+                    last_variable = variable;
+                }
+                ast::Pattern::Path(_) => {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Path INSERT not yet supported",
+                    )));
+                }
             }
-            ast::Pattern::Path(_) => Err(Error::Query(QueryError::new(
-                QueryErrorKind::Semantic,
-                "Path INSERT not yet supported",
-            ))),
         }
+
+        let ret = LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable(last_variable),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(plan.unwrap()),
+        });
+
+        Ok(LogicalPlan::new(ret))
     }
 
     fn translate_expression(&self, expr: &ast::Expression) -> Result<LogicalExpression> {

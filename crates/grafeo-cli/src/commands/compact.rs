@@ -14,87 +14,43 @@ use crate::output::{self, Format, format_bytes};
 struct CompactionOutput {
     dry_run: bool,
     before_size_bytes: usize,
-    after_size_bytes: Option<usize>,
-    space_saved_bytes: Option<usize>,
-    space_saved_percent: Option<f64>,
 }
 
 /// Run the compact command.
 pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Result<()> {
+    if !dry_run {
+        anyhow::bail!(
+            "grafeo compact is not yet implemented. \
+             Compaction APIs are planned for a future release."
+        );
+    }
+
     let db = GrafeoDB::open(path)?;
     let stats_before = db.detailed_stats();
 
-    if dry_run {
-        output::status("Dry run - no changes will be made", quiet);
+    output::status("Dry run - no changes will be made", quiet);
 
-        let output = CompactionOutput {
-            dry_run: true,
-            before_size_bytes: stats_before.memory_bytes,
-            after_size_bytes: None,
-            space_saved_bytes: None,
-            space_saved_percent: None,
-        };
+    let output = CompactionOutput {
+        dry_run: true,
+        before_size_bytes: stats_before.memory_bytes,
+    };
 
-        let fmt: Format = format.into();
-        match fmt {
-            Format::Json => {
-                if !quiet {
-                    println!("{}", serde_json::to_string_pretty(&output)?);
-                }
-            }
-            Format::Table | Format::Csv => {
-                let items = vec![
-                    ("Mode", "Dry Run".to_string()),
-                    ("Current Size", format_bytes(stats_before.memory_bytes)),
-                    ("Nodes", stats_before.node_count.to_string()),
-                    ("Edges", stats_before.edge_count.to_string()),
-                ];
-                output::print_key_value_table(&items, fmt, quiet);
+    let fmt: Format = format.into();
+    match fmt {
+        Format::Json => {
+            if !quiet {
+                println!("{}", serde_json::to_string_pretty(&output)?);
             }
         }
-    } else {
-        output::status("Compacting database...", quiet);
-
-        // TODO: Implement actual compaction when API is available
-        let stats_after = db.detailed_stats();
-
-        let space_saved = stats_before
-            .memory_bytes
-            .saturating_sub(stats_after.memory_bytes);
-
-        let percent_saved = if stats_before.memory_bytes > 0 {
-            (space_saved as f64 / stats_before.memory_bytes as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        let output = CompactionOutput {
-            dry_run: false,
-            before_size_bytes: stats_before.memory_bytes,
-            after_size_bytes: Some(stats_after.memory_bytes),
-            space_saved_bytes: Some(space_saved),
-            space_saved_percent: Some(percent_saved),
-        };
-
-        let fmt: Format = format.into();
-        match fmt {
-            Format::Json => {
-                if !quiet {
-                    println!("{}", serde_json::to_string_pretty(&output)?);
-                }
-            }
-            Format::Table | Format::Csv => {
-                let items = vec![
-                    ("Before", format_bytes(stats_before.memory_bytes)),
-                    ("After", format_bytes(stats_after.memory_bytes)),
-                    ("Saved", format_bytes(space_saved)),
-                    ("Reduction", format!("{:.1}%", percent_saved)),
-                ];
-                output::print_key_value_table(&items, fmt, quiet);
-            }
+        Format::Table | Format::Csv => {
+            let items = vec![
+                ("Mode", "Dry Run".to_string()),
+                ("Current Size", format_bytes(stats_before.memory_bytes)),
+                ("Nodes", stats_before.node_count.to_string()),
+                ("Edges", stats_before.edge_count.to_string()),
+            ];
+            output::print_key_value_table(&items, fmt, quiet);
         }
-
-        output::success("Compaction completed", quiet);
     }
 
     Ok(())

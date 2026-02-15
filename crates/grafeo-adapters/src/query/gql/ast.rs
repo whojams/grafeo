@@ -18,7 +18,10 @@ pub enum Statement {
 /// A CALL procedure statement (ISO GQL Section 15).
 ///
 /// ```text
-/// CALL procedure_name(args) [YIELD field [AS alias], ...]
+/// CALL procedure_name(args)
+///   [YIELD field [AS alias], ...]
+///   [WHERE predicate]
+///   [RETURN expr [AS alias], ... [ORDER BY ...] [SKIP n] [LIMIT n]]
 /// ```
 #[derive(Debug, Clone)]
 pub struct CallStatement {
@@ -28,6 +31,10 @@ pub struct CallStatement {
     pub arguments: Vec<Expression>,
     /// Optional YIELD clause selecting result columns.
     pub yield_items: Option<Vec<YieldItem>>,
+    /// Optional WHERE clause filtering yielded rows.
+    pub where_clause: Option<WhereClause>,
+    /// Optional RETURN clause with projection, ORDER BY, SKIP, LIMIT.
+    pub return_clause: Option<ReturnClause>,
     /// Source span.
     pub span: Option<SourceSpan>,
 }

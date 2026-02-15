@@ -1,7 +1,6 @@
 //! Data export/import commands.
 
-use anyhow::{Context, Result};
-use grafeo_engine::GrafeoDB;
+use anyhow::Result;
 
 use crate::output;
 use crate::{DataCommands, OutputFormat};
@@ -17,7 +16,7 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
             let format_name = dump_format.as_deref().unwrap_or("parquet");
             output::status(
                 &format!(
-                    "Exporting {} to {} (format: {})...",
+                    "Export requested: {} to {} (format: {})",
                     path.display(),
                     out.display(),
                     format_name
@@ -25,49 +24,27 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
                 quiet,
             );
 
-            let db = GrafeoDB::open(&path)
-                .with_context(|| format!("Failed to open database at {}", path.display()))?;
-
-            let info = db.info();
-
-            // TODO: Implement actual export when format handlers are available
-            db.save(&out)
-                .with_context(|| format!("Failed to export to {}", out.display()))?;
-
-            output::success(
-                &format!(
-                    "Exported {} nodes and {} edges to {}",
-                    info.node_count,
-                    info.edge_count,
-                    out.display()
-                ),
-                quiet,
+            anyhow::bail!(
+                "grafeo data dump is not yet implemented. \
+                 Format-specific export (Parquet, CSV, JSON) is planned for a future release. \
+                 Use `grafeo backup` to create a binary snapshot instead."
             );
         }
         DataCommands::Load { input, path } => {
             output::status(
-                &format!("Importing {} into {}...", input.display(), path.display()),
-                quiet,
-            );
-
-            // TODO: Implement format detection and import
-            let db = GrafeoDB::open(&input)
-                .with_context(|| format!("Failed to open dump at {}", input.display()))?;
-            db.save(&path)
-                .with_context(|| format!("Failed to save to {}", path.display()))?;
-
-            let info = db.info();
-            output::success(
                 &format!(
-                    "Imported {} nodes and {} edges to {}",
-                    info.node_count,
-                    info.edge_count,
+                    "Import requested: {} into {}",
+                    input.display(),
                     path.display()
                 ),
                 quiet,
             );
+
+            anyhow::bail!(
+                "grafeo data load is not yet implemented. \
+                 Format-specific import (Parquet, CSV, JSON) is planned for a future release. \
+                 Use `grafeo backup --restore` to restore from a binary snapshot instead."
+            );
         }
     }
-
-    Ok(())
 }

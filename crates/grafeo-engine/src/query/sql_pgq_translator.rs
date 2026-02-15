@@ -134,13 +134,87 @@ impl SqlPgqTranslator {
                 .collect()
         });
 
-        Ok(LogicalPlan::new(LogicalOperator::CallProcedure(
-            CallProcedureOp {
-                name: call.procedure_name.clone(),
-                arguments,
-                yield_items,
-            },
-        )))
+        let mut plan = LogicalOperator::CallProcedure(CallProcedureOp {
+            name: call.procedure_name.clone(),
+            arguments,
+            yield_items,
+        });
+
+        // Apply WHERE filter on yielded rows
+        if let Some(where_clause) = &call.where_clause {
+            let predicate = self.translate_expression(&where_clause.expression, None)?;
+            plan = LogicalOperator::Filter(FilterOp {
+                predicate,
+                input: Box::new(plan),
+            });
+        }
+
+        // Apply RETURN clause (ORDER BY, SKIP, LIMIT, projection)
+        if let Some(return_clause) = &call.return_clause {
+            // Apply ORDER BY
+            if let Some(order_by) = &return_clause.order_by {
+                let keys = order_by
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(SortKey {
+                            expression: self.translate_expression(&item.expression, None)?,
+                            order: match item.order {
+                                ast::GqlSortOrder::Asc => SortOrder::Ascending,
+                                ast::GqlSortOrder::Desc => SortOrder::Descending,
+                            },
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                plan = LogicalOperator::Sort(SortOp {
+                    keys,
+                    input: Box::new(plan),
+                });
+            }
+
+            // Apply SKIP
+            if let Some(skip_expr) = &return_clause.skip
+                && let ast::Expression::Literal(ast::Literal::Integer(n)) = skip_expr
+            {
+                plan = LogicalOperator::Skip(SkipOp {
+                    count: *n as usize,
+                    input: Box::new(plan),
+                });
+            }
+
+            // Apply LIMIT
+            if let Some(limit_expr) = &return_clause.limit
+                && let ast::Expression::Literal(ast::Literal::Integer(n)) = limit_expr
+            {
+                plan = LogicalOperator::Limit(LimitOp {
+                    count: *n as usize,
+                    input: Box::new(plan),
+                });
+            }
+
+            // Apply RETURN projection (only when explicit items are present)
+            if !return_clause.items.is_empty() {
+                let return_items = return_clause
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(ReturnItem {
+                            expression: self.translate_expression(&item.expression, None)?,
+                            alias: item.alias.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                plan = LogicalOperator::Return(ReturnOp {
+                    items: return_items,
+                    distinct: return_clause.distinct,
+                    input: Box::new(plan),
+                });
+            }
+        }
+
+        Ok(LogicalPlan::new(plan))
     }
 
     // ==================== MATCH Translation ====================

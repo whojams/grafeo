@@ -33,6 +33,8 @@ struct SparqlTranslator {
     base: Option<String>,
     /// Counter for generating anonymous variables.
     anon_counter: u32,
+    /// Stack of active graph contexts (pushed/popped around GRAPH patterns).
+    graph_context_stack: Vec<TripleComponent>,
 }
 
 impl SparqlTranslator {
@@ -41,6 +43,7 @@ impl SparqlTranslator {
             prefixes: HashMap::new(),
             base: None,
             anon_counter: 0,
+            graph_context_stack: Vec::new(),
         }
     }
 
@@ -660,9 +663,15 @@ impl SparqlTranslator {
                 }))
             }
 
-            ast::GraphPattern::NamedGraph { graph: _, pattern } => {
-                // For named graph, we add the graph as context
-                self.translate_graph_pattern(pattern)
+            ast::GraphPattern::NamedGraph { graph, pattern } => {
+                let graph_component = match graph {
+                    ast::VariableOrIri::Variable(name) => TripleComponent::Variable(name.clone()),
+                    ast::VariableOrIri::Iri(iri) => TripleComponent::Iri(self.resolve_iri(iri)),
+                };
+                self.graph_context_stack.push(graph_component);
+                let plan = self.translate_graph_pattern(pattern);
+                self.graph_context_stack.pop();
+                plan
             }
 
             ast::GraphPattern::SubSelect(subquery) => {
@@ -714,7 +723,7 @@ impl SparqlTranslator {
             subject,
             predicate,
             object,
-            graph: None,
+            graph: self.graph_context_stack.last().cloned(),
             input: None,
         }))
     }

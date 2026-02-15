@@ -380,11 +380,6 @@ mod tests {
                 finalized: false,
             }
         }
-
-        #[allow(dead_code)]
-        fn total_rows(&self) -> usize {
-            self.chunks.iter().map(DataChunk::len).sum()
-        }
     }
 
     impl Sink for TestSink {

@@ -213,10 +213,53 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // Parse optional WHERE clause (only valid after YIELD)
+        let where_clause = if yield_items.is_some() && self.current.kind == TokenKind::Where {
+            self.advance();
+            let expression = self.parse_expression()?;
+            Some(WhereClause {
+                expression,
+                span: None,
+            })
+        } else {
+            None
+        };
+
+        // Parse optional ORDER BY / LIMIT (SQL-style, no RETURN keyword)
+        let return_clause = if yield_items.is_some()
+            && (self.current.kind == TokenKind::Order || self.current.kind == TokenKind::Limit)
+        {
+            let order_by = if self.current.kind == TokenKind::Order {
+                Some(self.parse_call_order_by()?)
+            } else {
+                None
+            };
+
+            let limit = if self.current.kind == TokenKind::Limit {
+                self.advance();
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+
+            Some(ReturnClause {
+                distinct: false,
+                items: vec![],
+                order_by,
+                skip: None,
+                limit,
+                span: None,
+            })
+        } else {
+            None
+        };
+
         Ok(Statement::Call(CallStatement {
             procedure_name: name_parts,
             arguments,
             yield_items,
+            where_clause,
+            return_clause,
             span: Some(grafeo_common::utils::error::SourceSpan::new(
                 span_start,
                 self.current.span.start,
@@ -239,6 +282,36 @@ impl<'a> Parser<'a> {
             alias,
             span: None,
         })
+    }
+
+    /// Parses ORDER BY for CALL statements: `ORDER BY expr [ASC|DESC] { , expr [ASC|DESC] }`.
+    fn parse_call_order_by(&mut self) -> Result<OrderByClause> {
+        self.expect(TokenKind::Order)?;
+        self.expect(TokenKind::By)?;
+
+        let mut items = vec![self.parse_call_order_item()?];
+        while self.current.kind == TokenKind::Comma {
+            self.advance();
+            items.push(self.parse_call_order_item()?);
+        }
+
+        Ok(OrderByClause { items, span: None })
+    }
+
+    fn parse_call_order_item(&mut self) -> Result<OrderByItem> {
+        let expression = self.parse_expression()?;
+        let order = match self.current.kind {
+            TokenKind::Asc => {
+                self.advance();
+                GqlSortOrder::Asc
+            }
+            TokenKind::Desc => {
+                self.advance();
+                GqlSortOrder::Desc
+            }
+            _ => GqlSortOrder::Asc,
+        };
+        Ok(OrderByItem { expression, order })
     }
 
     // ==================== GRAPH_TABLE Parsing ====================

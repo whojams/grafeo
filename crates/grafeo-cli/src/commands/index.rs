@@ -32,15 +32,11 @@ pub fn run(cmd: IndexCommands, format: OutputFormat, quiet: bool) -> Result<()> 
                 }
                 Format::Table | Format::Csv => {
                     if !quiet {
-                        println!("Total indexes: {}\n", stats.index_count);
-
-                        let mut table = output::create_table();
-                        output::add_header(
-                            &mut table,
-                            &["Name", "Type", "Target", "Property", "Entries"],
+                        println!("Total indexes: {}", stats.index_count);
+                        println!(
+                            "\nNote: detailed index listing is not yet available. \
+                             Use `grafeo index stats` for aggregate index statistics."
                         );
-                        // TODO: Populate with actual index data when API available
-                        println!("{table}");
                     }
                 }
             }

@@ -9,7 +9,8 @@ use grafeo_common::utils::error::SourceSpan;
 // Re-use GQL pattern and expression types for the inner MATCH clause
 pub use crate::query::gql::ast::{
     AliasedPattern, BinaryOp, CallStatement, EdgeDirection, EdgePattern, Expression, Literal,
-    MatchClause, NodePattern, PathPattern, Pattern, UnaryOp, YieldItem,
+    MatchClause, NodePattern, OrderByClause, OrderByItem, PathPattern, Pattern, ReturnClause,
+    ReturnItem, SortOrder as GqlSortOrder, UnaryOp, WhereClause, YieldItem,
 };
 
 /// A SQL/PGQ statement.

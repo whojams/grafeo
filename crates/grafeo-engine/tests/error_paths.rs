@@ -495,8 +495,9 @@ fn test_gql_error_shows_line_and_column() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let result = session.execute("MATCH (n:Person) RETURN n");
-    assert!(result.is_err());
+    // Missing closing paren — genuine syntax error
+    let result = session.execute("MATCH (n:Person RETURN n");
+    assert!(result.is_err(), "Expected parse error for malformed GQL");
     let err_str = result.unwrap_err().to_string();
     // Should contain the caret display with --> position
     assert!(
@@ -520,9 +521,10 @@ fn test_gql_multiline_error_position() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
+    // RETURN is a typo — genuine syntax error on line 3
     let query = "MATCH (n:Person)\nWHERE n.age > 30\nRETRUN n";
     let result = session.execute(query);
-    assert!(result.is_err());
+    assert!(result.is_err(), "Expected parse error for RETURN typo");
     let err_str = result.unwrap_err().to_string();
     // Error should reference line 3 (where RETURN is)
     assert!(
@@ -537,8 +539,9 @@ fn test_cypher_error_shows_position() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let result = session.execute_cypher("MATCH (n:Person) RETURN n");
-    assert!(result.is_err());
+    // Missing closing paren — genuine syntax error
+    let result = session.execute_cypher("MATCH (n:Person RETURN n");
+    assert!(result.is_err(), "Expected parse error for malformed Cypher");
     let err_str = result.unwrap_err().to_string();
     assert!(
         err_str.contains("-->"),
@@ -556,8 +559,9 @@ fn test_sparql_error_shows_position() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let result = session.execute_sparql("SELECT ?s WHERE { ?s ?p ?o }");
-    assert!(result.is_err());
+    // Missing closing brace — genuine syntax error
+    let result = session.execute_sparql("SELECT ?s WHERE { ?s ?p ?o");
+    assert!(result.is_err(), "Expected parse error for malformed SPARQL");
     let err_str = result.unwrap_err().to_string();
     assert!(
         err_str.contains("-->"),

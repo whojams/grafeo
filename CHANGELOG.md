@@ -4,6 +4,8 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.5] - 2026-02-16
 
+Small bugfixes and code quality improvements. 0.5.x will continue to be like this until bugs become extremely rare.
+
 ### Added
 
 - **Filter pushdown optimization**: equality predicates on labeled node scans are now pushed down to the store level, bypassing DataChunk materialization and expression evaluation. Compound predicates (e.g., `WHERE n.name = 'Alice' AND n.age > 30`) correctly split: equality part pushed down, remainder kept as post-filter

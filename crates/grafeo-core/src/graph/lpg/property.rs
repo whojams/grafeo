@@ -709,8 +709,8 @@ impl<Id: EntityId> PropertyColumn<Id> {
     }
 
     /// Returns true if this column is empty.
+    #[cfg(test)]
     #[must_use]
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty() && self.compressed_count == 0
     }

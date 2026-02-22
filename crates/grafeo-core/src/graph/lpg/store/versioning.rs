@@ -36,6 +36,9 @@ impl LpgStore {
             // Remove completely empty chains (no versions left)
             edges.retain(|_, chain| !chain.is_empty());
         }
+
+        // Counters may be out of sync after rollback — force full recompute
+        self.needs_stats_recompute.store(true, Ordering::Relaxed);
     }
 
     /// Discards all uncommitted versions created by a transaction.
@@ -61,6 +64,9 @@ impl LpgStore {
             // Remove completely empty indexes (no versions left)
             versions.retain(|_, index| !index.is_empty());
         }
+
+        // Counters may be out of sync after rollback — force full recompute
+        self.needs_stats_recompute.store(true, Ordering::Relaxed);
     }
 
     /// Garbage collects old versions that are no longer visible to any transaction.
@@ -259,6 +265,7 @@ impl LpgStore {
         // Create version chain with initial version (using SYSTEM tx for recovery)
         let chain = VersionChain::with_initial(record, epoch, TxId::SYSTEM);
         self.nodes.write().insert(id, chain);
+        self.live_node_count.fetch_add(1, Ordering::Relaxed);
 
         // Update next_node_id if necessary to avoid future collisions
         let id_val = id.as_u64();
@@ -306,6 +313,7 @@ impl LpgStore {
         let hot_ref = HotVersionRef::new(epoch, offset, TxId::SYSTEM);
         let mut versions = self.node_versions.write();
         versions.insert(id, VersionIndex::with_initial(hot_ref));
+        self.live_node_count.fetch_add(1, Ordering::Relaxed);
 
         // Update next_node_id if necessary to avoid future collisions
         let id_val = id.as_u64();
@@ -337,6 +345,9 @@ impl LpgStore {
         if let Some(ref backward) = self.backward_adj {
             backward.add_edge(dst, src, id);
         }
+
+        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+        self.increment_edge_type_count(type_id);
 
         // Update next_edge_id if necessary
         let id_val = id.as_u64();
@@ -374,6 +385,9 @@ impl LpgStore {
         if let Some(ref backward) = self.backward_adj {
             backward.add_edge(dst, src, id);
         }
+
+        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+        self.increment_edge_type_count(type_id);
 
         // Update next_edge_id if necessary
         let id_val = id.as_u64();

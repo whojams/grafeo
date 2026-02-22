@@ -36,7 +36,7 @@ use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
 use std::cmp::Ordering as CmpOrdering;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 #[cfg(feature = "vector-index")]
 use crate::index::vector::HnswIndex;
@@ -294,11 +294,24 @@ pub struct LpgStore {
     /// Current epoch.
     pub(super) current_epoch: AtomicU64,
 
+    /// Live (non-deleted) node count, maintained incrementally.
+    /// Avoids O(n) full scan in `compute_statistics()`.
+    pub(super) live_node_count: AtomicI64,
+
+    /// Live (non-deleted) edge count, maintained incrementally.
+    /// Avoids O(m) full scan in `compute_statistics()`.
+    pub(super) live_edge_count: AtomicI64,
+
+    /// Per-edge-type live counts, indexed by edge_type_id.
+    /// Avoids O(m) edge scan in `compute_statistics()`.
+    /// Lock order: 8 (same level as statistics)
+    pub(super) edge_type_live_counts: RwLock<Vec<i64>>,
+
     /// Statistics for cost-based optimization.
     /// Lock order: 8 (always last)
     pub(super) statistics: RwLock<Arc<Statistics>>,
 
-    /// Whether statistics need recomputation after mutations.
+    /// Whether statistics need full recomputation (e.g., after rollback).
     pub(super) needs_stats_recompute: AtomicBool,
 }
 
@@ -349,8 +362,11 @@ impl LpgStore {
             next_node_id: AtomicU64::new(0),
             next_edge_id: AtomicU64::new(0),
             current_epoch: AtomicU64::new(0),
+            live_node_count: AtomicI64::new(0),
+            live_edge_count: AtomicI64::new(0),
+            edge_type_live_counts: RwLock::new(Vec::new()),
             statistics: RwLock::new(Arc::new(Statistics::new())),
-            needs_stats_recompute: AtomicBool::new(true),
+            needs_stats_recompute: AtomicBool::new(false),
             config,
         }
     }
@@ -424,7 +440,30 @@ impl LpgStore {
         type_to_id.insert(edge_type.clone(), id);
         id_to_type.push(edge_type);
 
+        // Grow edge type live counts to match
+        let mut counts = self.edge_type_live_counts.write();
+        while counts.len() <= id as usize {
+            counts.push(0);
+        }
+
         id
+    }
+
+    /// Increments the live edge count for a given edge type.
+    pub(super) fn increment_edge_type_count(&self, type_id: u32) {
+        let mut counts = self.edge_type_live_counts.write();
+        if counts.len() <= type_id as usize {
+            counts.resize(type_id as usize + 1, 0);
+        }
+        counts[type_id as usize] += 1;
+    }
+
+    /// Decrements the live edge count for a given edge type.
+    pub(super) fn decrement_edge_type_count(&self, type_id: u32) {
+        let mut counts = self.edge_type_live_counts.write();
+        if type_id < counts.len() as u32 {
+            counts[type_id as usize] -= 1;
+        }
     }
 }
 

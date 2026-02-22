@@ -82,11 +82,19 @@ impl Optimizer {
         store.ensure_statistics_fresh();
         let stats = store.statistics();
         let estimator = CardinalityEstimator::from_statistics(&stats);
+
+        // Derive average fanout from statistics for the cost model
+        let avg_fanout = if stats.total_nodes > 0 {
+            (stats.total_edges as f64 / stats.total_nodes as f64).max(1.0)
+        } else {
+            10.0
+        };
+
         Self {
             enable_filter_pushdown: true,
             enable_join_reorder: true,
             enable_projection_pushdown: true,
-            cost_model: CostModel::new(),
+            cost_model: CostModel::new().with_avg_fanout(avg_fanout),
             card_estimator: estimator,
         }
     }

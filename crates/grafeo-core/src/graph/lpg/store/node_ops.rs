@@ -15,7 +15,6 @@ impl LpgStore {
     ///
     /// Uses the system transaction for non-transactional operations.
     pub fn create_node(&self, labels: &[&str]) -> NodeId {
-        self.needs_stats_recompute.store(true, Ordering::Relaxed);
         self.create_node_versioned(labels, self.current_epoch(), TxId::SYSTEM)
     }
 
@@ -47,6 +46,7 @@ impl LpgStore {
         // Create version chain with initial version
         let chain = VersionChain::with_initial(record, epoch, tx_id);
         self.nodes.write().insert(id, chain);
+        self.live_node_count.fetch_add(1, Ordering::Relaxed);
         id
     }
 
@@ -91,6 +91,7 @@ impl LpgStore {
             versions.insert(id, VersionIndex::with_initial(hot_ref));
         }
 
+        self.live_node_count.fetch_add(1, Ordering::Relaxed);
         id
     }
 
@@ -323,7 +324,6 @@ impl LpgStore {
 
     /// Deletes a node and all its edges (using latest epoch).
     pub fn delete_node(&self, id: NodeId) -> bool {
-        self.needs_stats_recompute.store(true, Ordering::Relaxed);
         self.delete_node_at_epoch(id, self.current_epoch())
     }
 
@@ -366,7 +366,7 @@ impl LpgStore {
             drop(node_labels);
             self.node_properties.remove_all(id);
 
-            // Note: Caller should use delete_node_edges() first if detach is needed
+            self.live_node_count.fetch_sub(1, Ordering::Relaxed);
 
             true
         } else {
@@ -416,6 +416,8 @@ impl LpgStore {
             drop(label_index);
             drop(node_labels);
             self.node_properties.remove_all(id);
+
+            self.live_node_count.fetch_sub(1, Ordering::Relaxed);
 
             true
         } else {

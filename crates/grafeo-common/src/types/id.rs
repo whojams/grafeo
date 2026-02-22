@@ -149,8 +149,8 @@ impl From<EdgeId> for u64 {
 pub struct TxId(pub u64);
 
 impl TxId {
-    /// The invalid/null transaction ID.
-    pub const INVALID: Self = Self(0);
+    /// The invalid/null transaction ID (sentinel value, same as other ID types).
+    pub const INVALID: Self = Self(u64::MAX);
 
     /// The system transaction ID used for non-transactional operations.
     /// System transactions are always visible and committed.
@@ -181,7 +181,7 @@ impl TxId {
     #[inline]
     #[must_use]
     pub const fn is_valid(&self) -> bool {
-        self.0 != 0
+        self.0 != u64::MAX
     }
 }
 

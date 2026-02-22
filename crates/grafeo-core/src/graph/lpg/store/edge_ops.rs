@@ -13,7 +13,6 @@ use grafeo_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
 impl LpgStore {
     /// Creates a new edge.
     pub fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
-        self.needs_stats_recompute.store(true, Ordering::Relaxed);
         self.create_edge_versioned(src, dst, edge_type, self.current_epoch(), TxId::SYSTEM)
     }
 
@@ -40,6 +39,8 @@ impl LpgStore {
             backward.add_edge(dst, src, id);
         }
 
+        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+        self.increment_edge_type_count(type_id);
         id
     }
 
@@ -80,6 +81,8 @@ impl LpgStore {
             backward.add_edge(dst, src, id);
         }
 
+        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+        self.increment_edge_type_count(type_id);
         id
     }
 
@@ -233,7 +236,6 @@ impl LpgStore {
 
     /// Deletes an edge (using latest epoch).
     pub fn delete_edge(&self, id: EdgeId) -> bool {
-        self.needs_stats_recompute.store(true, Ordering::Relaxed);
         self.delete_edge_at_epoch(id, self.current_epoch())
     }
 
@@ -242,14 +244,14 @@ impl LpgStore {
     pub fn delete_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
         let mut edges = self.edges.write();
         if let Some(chain) = edges.get_mut(&id) {
-            // Get the visible record to check if deleted and get src/dst
-            let (src, dst) = {
+            // Get the visible record to check if deleted and get src/dst/type_id
+            let (src, dst, type_id) = {
                 match chain.visible_at(epoch) {
                     Some(record) => {
                         if record.is_deleted() {
                             return false;
                         }
-                        (record.src, record.dst)
+                        (record.src, record.dst, record.type_id)
                     }
                     None => return false, // Not visible at this epoch (already deleted)
                 }
@@ -269,6 +271,9 @@ impl LpgStore {
             // Remove properties
             self.edge_properties.remove_all(id);
 
+            self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_edge_type_count(type_id);
+
             true
         } else {
             false
@@ -281,15 +286,15 @@ impl LpgStore {
     pub fn delete_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
         let mut versions = self.edge_versions.write();
         if let Some(index) = versions.get_mut(&id) {
-            // Get the visible record to check if deleted and get src/dst
-            let (src, dst) = {
+            // Get the visible record to check if deleted and get src/dst/type_id
+            let (src, dst, type_id) = {
                 match index.visible_at(epoch) {
                     Some(version_ref) => {
                         if let Some(record) = self.read_edge_record(&version_ref) {
                             if record.is_deleted() {
                                 return false;
                             }
-                            (record.src, record.dst)
+                            (record.src, record.dst, record.type_id)
                         } else {
                             return false;
                         }
@@ -311,6 +316,9 @@ impl LpgStore {
 
             // Remove properties
             self.edge_properties.remove_all(id);
+
+            self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_edge_type_count(type_id);
 
             true
         } else {

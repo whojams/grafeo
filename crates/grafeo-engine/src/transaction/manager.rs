@@ -128,7 +128,7 @@ impl TransactionManager {
     pub fn new() -> Self {
         Self {
             // Start at 2 to avoid collision with TxId::SYSTEM (which is 1)
-            // TxId::INVALID = 0, TxId::SYSTEM = 1, user transactions start at 2
+            // TxId::INVALID = u64::MAX, TxId::SYSTEM = 1, user transactions start at 2
             next_tx_id: AtomicU64::new(2),
             current_epoch: AtomicU64::new(0),
             transactions: RwLock::new(FxHashMap::default()),

@@ -108,6 +108,8 @@ pub struct CostModel {
     avg_tuple_size: f64,
     /// Page size in bytes.
     page_size: f64,
+    /// Average edge fanout (edges per node), from statistics.
+    avg_fanout: f64,
 }
 
 impl CostModel {
@@ -120,7 +122,15 @@ impl CostModel {
             sort_comparison_cost: 0.02,
             avg_tuple_size: 100.0,
             page_size: 8192.0,
+            avg_fanout: 10.0,
         }
+    }
+
+    /// Creates a cost model with fanout derived from actual statistics.
+    #[must_use]
+    pub fn with_avg_fanout(mut self, avg_fanout: f64) -> Self {
+        self.avg_fanout = if avg_fanout > 0.0 { avg_fanout } else { 10.0 };
+        self
     }
 
     /// Estimates the cost of a logical operator.
@@ -168,9 +178,7 @@ impl CostModel {
     fn expand_cost(&self, _expand: &ExpandOp, cardinality: f64) -> Cost {
         // Expand involves adjacency list lookups
         let lookup_cost = cardinality * self.hash_lookup_cost;
-        // Assume average fanout of 10 for edge traversal
-        let avg_fanout = 10.0;
-        let output_cost = cardinality * avg_fanout * self.cpu_tuple_cost;
+        let output_cost = cardinality * self.avg_fanout * self.cpu_tuple_cost;
         Cost::cpu(lookup_cost + output_cost)
     }
 

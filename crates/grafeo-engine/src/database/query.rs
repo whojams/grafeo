@@ -189,6 +189,25 @@ impl super::GrafeoDB {
         executor.execute(physical_plan.operator.as_mut())
     }
 
+    /// Executes a query in the specified language by name.
+    ///
+    /// Supported language names: `"gql"`, `"cypher"`, `"gremlin"`, `"graphql"`,
+    /// `"sparql"`, `"sql"`. Each requires the corresponding feature flag.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the language is unknown/disabled, or if the query
+    /// fails.
+    pub fn execute_language(
+        &self,
+        query: &str,
+        language: &str,
+        params: Option<std::collections::HashMap<String, grafeo_common::types::Value>>,
+    ) -> Result<QueryResult> {
+        let session = self.session();
+        session.execute_language(query, language, params)
+    }
+
     /// Returns the RDF store.
     ///
     /// This provides direct access to the RDF store for triple operations.

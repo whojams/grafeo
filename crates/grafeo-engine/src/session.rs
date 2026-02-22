@@ -698,6 +698,88 @@ impl Session {
         self.execute_sparql(query)
     }
 
+    /// Executes a query in the specified language by name.
+    ///
+    /// Supported language names: `"gql"`, `"cypher"`, `"gremlin"`, `"graphql"`,
+    /// `"sparql"`, `"sql"`. Each requires the corresponding feature flag.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the language is unknown/disabled or the query fails.
+    pub fn execute_language(
+        &self,
+        query: &str,
+        language: &str,
+        params: Option<std::collections::HashMap<String, Value>>,
+    ) -> Result<QueryResult> {
+        match language {
+            "gql" => {
+                if let Some(p) = params {
+                    self.execute_with_params(query, p)
+                } else {
+                    self.execute(query)
+                }
+            }
+            #[cfg(feature = "cypher")]
+            "cypher" => {
+                if let Some(p) = params {
+                    use crate::query::processor::{QueryLanguage, QueryProcessor};
+                    let processor = QueryProcessor::for_lpg_with_tx(
+                        Arc::clone(&self.store),
+                        Arc::clone(&self.tx_manager),
+                    );
+                    let (viewing_epoch, tx_id) = self.get_transaction_context();
+                    let processor = if let Some(tx_id) = tx_id {
+                        processor.with_tx_context(viewing_epoch, tx_id)
+                    } else {
+                        processor
+                    };
+                    processor.process(query, QueryLanguage::Cypher, Some(&p))
+                } else {
+                    self.execute_cypher(query)
+                }
+            }
+            #[cfg(feature = "gremlin")]
+            "gremlin" => {
+                if let Some(p) = params {
+                    self.execute_gremlin_with_params(query, p)
+                } else {
+                    self.execute_gremlin(query)
+                }
+            }
+            #[cfg(feature = "graphql")]
+            "graphql" => {
+                if let Some(p) = params {
+                    self.execute_graphql_with_params(query, p)
+                } else {
+                    self.execute_graphql(query)
+                }
+            }
+            #[cfg(feature = "sql-pgq")]
+            "sql" | "sql-pgq" => {
+                if let Some(p) = params {
+                    self.execute_sql_with_params(query, p)
+                } else {
+                    self.execute_sql(query)
+                }
+            }
+            #[cfg(all(feature = "sparql", feature = "rdf"))]
+            "sparql" => {
+                if let Some(p) = params {
+                    self.execute_sparql_with_params(query, p)
+                } else {
+                    self.execute_sparql(query)
+                }
+            }
+            other => Err(grafeo_common::utils::error::Error::Query(
+                grafeo_common::utils::error::QueryError::new(
+                    grafeo_common::utils::error::QueryErrorKind::Semantic,
+                    format!("Unknown query language: '{other}'"),
+                ),
+            )),
+        }
+    }
+
     /// Begins a new transaction.
     ///
     /// # Errors

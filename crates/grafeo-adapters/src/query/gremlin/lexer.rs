@@ -89,7 +89,6 @@ pub enum TokenKind {
     Range,
 
     // Map steps
-
     /// The `values()` property-value projection step.
     Values,
     /// The `valueMap()` property-map projection step.
@@ -142,7 +141,6 @@ pub enum TokenKind {
     Choose,
 
     // Side effect steps
-
     /// The `as()` step-label alias.
     As,
     /// The `sideEffect()` side-effect step.
@@ -157,14 +155,12 @@ pub enum TokenKind {
     Drop,
 
     // Edge creation
-
     /// The `from()` edge-source modulator.
     From,
     /// The `to()` edge-target modulator.
     To,
 
     // Predicates (P.*)
-
     /// The `P` predicate namespace.
     P,
     /// The `eq()` equality predicate.

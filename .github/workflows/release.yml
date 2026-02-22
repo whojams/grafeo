@@ -14,20 +14,18 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: false
 
   # Build release binaries
   build-binaries:
@@ -95,14 +93,9 @@ jobs:
           Compress-Archive -Path $staging -DestinationPath "${staging}.zip"
 
       - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./grafeo-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
-          asset_name: grafeo-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
-          asset_content_type: ${{ matrix.archive == 'zip' && 'application/zip' || 'application/gzip' }}
+          files: ./grafeo-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
 
       - name: Upload CLI binary artifact
         uses: actions/upload-artifact@v4
@@ -138,14 +131,9 @@ jobs:
           cat ../checksums.txt
 
       - name: Upload checksums
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./checksums.txt
-          asset_name: grafeo-${{ github.ref_name }}-checksums.sha256
-          asset_content_type: text/plain
+          files: ./checksums.txt
         continue-on-error: true
 
   # Publish crates to crates.io (in dependency order)

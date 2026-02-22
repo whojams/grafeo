@@ -16,10 +16,11 @@
 //! For workloads with variable disk latency, use [`Adaptive`](DurabilityMode::Adaptive)
 //! mode with an [`AdaptiveFlusher`]:
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_adapters::storage::wal::{WalManager, WalConfig, DurabilityMode, AdaptiveFlusher};
 //! use std::sync::Arc;
 //!
+//! # fn main() -> grafeo_common::utils::error::Result<()> {
 //! let config = WalConfig {
 //!     durability: DurabilityMode::Adaptive { target_interval_ms: 100 },
 //!     ..Default::default()
@@ -29,6 +30,8 @@
 //!
 //! // Use wal normally - flusher handles background syncing
 //! // Drop flusher for graceful shutdown with final flush
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Choose [`WalManager`] for sync code, [`AsyncWalManager`] for async.

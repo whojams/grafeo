@@ -14,22 +14,24 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! use grafeo_adapters::plugins::algorithms::{bfs, dfs, connected_components, dijkstra};
+//! ```no_run
+//! use grafeo_adapters::plugins::algorithms::{bfs, connected_components, dijkstra};
 //! use grafeo_core::graph::lpg::LpgStore;
 //! use grafeo_common::types::NodeId;
 //!
 //! let store = LpgStore::new();
-//! // ... populate graph ...
+//! let n0 = store.create_node(&["Node"]);
+//! let n1 = store.create_node(&["Node"]);
+//! store.create_edge(n0, n1, "CONNECTS");
 //!
-//! // Run BFS from node 0
-//! let visited = bfs(&store, NodeId::new(0));
+//! // Run BFS from the first node
+//! let visited = bfs(&store, n0);
 //!
 //! // Find connected components
 //! let components = connected_components(&store);
 //!
 //! // Run Dijkstra's shortest path
-//! let result = dijkstra(&store, NodeId::new(0), Some("weight"));
+//! let result = dijkstra(&store, n0, Some("weight"));
 //! ```
 
 mod centrality;

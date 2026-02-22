@@ -81,11 +81,17 @@ pub type QueryParams = HashMap<String, Value>;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use grafeo_core::graph::lpg::LpgStore;
 /// use grafeo_engine::query::processor::{QueryProcessor, QueryLanguage};
 ///
+/// # fn main() -> grafeo_common::utils::error::Result<()> {
+/// let store = Arc::new(LpgStore::new());
 /// let processor = QueryProcessor::for_lpg(store);
 /// let result = processor.process("MATCH (n:Person) RETURN n", QueryLanguage::Gql, None)?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct QueryProcessor {
     /// LPG store for property graph queries.

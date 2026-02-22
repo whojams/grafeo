@@ -10,6 +10,12 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 - **Cost model uses real fanout**: the query optimizer's cost model now derives average edge fanout from actual graph statistics instead of a hardcoded value of 10.0, improving plan selection for sparse and dense graphs
 - **Consistent ID sentinels**: `TxId::INVALID` now uses `u64::MAX` (matching `NodeId`, `EdgeId`, `LabelId`, `PropertyKeyId`, `EdgeTypeId`, `IndexId`) instead of `0`
 
+### Added
+
+- **Batch edge creation**: `LpgStore::batch_create_edges()` and `ChunkedAdjacency::batch_add_edges()` for efficient bulk graph import with single lock acquisition
+- **grafeo-adapters documentation**: all 205 previously undocumented public items across Gremlin/GraphQL lexers, keywords, and AST types now have doc comments. `#![allow(missing_docs)]` replaced with `#![warn(missing_docs)]`
+- **Doc-test overhaul**: converted all 37 remaining `ignore` doc-tests across 30 files to compilable `no_run` or fully runnable examples. Zero `ignore` annotations remain in the codebase
+
 ## [0.5.7] - 2026-02-19
 
 ### Fixed

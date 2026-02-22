@@ -15,12 +15,15 @@ impl super::GrafeoDB {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use grafeo_engine::{GrafeoDB, Config, embedding::EmbeddingModelConfig};
     ///
+    /// # fn main() -> grafeo_common::utils::error::Result<()> {
     /// let db = GrafeoDB::with_config(Config::in_memory())?;
     /// db.load_embedding_model(EmbeddingModelConfig::MiniLmL6v2)?;
     /// let vecs = db.embed_text("all-MiniLM-L6-v2", &["hello"])?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "embed")]
     pub fn load_embedding_model(

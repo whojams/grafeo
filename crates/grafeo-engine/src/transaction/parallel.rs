@@ -29,7 +29,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_engine::transaction::parallel::{ParallelExecutor, BatchRequest};
 //!
 //! let executor = ParallelExecutor::new(4); // 4 workers
@@ -40,7 +40,9 @@
 //!     "CREATE (n:Person {id: 3})",
 //! ]);
 //!
-//! let result = executor.execute_batch(batch)?;
+//! let result = executor.execute_batch(batch, |_idx, _op, _result| {
+//!     // execute each operation against the store
+//! });
 //! assert!(result.all_succeeded());
 //! ```
 

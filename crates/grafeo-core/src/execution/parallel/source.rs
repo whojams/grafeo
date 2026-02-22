@@ -612,8 +612,7 @@ use grafeo_common::types::NodeId;
 /// # Example
 ///
 /// ```rust
-/// use grafeo_core::execution::parallel::source::ParallelNodeScanSource;
-/// use grafeo_core::execution::parallel::ParallelSource;
+/// use grafeo_core::execution::parallel::{ParallelNodeScanSource, ParallelSource};
 /// use grafeo_core::graph::lpg::LpgStore;
 /// use std::sync::Arc;
 ///

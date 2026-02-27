@@ -10,10 +10,12 @@
 
 mod id;
 mod logical_type;
+mod property_map;
 mod timestamp;
 mod value;
 
 pub use id::{EdgeId, EdgeTypeId, EpochId, IndexId, LabelId, NodeId, PropertyKeyId, TxId};
 pub use logical_type::LogicalType;
+pub use property_map::PropertyMap;
 pub use timestamp::Timestamp;
 pub use value::{HashableValue, OrderableValue, OrderedFloat64, PropertyKey, Value};

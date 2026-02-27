@@ -3,10 +3,8 @@
 //! Two representations here: [`Node`] is the friendly one with all the data,
 //! [`NodeRecord`] is the compact 32-byte struct for storage.
 
-use std::collections::BTreeMap;
-
 use arcstr::ArcStr;
-use grafeo_common::types::{EpochId, NodeId, PropertyKey, Value};
+use grafeo_common::types::{EpochId, NodeId, PropertyKey, PropertyMap, Value};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -35,7 +33,7 @@ pub struct Node {
     /// Labels attached to this node (inline storage for 1-2 labels).
     pub labels: SmallVec<[ArcStr; 2]>,
     /// Properties stored on this node.
-    pub properties: BTreeMap<PropertyKey, Value>,
+    pub properties: PropertyMap,
 }
 
 impl Node {
@@ -45,7 +43,7 @@ impl Node {
         Self {
             id,
             labels: SmallVec::new(),
-            properties: BTreeMap::new(),
+            properties: PropertyMap::new(),
         }
     }
 
@@ -55,7 +53,7 @@ impl Node {
         Self {
             id,
             labels: labels.into_iter().map(Into::into).collect(),
-            properties: BTreeMap::new(),
+            properties: PropertyMap::new(),
         }
     }
 
@@ -97,6 +95,12 @@ impl Node {
     /// Removes a property from this node.
     pub fn remove_property(&mut self, key: &str) -> Option<Value> {
         self.properties.remove(&PropertyKey::new(key))
+    }
+
+    /// Returns the properties as a `BTreeMap` (for serialization compatibility).
+    #[must_use]
+    pub fn properties_as_btree(&self) -> std::collections::BTreeMap<PropertyKey, Value> {
+        self.properties.to_btree_map()
     }
 }
 

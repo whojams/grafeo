@@ -67,10 +67,7 @@ impl PropertyMap {
     /// Looks up a property by key.
     #[must_use]
     pub fn get(&self, key: &PropertyKey) -> Option<&Value> {
-        self.entries
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v)
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
     /// Returns `true` if the map contains the given key.

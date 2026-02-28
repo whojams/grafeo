@@ -93,7 +93,10 @@ with MemoryManager("mistral:mistral-small-latest", config, embedder=embedder) as
 - **Importance scoring** (opt-in): composite scoring with recency, frequency and importance
 - **Memory summarization**: consolidate old memories into fewer, richer entries
 - **Procedural memory**: separate memory type for instructions, preferences and rules
+- **Episodic memory**: memory type for interaction events and reasoning context
 - **Persistent or in-memory** storage modes
+- **Built-in MCP server**: expose the memory API to AI agents via `grafeo-memory-mcp`
+- **OpenTelemetry**: opt-in instrumentation for tracing LLM calls
 
 ### Graph Structure
 
@@ -169,8 +172,44 @@ MemoryConfig(
     enable_importance: bool = False,         # Composite scoring
     enable_topology_boost: bool = False,     # Graph-connectivity re-ranking
     topology_boost_factor: float = 0.2,      # Topology boost strength
+    consolidation_protect_threshold: float = 0.0,  # Protect hub memories from summarize
+    instrument: bool = False,               # OpenTelemetry instrumentation
 )
 ```
+
+## MCP Server
+
+grafeo-memory includes a built-in MCP server that exposes the memory API to AI agents. Unlike [grafeo-mcp](grafeo-mcp.md) which wraps the raw database, `grafeo-memory-mcp` wraps the high-level memory operations (extract, reconcile, search, summarize).
+
+```bash
+uv add grafeo-memory[mcp]
+# or: pip install grafeo-memory[mcp]
+```
+
+Add to Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "grafeo-memory": {
+      "command": "grafeo-memory-mcp",
+      "env": {
+        "GRAFEO_MEMORY_MODEL": "openai:gpt-4o-mini",
+        "GRAFEO_MEMORY_DB": "./memory.db"
+      }
+    }
+  }
+}
+```
+
+### Tools
+
+`memory_add`, `memory_add_batch`, `memory_search`, `memory_update`, `memory_delete`, `memory_delete_all`, `memory_list`, `memory_summarize`, `memory_history`
+
+### Resources
+
+- `memory://config` - current configuration
+- `memory://stats` - memory count and database info
 
 ## Requirements
 

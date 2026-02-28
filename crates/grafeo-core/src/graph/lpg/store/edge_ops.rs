@@ -18,6 +18,7 @@ impl LpgStore {
 
     /// Creates a new edge within a transaction context.
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn create_edge_versioned(
         &self,
         src: NodeId,
@@ -47,6 +48,7 @@ impl LpgStore {
     /// Creates a new edge within a transaction context.
     /// (Tiered storage version)
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn create_edge_versioned(
         &self,
         src: NodeId,
@@ -112,7 +114,7 @@ impl LpgStore {
     /// Gets an edge by ID at a specific epoch.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+    pub(crate) fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
         let edges = self.edges.read();
         let chain = edges.get(&id)?;
         let record = chain.visible_at(epoch)?;
@@ -138,7 +140,7 @@ impl LpgStore {
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+    pub(crate) fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
         let versions = self.edge_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_at(epoch)?;
@@ -165,6 +167,7 @@ impl LpgStore {
     /// Gets an edge visible to a specific transaction.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
         let edges = self.edges.read();
         let chain = edges.get(&id)?;
@@ -191,6 +194,7 @@ impl LpgStore {
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
         let versions = self.edge_versions.read();
         let index = versions.get(&id)?;
@@ -241,7 +245,7 @@ impl LpgStore {
 
     /// Deletes an edge at a specific epoch.
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn delete_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+    pub(crate) fn delete_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
         let mut edges = self.edges.write();
         if let Some(chain) = edges.get_mut(&id) {
             // Get the visible record to check if deleted and get src/dst/type_id
@@ -283,7 +287,7 @@ impl LpgStore {
     /// Deletes an edge at a specific epoch.
     /// (Tiered storage version)
     #[cfg(feature = "tiered-storage")]
-    pub fn delete_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+    pub(crate) fn delete_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
         let mut versions = self.edge_versions.write();
         if let Some(index) = versions.get_mut(&id) {
             // Get the visible record to check if deleted and get src/dst/type_id

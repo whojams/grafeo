@@ -15,6 +15,7 @@ impl LpgStore {
     ///
     /// This is called during transaction rollback to clean up uncommitted changes.
     /// The method removes version chain entries created by the specified transaction.
+    #[doc(hidden)]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn discard_uncommitted_versions(&self, tx_id: TxId) {
         // Remove uncommitted node versions
@@ -43,6 +44,7 @@ impl LpgStore {
 
     /// Discards all uncommitted versions created by a transaction.
     /// (Tiered storage version)
+    #[doc(hidden)]
     #[cfg(feature = "tiered-storage")]
     pub fn discard_uncommitted_versions(&self, tx_id: TxId) {
         // Remove uncommitted node versions
@@ -74,6 +76,7 @@ impl LpgStore {
     /// Versions older than `min_epoch` are pruned from version chains, keeping
     /// at most one old version per entity as a baseline. Empty chains are removed.
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn gc_versions(&self, min_epoch: EpochId) {
         {
             let mut nodes = self.nodes.write();
@@ -93,6 +96,7 @@ impl LpgStore {
 
     /// Garbage collects old versions (tiered storage variant).
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn gc_versions(&self, min_epoch: EpochId) {
         {
             let mut versions = self.node_versions.write();
@@ -128,6 +132,7 @@ impl LpgStore {
     /// # Returns
     ///
     /// The number of records frozen (nodes + edges).
+    #[doc(hidden)]
     #[cfg(feature = "tiered-storage")]
     #[allow(unsafe_code)]
     pub fn freeze_epoch(&self, epoch: EpochId) -> usize {
@@ -227,6 +232,7 @@ impl LpgStore {
     }
 
     /// Returns the epoch store for cold storage statistics.
+    #[doc(hidden)]
     #[cfg(feature = "tiered-storage")]
     #[must_use]
     pub fn epoch_store(&self) -> &crate::storage::EpochStore {
@@ -240,6 +246,7 @@ impl LpgStore {
     /// This is used for WAL recovery to restore nodes with their original IDs.
     /// The caller must ensure IDs don't conflict with existing nodes.
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn create_node_with_id(&self, id: NodeId, labels: &[&str]) {
         let epoch = self.current_epoch();
         let mut record = NodeRecord::new(id, epoch);
@@ -283,6 +290,7 @@ impl LpgStore {
     /// Creates a node with a specific ID during recovery.
     /// (Tiered storage version)
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn create_node_with_id(&self, id: NodeId, labels: &[&str]) {
         let epoch = self.current_epoch();
         let mut record = NodeRecord::new(id, epoch);
@@ -332,6 +340,7 @@ impl LpgStore {
     ///
     /// This is used for WAL recovery to restore edges with their original IDs.
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn create_edge_with_id(&self, id: EdgeId, src: NodeId, dst: NodeId, edge_type: &str) {
         let epoch = self.current_epoch();
         let type_id = self.get_or_create_edge_type_id(edge_type);
@@ -365,6 +374,7 @@ impl LpgStore {
     /// Creates an edge with a specific ID during recovery.
     /// (Tiered storage version)
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn create_edge_with_id(&self, id: EdgeId, src: NodeId, dst: NodeId, edge_type: &str) {
         let epoch = self.current_epoch();
         let type_id = self.get_or_create_edge_type_id(edge_type);
@@ -403,6 +413,7 @@ impl LpgStore {
     }
 
     /// Sets the current epoch during recovery.
+    #[doc(hidden)]
     pub fn set_epoch(&self, epoch: EpochId) {
         self.current_epoch.store(epoch.as_u64(), Ordering::SeqCst);
     }

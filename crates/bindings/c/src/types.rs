@@ -1,13 +1,12 @@
 //! Opaque handle types and value conversion helpers for the C FFI layer.
 
-use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use grafeo_common::types::{PropertyKey, Value};
+use grafeo_common::types::{PropertyKey, PropertyMap, Value};
 use grafeo_engine::database::GrafeoDB;
 
 // ---------------------------------------------------------------------------
@@ -76,8 +75,8 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
     grafeo_bindings_common::json::json_to_value(v)
 }
 
-/// Serialize properties `BTreeMap` to a JSON `CString`.
-pub fn properties_to_json(props: &BTreeMap<PropertyKey, Value>) -> CString {
+/// Serialize a [`PropertyMap`] to a JSON `CString`.
+pub fn properties_to_json(props: &PropertyMap) -> CString {
     let obj: serde_json::Map<std::string::String, serde_json::Value> = props
         .iter()
         .map(|(k, v)| (k.as_str().to_string(), value_to_json(v)))

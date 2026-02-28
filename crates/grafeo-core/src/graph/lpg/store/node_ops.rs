@@ -20,6 +20,7 @@ impl LpgStore {
 
     /// Creates a new node with the given labels within a transaction context.
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
         let id = NodeId::new(self.next_node_id.fetch_add(1, Ordering::Relaxed));
 
@@ -53,6 +54,7 @@ impl LpgStore {
     /// Creates a new node with the given labels within a transaction context.
     /// (Tiered storage version: stores data in arena, metadata in VersionIndex)
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
         let id = NodeId::new(self.next_node_id.fetch_add(1, Ordering::Relaxed));
 
@@ -174,7 +176,7 @@ impl LpgStore {
     /// Gets a node by ID at a specific epoch.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+    pub(crate) fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
         let nodes = self.nodes.read();
         let chain = nodes.get(&id)?;
         let record = chain.visible_at(epoch)?;
@@ -206,7 +208,7 @@ impl LpgStore {
     /// (Tiered storage version: reads from arena via VersionIndex)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+    pub(crate) fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
         let versions = self.node_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_at(epoch)?;
@@ -240,6 +242,7 @@ impl LpgStore {
     /// Gets a node visible to a specific transaction.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
     pub fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
         let nodes = self.nodes.read();
         let chain = nodes.get(&id)?;
@@ -272,6 +275,7 @@ impl LpgStore {
     /// (Tiered storage version: reads from arena via VersionIndex)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
     pub fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
         let versions = self.node_versions.read();
         let index = versions.get(&id)?;
@@ -329,7 +333,7 @@ impl LpgStore {
 
     /// Deletes a node at a specific epoch.
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn delete_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+    pub(crate) fn delete_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
         let mut nodes = self.nodes.write();
         if let Some(chain) = nodes.get_mut(&id) {
             // Check if visible at this epoch (not already deleted)
@@ -377,7 +381,7 @@ impl LpgStore {
     /// Deletes a node at a specific epoch.
     /// (Tiered storage version)
     #[cfg(feature = "tiered-storage")]
-    pub fn delete_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+    pub(crate) fn delete_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
         let mut versions = self.node_versions.write();
         if let Some(index) = versions.get_mut(&id) {
             // Check if visible at this epoch

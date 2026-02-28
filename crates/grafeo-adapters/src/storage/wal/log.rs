@@ -179,6 +179,8 @@ impl WalManager {
     ///
     /// Returns an error if the record cannot be written.
     pub fn log(&self, record: &WalRecord) -> Result<()> {
+        use grafeo_core::testing::crash::maybe_crash;
+
         self.ensure_active_log()?;
 
         let mut guard = self.active_log.lock();
@@ -190,6 +192,8 @@ impl WalManager {
         let data = bincode::serde::encode_to_vec(record, bincode::config::standard())
             .map_err(|e| Error::Serialization(e.to_string()))?;
 
+        maybe_crash("wal_before_write");
+
         // Write length prefix
         let len = data.len() as u32;
         log_file.writer.write_all(&len.to_le_bytes())?;
@@ -200,6 +204,8 @@ impl WalManager {
         // Write checksum
         let checksum = crc32fast::hash(&data);
         log_file.writer.write_all(&checksum.to_le_bytes())?;
+
+        maybe_crash("wal_after_write");
 
         // Update size tracking
         let record_size = 4 + data.len() as u64 + 4; // length + data + checksum
@@ -216,6 +222,7 @@ impl WalManager {
             DurabilityMode::Sync => {
                 // Sync on every commit record
                 if matches!(record, WalRecord::TxCommit { .. }) {
+                    maybe_crash("wal_before_flush");
                     log_file.writer.flush()?;
                     log_file.writer.get_ref().sync_all()?;
                     self.records_since_sync.store(0, Ordering::Relaxed);

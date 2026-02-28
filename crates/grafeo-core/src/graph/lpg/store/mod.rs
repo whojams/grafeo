@@ -378,6 +378,7 @@ impl LpgStore {
     }
 
     /// Creates a new epoch.
+    #[doc(hidden)]
     pub fn new_epoch(&self) -> EpochId {
         let id = self.current_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         EpochId::new(id)
@@ -387,6 +388,7 @@ impl LpgStore {
     ///
     /// Used by the transaction manager to keep the store's epoch in step
     /// after a transaction commit advances the global epoch.
+    #[doc(hidden)]
     pub fn sync_epoch(&self, epoch: EpochId) {
         self.current_epoch
             .fetch_max(epoch.as_u64(), Ordering::AcqRel);

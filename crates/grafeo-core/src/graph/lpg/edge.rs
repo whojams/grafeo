@@ -4,9 +4,8 @@
 //! [`EdgeRecord`] is the compact storage format.
 
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, PropertyMap, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// A relationship between two nodes, with a type and optional properties.
 ///
@@ -39,7 +38,7 @@ pub struct Edge {
     /// Edge type/label.
     pub edge_type: ArcStr,
     /// Properties stored on this edge.
-    pub properties: BTreeMap<PropertyKey, Value>,
+    pub properties: PropertyMap,
 }
 
 impl Edge {
@@ -51,7 +50,7 @@ impl Edge {
             src,
             dst,
             edge_type: edge_type.into(),
-            properties: BTreeMap::new(),
+            properties: PropertyMap::new(),
         }
     }
 
@@ -69,6 +68,12 @@ impl Edge {
     /// Removes a property from this edge.
     pub fn remove_property(&mut self, key: &str) -> Option<Value> {
         self.properties.remove(&PropertyKey::new(key))
+    }
+
+    /// Returns the properties as a `BTreeMap` (for serialization compatibility).
+    #[must_use]
+    pub fn properties_as_btree(&self) -> std::collections::BTreeMap<PropertyKey, Value> {
+        self.properties.to_btree_map()
     }
 
     /// Given one endpoint, returns the other end of this edge.

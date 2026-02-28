@@ -3,8 +3,8 @@
 //! Provides cost estimates for logical operators to guide optimization decisions.
 
 use crate::query::plan::{
-    AggregateOp, DistinctOp, ExpandOp, FilterOp, JoinOp, JoinType, LimitOp, LogicalOperator,
-    NodeScanOp, ProjectOp, ReturnOp, SkipOp, SortOp, VectorJoinOp, VectorScanOp,
+    AggregateOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LimitOp,
+    LogicalOperator, NodeScanOp, ProjectOp, ReturnOp, SkipOp, SortOp, VectorJoinOp, VectorScanOp,
 };
 
 /// Cost of an operation.
@@ -97,40 +97,78 @@ impl std::ops::AddAssign for Cost {
 }
 
 /// Cost model for estimating operator costs.
+///
+/// Default constants are calibrated relative to each other:
+/// - Tuple scan is the baseline (1x)
+/// - Hash lookup is ~3x (hash computation + potential cache miss)
+/// - Sort comparison is ~2x (key extraction + comparison)
+/// - Distance computation is ~10x (vector math)
 pub struct CostModel {
-    /// Cost per tuple processed by CPU.
+    /// Cost per tuple processed by CPU (baseline unit).
     cpu_tuple_cost: f64,
-    /// Cost per hash table lookup.
+    /// Cost per hash table lookup (~3x tuple cost: hash + cache miss).
     hash_lookup_cost: f64,
-    /// Cost per comparison in sorting.
+    /// Cost per comparison in sorting (~2x tuple cost: key extract + cmp).
     sort_comparison_cost: f64,
-    /// Average tuple size in bytes.
+    /// Average tuple size in bytes (for IO estimation).
     avg_tuple_size: f64,
     /// Page size in bytes.
     page_size: f64,
-    /// Average edge fanout (edges per node), from statistics.
+    /// Global average edge fanout (fallback when per-type stats unavailable).
     avg_fanout: f64,
+    /// Per-edge-type degree stats: (avg_out_degree, avg_in_degree).
+    edge_type_degrees: std::collections::HashMap<String, (f64, f64)>,
 }
 
 impl CostModel {
-    /// Creates a new cost model with default parameters.
+    /// Creates a new cost model with calibrated default parameters.
     #[must_use]
     pub fn new() -> Self {
         Self {
             cpu_tuple_cost: 0.01,
-            hash_lookup_cost: 0.02,
+            hash_lookup_cost: 0.03,
             sort_comparison_cost: 0.02,
             avg_tuple_size: 100.0,
             page_size: 8192.0,
             avg_fanout: 10.0,
+            edge_type_degrees: std::collections::HashMap::new(),
         }
     }
 
-    /// Creates a cost model with fanout derived from actual statistics.
+    /// Sets the global average fanout from graph statistics.
     #[must_use]
     pub fn with_avg_fanout(mut self, avg_fanout: f64) -> Self {
         self.avg_fanout = if avg_fanout > 0.0 { avg_fanout } else { 10.0 };
         self
+    }
+
+    /// Sets per-edge-type degree statistics for accurate expand cost estimation.
+    ///
+    /// Each entry maps edge type name to `(avg_out_degree, avg_in_degree)`.
+    #[must_use]
+    pub fn with_edge_type_degrees(
+        mut self,
+        degrees: std::collections::HashMap<String, (f64, f64)>,
+    ) -> Self {
+        self.edge_type_degrees = degrees;
+        self
+    }
+
+    /// Returns the fanout for a specific expand operation.
+    ///
+    /// Uses per-edge-type degree stats when available, falling back to the
+    /// global average fanout.
+    fn fanout_for_expand(&self, expand: &ExpandOp) -> f64 {
+        if let Some(edge_type) = &expand.edge_type
+            && let Some(&(out_deg, in_deg)) = self.edge_type_degrees.get(edge_type)
+        {
+            return match expand.direction {
+                ExpandDirection::Outgoing => out_deg,
+                ExpandDirection::Incoming => in_deg,
+                ExpandDirection::Both => out_deg + in_deg,
+            };
+        }
+        self.avg_fanout
     }
 
     /// Estimates the cost of a logical operator.
@@ -175,10 +213,15 @@ impl CostModel {
     }
 
     /// Estimates the cost of an expand operation.
-    fn expand_cost(&self, _expand: &ExpandOp, cardinality: f64) -> Cost {
-        // Expand involves adjacency list lookups
+    ///
+    /// Uses per-edge-type degree stats when available, otherwise falls back
+    /// to the global average fanout.
+    fn expand_cost(&self, expand: &ExpandOp, cardinality: f64) -> Cost {
+        let fanout = self.fanout_for_expand(expand);
+        // Adjacency list lookup per input row
         let lookup_cost = cardinality * self.hash_lookup_cost;
-        let output_cost = cardinality * self.avg_fanout * self.cpu_tuple_cost;
+        // Process each expanded output tuple
+        let output_cost = cardinality * fanout * self.cpu_tuple_cost;
         Cost::cpu(lookup_cost + output_cost)
     }
 
@@ -601,6 +644,106 @@ mod tests {
 
         // Expand involves hash lookups and output generation
         assert!(cost.cpu > 0.0);
+    }
+
+    #[test]
+    fn test_cost_model_expand_with_edge_type_stats() {
+        let mut degrees = std::collections::HashMap::new();
+        degrees.insert("KNOWS".to_string(), (5.0, 5.0)); // Symmetric
+        degrees.insert("WORKS_AT".to_string(), (1.0, 50.0)); // Many-to-one
+
+        let model = CostModel::new().with_edge_type_degrees(degrees);
+
+        // Outgoing KNOWS: fanout = 5
+        let knows_out = ExpandOp {
+            from_variable: "a".to_string(),
+            to_variable: "b".to_string(),
+            edge_variable: None,
+            direction: ExpandDirection::Outgoing,
+            edge_type: Some("KNOWS".to_string()),
+            min_hops: 1,
+            max_hops: Some(1),
+            input: Box::new(LogicalOperator::Empty),
+            path_alias: None,
+        };
+        let cost_knows = model.expand_cost(&knows_out, 1000.0);
+
+        // Outgoing WORKS_AT: fanout = 1 (each person works at one company)
+        let works_out = ExpandOp {
+            from_variable: "a".to_string(),
+            to_variable: "b".to_string(),
+            edge_variable: None,
+            direction: ExpandDirection::Outgoing,
+            edge_type: Some("WORKS_AT".to_string()),
+            min_hops: 1,
+            max_hops: Some(1),
+            input: Box::new(LogicalOperator::Empty),
+            path_alias: None,
+        };
+        let cost_works = model.expand_cost(&works_out, 1000.0);
+
+        // KNOWS (fanout=5) should be more expensive than WORKS_AT (fanout=1)
+        assert!(
+            cost_knows.cpu > cost_works.cpu,
+            "KNOWS(5) should cost more than WORKS_AT(1)"
+        );
+
+        // Incoming WORKS_AT: fanout = 50 (company has many employees)
+        let works_in = ExpandOp {
+            from_variable: "c".to_string(),
+            to_variable: "p".to_string(),
+            edge_variable: None,
+            direction: ExpandDirection::Incoming,
+            edge_type: Some("WORKS_AT".to_string()),
+            min_hops: 1,
+            max_hops: Some(1),
+            input: Box::new(LogicalOperator::Empty),
+            path_alias: None,
+        };
+        let cost_works_in = model.expand_cost(&works_in, 1000.0);
+
+        // Incoming WORKS_AT (fanout=50) should be most expensive
+        assert!(
+            cost_works_in.cpu > cost_knows.cpu,
+            "Incoming WORKS_AT(50) should cost more than KNOWS(5)"
+        );
+    }
+
+    #[test]
+    fn test_cost_model_expand_unknown_edge_type_uses_global_fanout() {
+        let model = CostModel::new().with_avg_fanout(7.0);
+        let expand = ExpandOp {
+            from_variable: "a".to_string(),
+            to_variable: "b".to_string(),
+            edge_variable: None,
+            direction: ExpandDirection::Outgoing,
+            edge_type: Some("UNKNOWN_TYPE".to_string()),
+            min_hops: 1,
+            max_hops: Some(1),
+            input: Box::new(LogicalOperator::Empty),
+            path_alias: None,
+        };
+        let cost_unknown = model.expand_cost(&expand, 1000.0);
+
+        // Without edge type (uses global fanout too)
+        let expand_no_type = ExpandOp {
+            from_variable: "a".to_string(),
+            to_variable: "b".to_string(),
+            edge_variable: None,
+            direction: ExpandDirection::Outgoing,
+            edge_type: None,
+            min_hops: 1,
+            max_hops: Some(1),
+            input: Box::new(LogicalOperator::Empty),
+            path_alias: None,
+        };
+        let cost_no_type = model.expand_cost(&expand_no_type, 1000.0);
+
+        // Both should use global fanout = 7, so costs should be equal
+        assert!(
+            (cost_unknown.cpu - cost_no_type.cpu).abs() < 0.001,
+            "Unknown edge type should use global fanout"
+        );
     }
 
     #[test]

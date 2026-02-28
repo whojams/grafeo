@@ -4,6 +4,13 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.9] - Unreleased
 
+### Added
+
+- **Snapshot validation**: `import_snapshot()` now pre-validates the entire snapshot before inserting any data: rejects duplicate node/edge IDs and edges referencing non-existent source or destination nodes
+- **Crash injection framework**: feature-gated `testing-crash-injection` module in grafeo-core with `maybe_crash()` / `with_crash_at()` for deterministic recovery testing. Three crash points added to WAL write path (`wal_before_write`, `wal_after_write`, `wal_before_flush`). Zero overhead when disabled
+- **Backward compatibility tests**: pinned v1 snapshot fixture with 8 regression tests verifying format stability across future code changes
+- **RDF batch insert lock batching**: `RdfStore::batch_insert()` acquires the write lock once for the entire batch instead of per-triple, reducing lock overhead for bulk RDF imports
+
 ### Fixed
 
 - **WASM build with `getrandom` 0.4**: added `wasm_js` crate feature for `getrandom` 0.4.x on `wasm32-unknown-unknown` targets. The previous `getrandom_backend` cfg flag only worked for 0.3.x
@@ -11,6 +18,10 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ### Improved
 
+- **Compact property storage**: Node and Edge property maps switched from `BTreeMap<PropertyKey, Value>` to a `SmallVec<[(PropertyKey, Value); 4]>` representation. Nodes with 4 or fewer properties avoid heap allocation entirely
+- **Cost model per-type fanout**: the query optimizer now tracks per-edge-type average degree statistics, replacing the single global fanout estimate. Improves plan selection for graphs with heterogeneous edge type distributions
+- **Translator consolidation**: extracted `capitalize_first()`, `VarGen` (variable name generator), and `combine_with_and()` from individual translators into `translator_common`, removing duplication across 6 query language translators
+- **LpgStore API surface reduction**: reduced public API visibility with `pub(crate)` for internal-only methods (`get_node_at_epoch`, `get_edge_at_epoch`, `delete_node_at_epoch`, `delete_edge_at_epoch`, `compute_statistics`) and `#[doc(hidden)]` for test-only methods
 - **Release workflow**: replaced deprecated `actions/create-release@v1` and `actions/upload-release-asset@v1` with `softprops/action-gh-release@v2`, eliminating `set-output` deprecation warnings
 
 ## [0.5.8] - 2026-02-22

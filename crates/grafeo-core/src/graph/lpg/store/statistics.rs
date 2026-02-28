@@ -16,6 +16,7 @@ impl LpgStore {
     ///
     /// Call this before reading statistics for query optimization.
     /// Avoids redundant recomputation if no mutations occurred.
+    #[doc(hidden)]
     pub fn ensure_statistics_fresh(&self) {
         if self.needs_stats_recompute.swap(false, Ordering::Relaxed) {
             self.recompute_statistics_full();
@@ -29,7 +30,7 @@ impl LpgStore {
     /// Reads live node/edge counts from atomic counters and per-label counts
     /// from the label index. This is O(|labels| + |edge_types|) instead of
     /// O(n + m) for a full scan.
-    pub fn compute_statistics(&self) {
+    pub(crate) fn compute_statistics(&self) {
         let mut stats = Statistics::new();
 
         // Read total counts from atomic counters

@@ -324,6 +324,7 @@ impl LpgStore {
     }
 
     /// Rebuilds zone maps for all properties.
+    #[doc(hidden)]
     pub fn rebuild_zone_maps(&self) {
         self.node_properties.rebuild_zone_maps();
         self.edge_properties.rebuild_zone_maps();

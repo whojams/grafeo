@@ -76,7 +76,8 @@ impl Optimizer {
     /// Creates an optimizer with cardinality estimates from the store's statistics.
     ///
     /// Pre-populates the cardinality estimator with per-label row counts and
-    /// edge type fanout. Ensures statistics are fresh before reading.
+    /// edge type fanout. Feeds per-edge-type degree stats into the cost model
+    /// for accurate expand cost estimation.
     #[must_use]
     pub fn from_store(store: &grafeo_core::graph::lpg::LpgStore) -> Self {
         store.ensure_statistics_fresh();
@@ -90,11 +91,20 @@ impl Optimizer {
             10.0
         };
 
+        // Collect per-edge-type degree stats for accurate expand costing
+        let edge_type_degrees: std::collections::HashMap<String, (f64, f64)> = stats
+            .edge_types
+            .iter()
+            .map(|(name, et)| (name.clone(), (et.avg_out_degree, et.avg_in_degree)))
+            .collect();
+
         Self {
             enable_filter_pushdown: true,
             enable_join_reorder: true,
             enable_projection_pushdown: true,
-            cost_model: CostModel::new().with_avg_fanout(avg_fanout),
+            cost_model: CostModel::new()
+                .with_avg_fanout(avg_fanout)
+                .with_edge_type_degrees(edge_type_degrees),
             card_estimator: estimator,
         }
     }

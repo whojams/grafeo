@@ -158,6 +158,71 @@ impl RdfStore {
         true
     }
 
+    /// Inserts a batch of triples with single lock acquisition per index.
+    ///
+    /// Much more efficient than calling [`Self::insert`] in a loop because each
+    /// index lock is acquired once for the entire batch rather than once per
+    /// triple (4 lock acquisitions total vs 4 * N).
+    ///
+    /// Returns the number of triples that were newly inserted (duplicates are
+    /// skipped).
+    pub fn batch_insert(&self, triples: impl IntoIterator<Item = Triple>) -> usize {
+        // Phase 1: deduplicate against primary storage (single lock)
+        let mut new_triples = Vec::new();
+        {
+            let mut primary = self.triples.write();
+            for triple in triples {
+                let arc = Arc::new(triple);
+                if primary.insert(Arc::clone(&arc)) {
+                    new_triples.push(arc);
+                }
+            }
+        }
+
+        if new_triples.is_empty() {
+            return 0;
+        }
+
+        let count = new_triples.len();
+
+        // Phase 2: update subject index (single lock)
+        {
+            let mut subject_index = self.subject_index.write();
+            for triple in &new_triples {
+                subject_index
+                    .entry(triple.subject().clone())
+                    .or_default()
+                    .push(Arc::clone(triple));
+            }
+        }
+
+        // Phase 3: update predicate index (single lock)
+        {
+            let mut predicate_index = self.predicate_index.write();
+            for triple in &new_triples {
+                predicate_index
+                    .entry(triple.predicate().clone())
+                    .or_default()
+                    .push(Arc::clone(triple));
+            }
+        }
+
+        // Phase 4: update object index if enabled (single lock)
+        if self.config.index_objects {
+            let mut object_index = self.object_index.write();
+            if let Some(ref mut index) = *object_index {
+                for triple in new_triples {
+                    index
+                        .entry(triple.object().clone())
+                        .or_default()
+                        .push(triple);
+                }
+            }
+        }
+
+        count
+    }
+
     /// Removes a triple from the store.
     ///
     /// Returns `true` if the triple was found and removed.
@@ -1059,5 +1124,47 @@ mod tests {
         assert_eq!(applied, 1);
         assert_eq!(store.len(), 3); // Triple removed
         assert!(!store.contains(&triples[0]));
+    }
+
+    #[test]
+    fn test_batch_insert() {
+        let store = RdfStore::new();
+        let triples = sample_triples();
+
+        let inserted = store.batch_insert(triples.clone());
+        assert_eq!(inserted, 4);
+        assert_eq!(store.len(), 4);
+
+        // All triples should be queryable
+        for triple in &triples {
+            assert!(store.contains(triple));
+        }
+
+        // Indexes should be populated correctly
+        let alice = Term::iri("http://example.org/alice");
+        assert_eq!(store.triples_with_subject(&alice).len(), 3);
+    }
+
+    #[test]
+    fn test_batch_insert_with_duplicates() {
+        let store = RdfStore::new();
+
+        // Insert one triple first
+        let triples = sample_triples();
+        store.insert(triples[0].clone());
+        assert_eq!(store.len(), 1);
+
+        // Batch insert all 4 — only 3 should be new
+        let inserted = store.batch_insert(triples.clone());
+        assert_eq!(inserted, 3);
+        assert_eq!(store.len(), 4);
+    }
+
+    #[test]
+    fn test_batch_insert_empty() {
+        let store = RdfStore::new();
+        let inserted = store.batch_insert(Vec::<Triple>::new());
+        assert_eq!(inserted, 0);
+        assert_eq!(store.len(), 0);
     }
 }

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use grafeo_common::types::{EdgeId, NodeId, Value};
 use grafeo_common::utils::error::{Error, Result};
+use hashbrown::HashSet;
 
 use crate::config::Config;
 
@@ -236,9 +237,15 @@ impl super::GrafeoDB {
     ///
     /// The `data` must have been produced by [`export_snapshot()`](Self::export_snapshot).
     ///
+    /// All edge references are validated before any data is inserted: every
+    /// edge's source and destination must reference a node present in the
+    /// snapshot, and duplicate node/edge IDs are rejected. If validation
+    /// fails, no database is created.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the snapshot is invalid or deserialization fails.
+    /// Returns an error if the snapshot is invalid, contains dangling edge
+    /// references, has duplicate IDs, or deserialization fails.
     pub fn import_snapshot(data: &[u8]) -> Result<Self> {
         let config = bincode::config::standard();
         let (snapshot, _): (Snapshot, _) = bincode::serde::decode_from_slice(data, config)
@@ -251,6 +258,41 @@ impl super::GrafeoDB {
             )));
         }
 
+        // Pre-validate: collect all node IDs and check for duplicates
+        let mut node_ids = HashSet::with_capacity(snapshot.nodes.len());
+        for node in &snapshot.nodes {
+            if !node_ids.insert(node.id) {
+                return Err(Error::Internal(format!(
+                    "snapshot contains duplicate node ID {}",
+                    node.id
+                )));
+            }
+        }
+
+        // Validate edge references and check for duplicate edge IDs
+        let mut edge_ids = HashSet::with_capacity(snapshot.edges.len());
+        for edge in &snapshot.edges {
+            if !edge_ids.insert(edge.id) {
+                return Err(Error::Internal(format!(
+                    "snapshot contains duplicate edge ID {}",
+                    edge.id
+                )));
+            }
+            if !node_ids.contains(&edge.src) {
+                return Err(Error::Internal(format!(
+                    "snapshot edge {} references non-existent source node {}",
+                    edge.id, edge.src
+                )));
+            }
+            if !node_ids.contains(&edge.dst) {
+                return Err(Error::Internal(format!(
+                    "snapshot edge {} references non-existent destination node {}",
+                    edge.id, edge.dst
+                )));
+            }
+        }
+
+        // Validation passed — build the database
         let db = Self::new_in_memory();
 
         for node in snapshot.nodes {

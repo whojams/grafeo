@@ -75,6 +75,9 @@ cdc = []  # Change data capture with history API
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 block-stm = []  # Block-STM parallel transaction execution
 
+# Testing utilities (zero overhead when disabled)
+testing-crash-injection = ["grafeo-core/testing-crash-injection"]  # Crash injection for recovery testing
+
 [lints]
 workspace = true
 

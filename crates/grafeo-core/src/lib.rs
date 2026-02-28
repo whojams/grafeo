@@ -22,6 +22,7 @@ pub mod graph;
 pub mod index;
 pub mod statistics;
 pub mod storage;
+pub mod testing;
 
 // Re-export the types you'll use most often
 pub use graph::lpg::{Edge, LpgStore, Node};

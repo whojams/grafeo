@@ -66,6 +66,9 @@ hybrid-search = ["text-index", "vector-index"]  # Combined text + vector search 
 # Convenience groups
 ai = ["vector-index", "text-index", "hybrid-search"]  # All AI/RAG search features
 
+# Testing utilities (zero overhead when disabled)
+testing-crash-injection = []  # Deterministic crash injection for recovery testing
+
 [lints]
 workspace = true
 

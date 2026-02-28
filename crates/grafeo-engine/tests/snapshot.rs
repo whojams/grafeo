@@ -346,3 +346,75 @@ fn double_export_is_deterministic() {
     let bytes2 = db.export_snapshot().unwrap();
     assert_eq!(bytes1, bytes2);
 }
+
+// --- Edge reference validation ---
+
+#[test]
+fn import_rejects_dangling_edge_source() {
+    // Create a valid snapshot, then re-export after deleting the source node
+    // to create a snapshot with a dangling edge reference.
+    let db = GrafeoDB::new_in_memory();
+    let a = db.create_node(&["Person"]);
+    let b = db.create_node(&["Person"]);
+    db.create_edge(a, b, "KNOWS");
+
+    // Export valid snapshot
+    let bytes = db.export_snapshot().unwrap();
+    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    assert_eq!(restored.edge_count(), 1);
+
+    // Now create a corrupted snapshot by exporting nodes only from a db
+    // that has 1 node, then manually crafting a snapshot with an edge
+    // that references a non-existent source node.
+    // The simplest way: delete a node, re-export (edge still exists in store)
+    // Actually, let's tamper with binary data at a higher level:
+    // Build a snapshot where edge references node ID 999 which doesn't exist.
+    let db2 = GrafeoDB::new_in_memory();
+    let n = db2.create_node(&["Person"]);
+    // Create an edge referencing a non-existent source node
+    // We need to use the direct store API since create_edge validates at a higher level
+    db2.store().create_edge_with_id(
+        grafeo_common::types::EdgeId::new(0),
+        grafeo_common::types::NodeId::new(999), // doesn't exist
+        n,
+        "KNOWS",
+    );
+
+    let bytes = db2.export_snapshot().unwrap();
+    let result = GrafeoDB::import_snapshot(&bytes);
+    match result {
+        Ok(_) => panic!("Expected error for dangling source node"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("non-existent source node"),
+                "Expected dangling source error, got: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn import_rejects_dangling_edge_destination() {
+    let db = GrafeoDB::new_in_memory();
+    let n = db.create_node(&["Person"]);
+    db.store().create_edge_with_id(
+        grafeo_common::types::EdgeId::new(0),
+        n,
+        grafeo_common::types::NodeId::new(999), // doesn't exist
+        "KNOWS",
+    );
+
+    let bytes = db.export_snapshot().unwrap();
+    let result = GrafeoDB::import_snapshot(&bytes);
+    match result {
+        Ok(_) => panic!("Expected error for dangling destination node"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("non-existent destination node"),
+                "Expected dangling destination error, got: {err}"
+            );
+        }
+    }
+}

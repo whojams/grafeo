@@ -63,5 +63,8 @@ algos = []  # Graph algorithm plugin (SSSP, PageRank, centrality, community dete
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
 full = ["languages", "rdf", "wal", "parallel", "algos"]
 
+# Testing utilities (zero overhead when disabled)
+testing-crash-injection = ["grafeo-core/testing-crash-injection"]  # Crash injection for recovery testing
+
 [lints]
 workspace = true

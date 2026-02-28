@@ -263,7 +263,8 @@ impl super::GrafeoDB {
         for node in &snapshot.nodes {
             if !node_ids.insert(node.id) {
                 return Err(Error::Internal(format!(
-                    "snapshot contains duplicate node ID {}", node.id
+                    "snapshot contains duplicate node ID {}",
+                    node.id
                 )));
             }
         }
@@ -273,7 +274,8 @@ impl super::GrafeoDB {
         for edge in &snapshot.edges {
             if !edge_ids.insert(edge.id) {
                 return Err(Error::Internal(format!(
-                    "snapshot contains duplicate edge ID {}", edge.id
+                    "snapshot contains duplicate edge ID {}",
+                    edge.id
                 )));
             }
             if !node_ids.contains(&edge.src) {

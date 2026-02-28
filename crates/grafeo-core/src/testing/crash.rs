@@ -42,9 +42,7 @@ mod inner {
             return;
         }
         let prev = CRASH_COUNTER.fetch_sub(1, Ordering::SeqCst);
-        if prev == 1 {
-            panic!("crash injection at: {point}");
-        }
+        assert!(prev != 1, "crash injection at: {point}");
     }
 
     /// Enable crash injection to fire after `count` calls to [`maybe_crash`].

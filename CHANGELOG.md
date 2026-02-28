@@ -9,6 +9,10 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 - **Skip index for adjacency chunks**: compressed cold chunks now maintain a zone-map skip index with per-chunk `(min, max)` destination metadata. New `contains_edge(src, dst)` provides O(log n) point lookups by only decompressing chunks whose range overlaps the target. `edges_in_range(src, min, max)` supports efficient range queries with the same pruning
 - **Bidirectional BFS shortest path**: `ShortestPathOperator` now uses meet-in-the-middle BFS, expanding forward and backward frontiers alternately (smaller frontier first). Reduces search space from O(b^d) to O(b^(d/2)). Falls back to unidirectional BFS when backward adjacency is unavailable
 
+### Improved
+
+- **Shared accumulator module**: extracted `AggregateFunction`, `AggregateExpr`, and `HashableValue` from duplicate definitions in pull-based and push-based aggregate operators into a single `accumulator` module, eliminating ~200 lines of duplicated type definitions
+
 ## [0.5.9] - 2026-02-28
 
 ### Added

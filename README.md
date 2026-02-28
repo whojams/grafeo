@@ -110,13 +110,13 @@ Grafeo uses a modular translator architecture where query languages are parsed i
 cargo add grafeo
 ```
 
-By default, all query languages and AI features (vector search, text search, hybrid search, CDC) are enabled via the `full` feature. Use feature groups to customize:
+By default, all query languages, AI features and graph algorithms are enabled via the `full` feature. Use feature groups to customize:
 
 ```bash
-# Default: everything (languages + ai)
+# Default: everything (languages + ai + algos)
 cargo add grafeo
 
-# Only query languages, no AI features
+# Only query languages, no AI features or algorithms
 cargo add grafeo --no-default-features --features languages
 
 # Only GQL with AI features
@@ -124,6 +124,9 @@ cargo add grafeo --no-default-features --features gql,ai
 
 # Minimal: GQL only
 cargo add grafeo --no-default-features --features gql
+
+# With graph algorithms (SSSP, PageRank, centrality, community detection, etc.)
+cargo add grafeo --no-default-features --features gql,algos
 
 # With ONNX embedding generation (opt-in, ~17MB)
 cargo add grafeo --features embed

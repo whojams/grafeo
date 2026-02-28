@@ -266,4 +266,49 @@ mod tests {
             assert!(map.contains_key(&PropertyKey::new(format!("k{i}"))));
         }
     }
+
+    #[test]
+    fn debug_format() {
+        let mut map = PropertyMap::new();
+        map.insert(PropertyKey::new("name"), Value::from("Alice"));
+        let dbg = format!("{map:?}");
+        assert!(dbg.contains("name"));
+    }
+
+    #[test]
+    fn from_empty_iterator() {
+        let map: PropertyMap = std::iter::empty().collect();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn ref_iterator() {
+        let mut map = PropertyMap::new();
+        map.insert(PropertyKey::new("a"), Value::from(1i64));
+        map.insert(PropertyKey::new("b"), Value::from(2i64));
+        let pairs: Vec<_> = (&map).into_iter().collect();
+        assert_eq!(pairs.len(), 2);
+    }
+
+    #[test]
+    fn default_is_empty() {
+        let map = PropertyMap::default();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn remove_nonexistent() {
+        let mut map = PropertyMap::new();
+        assert_eq!(map.remove(&PropertyKey::new("missing")), None);
+    }
+
+    #[test]
+    fn to_btree_map_round_trip() {
+        let mut map = PropertyMap::new();
+        map.insert(PropertyKey::new("x"), Value::from(1i64));
+        map.insert(PropertyKey::new("y"), Value::from(2i64));
+        let btree = map.to_btree_map();
+        assert_eq!(btree.len(), 2);
+        assert_eq!(btree[&PropertyKey::new("x")], Value::from(1i64));
+    }
 }

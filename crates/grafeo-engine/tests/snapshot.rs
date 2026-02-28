@@ -1,7 +1,35 @@
 //! Integration tests for snapshot export/import.
 
-use grafeo_common::types::Value;
+use grafeo_common::types::{EdgeId, NodeId, Value};
 use grafeo_engine::GrafeoDB;
+
+/// Mirror of the private Snapshot struct for crafting test payloads.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TestSnapshot {
+    version: u8,
+    nodes: Vec<TestNode>,
+    edges: Vec<TestEdge>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TestNode {
+    id: NodeId,
+    labels: Vec<String>,
+    properties: Vec<(String, Value)>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TestEdge {
+    id: EdgeId,
+    src: NodeId,
+    dst: NodeId,
+    edge_type: String,
+    properties: Vec<(String, Value)>,
+}
+
+fn encode_snapshot(snap: &TestSnapshot) -> Vec<u8> {
+    bincode::serde::encode_to_vec(snap, bincode::config::standard()).unwrap()
+}
 
 #[test]
 fn export_import_empty_database() {
@@ -414,6 +442,85 @@ fn import_rejects_dangling_edge_destination() {
             assert!(
                 err.contains("non-existent destination node"),
                 "Expected dangling destination error, got: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn import_rejects_duplicate_node_ids() {
+    let snap = TestSnapshot {
+        version: 1,
+        nodes: vec![
+            TestNode {
+                id: NodeId::new(0),
+                labels: vec!["A".into()],
+                properties: vec![],
+            },
+            TestNode {
+                id: NodeId::new(0), // duplicate
+                labels: vec!["B".into()],
+                properties: vec![],
+            },
+        ],
+        edges: vec![],
+    };
+    let bytes = encode_snapshot(&snap);
+    let result = GrafeoDB::import_snapshot(&bytes);
+    match result {
+        Ok(_) => panic!("Expected error for duplicate node ID"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("duplicate node ID"),
+                "Expected duplicate node error, got: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn import_rejects_duplicate_edge_ids() {
+    let snap = TestSnapshot {
+        version: 1,
+        nodes: vec![
+            TestNode {
+                id: NodeId::new(0),
+                labels: vec![],
+                properties: vec![],
+            },
+            TestNode {
+                id: NodeId::new(1),
+                labels: vec![],
+                properties: vec![],
+            },
+        ],
+        edges: vec![
+            TestEdge {
+                id: EdgeId::new(0),
+                src: NodeId::new(0),
+                dst: NodeId::new(1),
+                edge_type: "REL".into(),
+                properties: vec![],
+            },
+            TestEdge {
+                id: EdgeId::new(0), // duplicate
+                src: NodeId::new(0),
+                dst: NodeId::new(1),
+                edge_type: "REL".into(),
+                properties: vec![],
+            },
+        ],
+    };
+    let bytes = encode_snapshot(&snap);
+    let result = GrafeoDB::import_snapshot(&bytes);
+    match result {
+        Ok(_) => panic!("Expected error for duplicate edge ID"),
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("duplicate edge ID"),
+                "Expected duplicate edge error, got: {err}"
             );
         }
     }

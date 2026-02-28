@@ -104,3 +104,84 @@ pub(crate) fn combine_with_and(predicates: Vec<LogicalExpression>) -> Result<Log
             ))
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- capitalize_first ---
+
+    #[test]
+    fn capitalize_first_empty() {
+        assert_eq!(capitalize_first(""), "");
+    }
+
+    #[test]
+    fn capitalize_first_single_char() {
+        assert_eq!(capitalize_first("a"), "A");
+    }
+
+    #[test]
+    fn capitalize_first_already_upper() {
+        assert_eq!(capitalize_first("Hello"), "Hello");
+    }
+
+    #[test]
+    fn capitalize_first_lower() {
+        assert_eq!(capitalize_first("person"), "Person");
+    }
+
+    // --- VarGen ---
+
+    #[test]
+    fn var_gen_starts_at_zero() {
+        let gen = VarGen::new();
+        assert_eq!(gen.current(), 0);
+    }
+
+    #[test]
+    fn var_gen_increments() {
+        let gen = VarGen::new();
+        assert_eq!(gen.next(), "_v0");
+        assert_eq!(gen.next(), "_v1");
+        assert_eq!(gen.current(), 2);
+    }
+
+    // --- combine_with_and ---
+
+    #[test]
+    fn combine_with_and_empty_returns_error() {
+        let result = combine_with_and(vec![]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn combine_with_and_single_predicate() {
+        let pred = LogicalExpression::Property {
+            variable: "n".to_string(),
+            property: "name".to_string(),
+        };
+        let result = combine_with_and(vec![pred.clone()]).unwrap();
+        assert!(matches!(result, LogicalExpression::Property { .. }));
+    }
+
+    #[test]
+    fn combine_with_and_two_predicates() {
+        let p1 = LogicalExpression::Property {
+            variable: "n".to_string(),
+            property: "a".to_string(),
+        };
+        let p2 = LogicalExpression::Property {
+            variable: "n".to_string(),
+            property: "b".to_string(),
+        };
+        let result = combine_with_and(vec![p1, p2]).unwrap();
+        assert!(matches!(
+            result,
+            LogicalExpression::Binary {
+                op: BinaryOp::And,
+                ..
+            }
+        ));
+    }
+}

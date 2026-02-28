@@ -53,6 +53,7 @@ See [ARCHITECTURE.md](.claude/ARCHITECTURE.md) for the full picture. The short v
 | `grafeo-adapters` | Query parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ) |
 | `grafeo-engine` | Database facade, sessions, transactions |
 | `grafeo-cli` | CLI with interactive shell |
+| `grafeo-bindings-common` | Shared library for all language bindings |
 | `grafeo-python` | Python bindings (PyO3) |
 | `grafeo-node` | Node.js/TypeScript bindings (napi-rs) |
 | `grafeo-c` | C FFI layer (also used by Go via CGO) |

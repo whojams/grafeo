@@ -2,14 +2,14 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.11] - Unreleased
+## [0.5.11] - 2026-03-01
 
 ### Added
 
-- **Graph storage traits**: `GraphStore` (29 read methods) and `GraphStoreMut` (14 write methods) traits capturing the query engine's storage interface. Enables future pluggable backends (spillover, disk-backed) without changing operators
+- **Graph storage traits**: `GraphStore` (read methods) and `GraphStoreMut` (write methods) traits capturing the query engine's storage interface. Enables future pluggable backends (spillover, disk-backed) without changing operators
 - **`GrafeoDB::graph_store()`**: public accessor returning `Arc<dyn GraphStoreMut>` for code that works against the trait interface rather than the concrete `LpgStore`
 - **Type-safe WAL**: `WalEntry` trait and generic `TypedWal<R>` wrapper that constrains WAL record types at compile time. `LpgWal` type alias replaces raw `WalManager` in `GrafeoDB`, preventing accidental cross-model record logging when RDF WAL support is added. On-disk format unchanged
-- **Query language compliance test suites**: spec-level integration tests for all 6 query languages (Cypher 131, GQL 100, Gremlin 73, SPARQL 27, SQL/PGQ 21, GraphQL 20)
+- **Query language compliance test suites**: spec-level integration tests for all 6 query languages (Cypher, GQL, Gremlin, SPARQL, SQL/PGQ and GraphQL)
 - **Cypher UNION / UNION ALL**: full support for combining query results with duplicate elimination or preservation
 - **GQL MERGE on relationships**: `MERGE (a)-[r:TYPE]->(b)` now works for both GQL and Cypher, with idempotent edge creation
 - **Gremlin traversal steps**: `and()`, `or()`, `not()`, `where()`, `filter()`, `choose()`, `optional()`, `union()`, `coalesce()`, `sideEffect()`, `constant()`, `id()`, `inside()`, `outside()`, `regex()` predicates

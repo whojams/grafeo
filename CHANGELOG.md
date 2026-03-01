@@ -8,6 +8,7 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 - **Graph storage traits**: `GraphStore` (29 read methods) and `GraphStoreMut` (14 write methods) traits capturing the query engine's storage interface. Enables future pluggable backends (spillover, disk-backed) without changing operators
 - **`GrafeoDB::graph_store()`**: public accessor returning `Arc<dyn GraphStoreMut>` for code that works against the trait interface rather than the concrete `LpgStore`
+- **Type-safe WAL**: `WalEntry` trait and generic `TypedWal<R>` wrapper that constrains WAL record types at compile time. `LpgWal` type alias replaces raw `WalManager` in `GrafeoDB`, preventing accidental cross-model record logging when RDF WAL support is added. On-disk format unchanged
 
 ## [0.5.10] - 2026-02-29
 

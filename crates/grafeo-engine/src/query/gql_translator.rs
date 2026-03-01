@@ -943,11 +943,8 @@ impl GqlTranslator {
 
             let edge_var_for_filter = edge_var.clone();
 
-            // Only set path_alias on the last edge of a variable-length path
-            let is_variable_length = edge.min_hops.unwrap_or(1) != 1
-                || edge.max_hops.is_none()
-                || edge.max_hops.map_or(false, |m| m != 1);
-            let expand_path_alias = if is_variable_length && idx == edge_count - 1 {
+            // Set path_alias on the last edge of a named path
+            let expand_path_alias = if idx == edge_count - 1 {
                 path_alias.map(String::from)
             } else {
                 None
@@ -960,7 +957,13 @@ impl GqlTranslator {
                 direction,
                 edge_type,
                 min_hops: edge.min_hops.unwrap_or(1),
-                max_hops: edge.max_hops.or(Some(1)),
+                // Default to single-hop only when no quantifier at all (both None),
+                // preserve None (unbounded) when the quantifier explicitly omits max
+                max_hops: if edge.min_hops.is_none() && edge.max_hops.is_none() {
+                    Some(1)
+                } else {
+                    edge.max_hops
+                },
                 input: Box::new(plan),
                 path_alias: expand_path_alias,
             });

@@ -28,7 +28,7 @@ use parking_lot::RwLock;
 
 #[cfg(feature = "wal")]
 use grafeo_adapters::storage::wal::{
-    DurabilityMode as WalDurabilityMode, WalConfig, WalManager, WalRecord, WalRecovery,
+    DurabilityMode as WalDurabilityMode, LpgWal, WalConfig, WalRecord, WalRecovery,
 };
 use grafeo_common::memory::buffer::{BufferManager, BufferManagerConfig};
 use grafeo_common::utils::error::Result;
@@ -77,7 +77,7 @@ pub struct GrafeoDB {
     pub(super) buffer_manager: Arc<BufferManager>,
     /// Write-ahead log manager (if durability is enabled).
     #[cfg(feature = "wal")]
-    pub(super) wal: Option<Arc<WalManager>>,
+    pub(super) wal: Option<Arc<LpgWal>>,
     /// Query cache for parsed and optimized plans.
     pub(super) query_cache: Arc<QueryCache>,
     /// Shared commit counter for auto-GC across sessions.
@@ -219,7 +219,7 @@ impl GrafeoDB {
                     durability: wal_durability,
                     ..WalConfig::default()
                 };
-                let wal_manager = WalManager::with_config(&wal_path, wal_config)?;
+                let wal_manager = LpgWal::with_config(&wal_path, wal_config)?;
                 Some(Arc::new(wal_manager))
             } else {
                 None
@@ -470,10 +470,10 @@ impl GrafeoDB {
         Ok(())
     }
 
-    /// Returns the WAL manager if available.
+    /// Returns the typed WAL if available.
     #[cfg(feature = "wal")]
     #[must_use]
-    pub fn wal(&self) -> Option<&Arc<WalManager>> {
+    pub fn wal(&self) -> Option<&Arc<LpgWal>> {
         self.wal.as_ref()
     }
 

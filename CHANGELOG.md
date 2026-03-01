@@ -4,6 +4,10 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.11] - Unreleased
 
+### Added
+
+- **Graph storage traits**: `GraphStore` (29 read methods) and `GraphStoreMut` (14 write methods) traits capturing the query engine's storage interface. Enables future pluggable backends (spillover, disk-backed) without changing operators
+
 ## [0.5.10] - 2026-02-29
 
 ### Added

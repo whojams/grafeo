@@ -790,9 +790,22 @@ impl Binder {
         // First bind the input
         self.bind_operator(&ret.input)?;
 
-        // Validate all return expressions
+        // Validate all return expressions and register aliases
+        // (aliases must be visible to parent Sort for ORDER BY resolution)
         for item in &ret.items {
             self.validate_return_item(item)?;
+            if let Some(ref alias) = item.alias {
+                let data_type = self.infer_expression_type(&item.expression);
+                self.context.add_variable(
+                    alias.clone(),
+                    VariableInfo {
+                        name: alias.clone(),
+                        data_type,
+                        is_node: false,
+                        is_edge: false,
+                    },
+                );
+            }
         }
 
         Ok(())

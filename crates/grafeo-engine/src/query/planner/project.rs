@@ -5,8 +5,16 @@ use super::*;
 impl super::Planner {
     /// Plans a RETURN clause.
     pub(super) fn plan_return(&self, ret: &ReturnOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        // Plan the input operator
-        let (input_op, input_columns) = self.plan_operator(&ret.input)?;
+        // Handle Empty input (standalone RETURN like: RETURN 2 * 3 AS product)
+        let (input_op, input_columns): (Box<dyn Operator>, Vec<String>) =
+            if matches!(ret.input.as_ref(), LogicalOperator::Empty) {
+                let single_row_op: Box<dyn Operator> = Box::new(
+                    grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
+                );
+                (single_row_op, Vec::new())
+            } else {
+                self.plan_operator(&ret.input)?
+            };
 
         // Build variable to column index mapping
         let variable_columns: HashMap<String, usize> = input_columns
@@ -173,7 +181,8 @@ impl super::Planner {
                     }
                     LogicalExpression::Binary { .. }
                     | LogicalExpression::Unary { .. }
-                    | LogicalExpression::List(_) => {
+                    | LogicalExpression::List(_)
+                    | LogicalExpression::Map(_) => {
                         // Convert complex expressions to FilterExpression for evaluation
                         let filter_expr = self.convert_expression(&item.expression)?;
                         projections.push(ProjectExpr::Expression {

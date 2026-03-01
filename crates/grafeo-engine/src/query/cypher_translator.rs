@@ -760,12 +760,8 @@ impl CypherTranslator {
         return_clause: &ast::ReturnClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| {
-            Error::Query(QueryError::new(
-                QueryErrorKind::Semantic,
-                "RETURN requires input",
-            ))
-        })?;
+        // Standalone RETURN (e.g. RETURN 2 * 3) uses Empty as a single-row source
+        let input = input.unwrap_or(LogicalOperator::Empty);
 
         // Check if RETURN contains aggregate functions
         let has_aggregates = match &return_clause.items {

@@ -2077,6 +2077,7 @@ impl RdfExpressionPredicate {
             | FilterExpression::IndexAccess { .. }
             | FilterExpression::SliceAccess { .. }
             | FilterExpression::ListComprehension { .. }
+            | FilterExpression::ListPredicate { .. }
             | FilterExpression::ExistsSubquery { .. } => None,
         }
     }

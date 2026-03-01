@@ -6,10 +6,10 @@
 use crate::query::plan::{
     AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CallProcedureOp,
     CreateEdgeOp, CreateNodeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp,
-    LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MergeOp,
-    MergeRelationshipOp, NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp,
+    LeftJoinOp, LimitOp, ListPredicateKind, LogicalExpression, LogicalOperator, LogicalPlan,
+    MergeOp, MergeRelationshipOp, NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp,
     ReturnItem, ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder,
-    UnaryOp, UnwindOp,
+    UnaryOp, UnionOp, UnwindOp,
 };
 use crate::query::translator_common::{
     combine_with_and, is_aggregate_function, to_aggregate_function,
@@ -50,6 +50,29 @@ impl CypherTranslator {
                 QueryErrorKind::Semantic,
                 "REMOVE not yet supported",
             ))),
+            ast::Statement::Union { queries, all } => {
+                let inputs: Vec<LogicalOperator> = queries
+                    .iter()
+                    .map(|q| {
+                        let plan = self.translate_query(q)?;
+                        Ok(plan.root)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                let union_op = LogicalOperator::Union(UnionOp { inputs });
+
+                // UNION (not ALL) removes duplicates
+                let root = if *all {
+                    union_op
+                } else {
+                    LogicalOperator::Distinct(DistinctOp {
+                        input: Box::new(union_op),
+                        columns: None,
+                    })
+                };
+
+                Ok(LogicalPlan::new(root))
+            }
         }
     }
 
@@ -1513,6 +1536,25 @@ impl CypherTranslator {
                     list_expr: Box::new(list_expr),
                     filter_expr,
                     map_expr: Box::new(map_expr),
+                })
+            }
+            ast::Expression::ListPredicate {
+                kind,
+                variable,
+                list,
+                predicate,
+            } => {
+                let ir_kind = match kind {
+                    ast::ListPredicateKind::All => ListPredicateKind::All,
+                    ast::ListPredicateKind::Any => ListPredicateKind::Any,
+                    ast::ListPredicateKind::None => ListPredicateKind::None,
+                    ast::ListPredicateKind::Single => ListPredicateKind::Single,
+                };
+                Ok(LogicalExpression::ListPredicate {
+                    kind: ir_kind,
+                    variable: variable.clone(),
+                    list_expr: Box::new(self.translate_expression(list)?),
+                    predicate: Box::new(self.translate_expression(predicate)?),
                 })
             }
             ast::Expression::PatternComprehension { .. } => Err(Error::Query(QueryError::new(

@@ -928,6 +928,15 @@ impl Binder {
                 self.validate_expression(map_expr)?;
                 Ok(())
             }
+            LogicalExpression::ListPredicate {
+                list_expr, ..
+            } => {
+                // Validate the list expression against the outer context.
+                // The predicate uses the iteration variable which is locally
+                // scoped, so we skip validating it against the outer context.
+                self.validate_expression(list_expr)?;
+                Ok(())
+            }
             LogicalExpression::ExistsSubquery(subquery)
             | LogicalExpression::CountSubquery(subquery) => {
                 // Subqueries have their own binding context

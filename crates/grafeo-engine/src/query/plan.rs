@@ -1062,11 +1062,36 @@ pub enum LogicalExpression {
         map_expr: Box<LogicalExpression>,
     },
 
+    /// List predicate: all/any/none/single(x IN list WHERE pred).
+    ListPredicate {
+        /// The kind of list predicate.
+        kind: ListPredicateKind,
+        /// The iteration variable name.
+        variable: String,
+        /// The source list expression.
+        list_expr: Box<LogicalExpression>,
+        /// The predicate to test for each element.
+        predicate: Box<LogicalExpression>,
+    },
+
     /// EXISTS subquery.
     ExistsSubquery(Box<LogicalOperator>),
 
     /// COUNT subquery.
     CountSubquery(Box<LogicalOperator>),
+}
+
+/// The kind of list predicate function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListPredicateKind {
+    /// all(x IN list WHERE pred): true if pred holds for every element.
+    All,
+    /// any(x IN list WHERE pred): true if pred holds for at least one element.
+    Any,
+    /// none(x IN list WHERE pred): true if pred holds for no element.
+    None,
+    /// single(x IN list WHERE pred): true if pred holds for exactly one element.
+    Single,
 }
 
 /// Binary operator.

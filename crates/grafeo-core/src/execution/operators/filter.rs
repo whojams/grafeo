@@ -222,6 +222,17 @@ pub enum FilterExpression {
         /// The mapping expression for each element.
         map_expr: Box<FilterExpression>,
     },
+    /// List predicate: all/any/none/single(x IN list WHERE pred).
+    ListPredicate {
+        /// The kind of list predicate.
+        kind: ListPredicateKind,
+        /// The iteration variable name.
+        variable: String,
+        /// The source list expression.
+        list_expr: Box<FilterExpression>,
+        /// The predicate to test for each element.
+        predicate: Box<FilterExpression>,
+    },
     /// EXISTS subquery - evaluates inner plan and returns true if results exist.
     ExistsSubquery {
         /// The start node variable from outer query.
@@ -237,6 +248,19 @@ pub enum FilterExpression {
         /// Maximum number of hops (for variable-length patterns).
         max_hops: Option<u32>,
     },
+}
+
+/// The kind of list predicate function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListPredicateKind {
+    /// all(x IN list WHERE pred): true if pred holds for every element.
+    All,
+    /// any(x IN list WHERE pred): true if pred holds for at least one element.
+    Any,
+    /// none(x IN list WHERE pred): true if pred holds for no element.
+    None,
+    /// single(x IN list WHERE pred): true if pred holds for exactly one element.
+    Single,
 }
 
 /// Binary operators for filter expressions.
@@ -521,10 +545,17 @@ impl ExpressionPredicate {
                 filter_expr,
                 map_expr,
             } => {
-                // Evaluate the source list
+                // Evaluate the source list (accept both List and Vector)
                 let list_val = self.eval_expr(list_expr, chunk, row)?;
-                let Value::List(items) = list_val else {
-                    return None; // Not a list
+                let owned_items: Vec<Value>;
+                let items: &[Value] = match &list_val {
+                    Value::List(list) => list,
+                    Value::Vector(vec) => {
+                        owned_items =
+                            vec.iter().map(|&f| Value::Float64(f64::from(f))).collect();
+                        &owned_items
+                    }
+                    _ => return None,
                 };
 
                 // Build the result list by iterating over source items
@@ -556,6 +587,44 @@ impl ExpressionPredicate {
                 }
 
                 Some(Value::List(result.into()))
+            }
+            FilterExpression::ListPredicate {
+                kind,
+                variable,
+                list_expr,
+                predicate,
+            } => {
+                let list_val = self.eval_expr(list_expr, chunk, row)?;
+                // Accept both List and Vector as iterable sequences
+                let items: Vec<&Value>;
+                let vec_items: Vec<Value>;
+                match &list_val {
+                    Value::List(list) => {
+                        items = list.iter().collect();
+                    }
+                    Value::Vector(vec) => {
+                        vec_items = vec.iter().map(|&f| Value::Float64(f64::from(f))).collect();
+                        items = vec_items.iter().collect();
+                    }
+                    _ => return None,
+                }
+
+                let mut match_count: u32 = 0;
+                for item in &items {
+                    let result = self.eval_comprehension_expr(predicate, item, variable);
+                    if matches!(result, Some(Value::Bool(true))) {
+                        match_count += 1;
+                    }
+                }
+
+                let result = match kind {
+                    ListPredicateKind::All => match_count == items.len() as u32,
+                    ListPredicateKind::Any => match_count > 0,
+                    ListPredicateKind::None => match_count == 0,
+                    ListPredicateKind::Single => match_count == 1,
+                };
+
+                Some(Value::Bool(result))
             }
             FilterExpression::ExistsSubquery {
                 start_var,
@@ -1449,6 +1518,18 @@ impl ExpressionPredicate {
             }
             (Value::String(s), Value::Float64(f)) | (Value::Float64(f), Value::String(s)) => {
                 s.parse::<f64>().is_ok_and(|n| (n - f).abs() < f64::EPSILON)
+            }
+            (Value::List(a), Value::List(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| self.values_equal(x, y))
+            }
+            (Value::Map(a), Value::Map(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|((k1, v1), (k2, v2))| k1 == k2 && self.values_equal(v1, v2))
             }
             _ => false,
         }

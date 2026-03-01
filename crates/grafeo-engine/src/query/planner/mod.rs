@@ -659,6 +659,28 @@ pub fn convert_filter_expression(expr: &LogicalExpression) -> Result<FilterExpre
                 map_expr: Box::new(map),
             })
         }
+        LogicalExpression::ListPredicate {
+            kind,
+            variable,
+            list_expr,
+            predicate,
+        } => {
+            use crate::query::plan::ListPredicateKind as LPK;
+            let filter_kind = match kind {
+                LPK::All => grafeo_core::execution::operators::ListPredicateKind::All,
+                LPK::Any => grafeo_core::execution::operators::ListPredicateKind::Any,
+                LPK::None => grafeo_core::execution::operators::ListPredicateKind::None,
+                LPK::Single => grafeo_core::execution::operators::ListPredicateKind::Single,
+            };
+            let list = convert_filter_expression(list_expr)?;
+            let pred = convert_filter_expression(predicate)?;
+            Ok(FilterExpression::ListPredicate {
+                kind: filter_kind,
+                variable: variable.clone(),
+                list_expr: Box::new(list),
+                predicate: Box::new(pred),
+            })
+        }
         LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => Err(
             Error::Internal("Subqueries not yet supported in filters".to_string()),
         ),

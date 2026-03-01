@@ -61,7 +61,8 @@ pub use factorized_filter::{
     FactorizedPredicate, OrPredicate, PropertyPredicate,
 };
 pub use filter::{
-    BinaryFilterOp, ExpressionPredicate, FilterExpression, FilterOperator, Predicate, UnaryFilterOp,
+    BinaryFilterOp, ExpressionPredicate, FilterExpression, FilterOperator, ListPredicateKind,
+    Predicate, UnaryFilterOp,
 };
 pub use join::{
     EqualityCondition, HashJoinOperator, HashKey, JoinCondition, JoinType, NestedLoopJoinOperator,

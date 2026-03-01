@@ -73,9 +73,6 @@ class TestCypherClauses:
 
     # --- OPTIONAL MATCH ---
 
-    @pytest.mark.xfail(
-        reason="OPTIONAL MATCH does not emit null rows for unmatched patterns"
-    )
     def test_optional_match(self, pattern_db):
         pattern_db.create_node(["Person"], {"name": "Loner", "age": 99})
         result = list(
@@ -151,9 +148,6 @@ class TestCypherClauses:
         names = [r["name"] for r in result]
         assert names == ["Charlie", "Alice", "Bob"]
 
-    @pytest.mark.xfail(
-        reason="ORDER BY on property access (p.age) not yet resolved by planner"
-    )
     def test_return_order_by_property(self, pattern_db):
         """ORDER BY on a property access (n.prop) without alias."""
         result = list(
@@ -348,7 +342,6 @@ class TestCypherClauses:
 
     # --- UNION ---
 
-    @pytest.mark.xfail(reason="Cypher parser does not yet support UNION")
     def test_union(self, db):
         db.create_node(["Cat"], {"name": "Whiskers"})
         db.create_node(["Dog"], {"name": "Rex"})
@@ -362,7 +355,6 @@ class TestCypherClauses:
         names = {r["name"] for r in result}
         assert names == {"Whiskers", "Rex"}
 
-    @pytest.mark.xfail(reason="Cypher parser does not yet support UNION ALL")
     def test_union_all(self, db):
         db.create_node(["A"], {"name": "shared"})
         db.create_node(["B"], {"name": "shared"})
@@ -980,9 +972,6 @@ class TestCypherPredicateFunctions:
         assert len(result) == 1
         assert result[0]["n.name"] == "With"
 
-    @pytest.mark.xfail(
-        reason="Cypher parser does not yet support all() predicate function syntax"
-    )
     def test_all_predicate(self, db):
         db.create_node(["Data"], {"name": "AllPos", "scores": [1, 2, 3]})
         db.create_node(["Data"], {"name": "HasNeg", "scores": [1, -2, 3]})
@@ -994,9 +983,6 @@ class TestCypherPredicateFunctions:
         assert len(result) == 1
         assert result[0]["n.name"] == "AllPos"
 
-    @pytest.mark.xfail(
-        reason="Cypher parser does not yet support any() predicate function syntax"
-    )
     def test_any_predicate(self, db):
         db.create_node(["Data"], {"name": "HasAdmin", "tags": ["user", "admin"]})
         db.create_node(["Data"], {"name": "NoAdmin", "tags": ["user", "guest"]})
@@ -1008,9 +994,6 @@ class TestCypherPredicateFunctions:
         assert len(result) == 1
         assert result[0]["n.name"] == "HasAdmin"
 
-    @pytest.mark.xfail(
-        reason="Cypher parser does not yet support none() predicate function syntax"
-    )
     def test_none_predicate(self, db):
         db.create_node(["Data"], {"name": "AllPos", "scores": [1, 2, 3]})
         db.create_node(["Data"], {"name": "HasNeg", "scores": [1, -2, 3]})
@@ -1022,9 +1005,6 @@ class TestCypherPredicateFunctions:
         assert len(result) == 1
         assert result[0]["n.name"] == "AllPos"
 
-    @pytest.mark.xfail(
-        reason="Cypher parser does not yet support single() predicate function syntax"
-    )
     def test_single_predicate(self, db):
         db.create_node(["Data"], {"name": "OneMatch", "ids": [1, 2, 3]})
         db.create_node(["Data"], {"name": "TwoMatch", "ids": [1, 1, 3]})

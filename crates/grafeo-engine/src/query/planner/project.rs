@@ -205,7 +205,8 @@ impl super::Planner {
                     LogicalExpression::Binary { .. }
                     | LogicalExpression::Unary { .. }
                     | LogicalExpression::List(_)
-                    | LogicalExpression::Map(_) => {
+                    | LogicalExpression::Map(_)
+                    | LogicalExpression::IndexAccess { .. } => {
                         // Convert complex expressions to FilterExpression for evaluation
                         let filter_expr = self.convert_expression(&item.expression)?;
                         projections.push(ProjectExpr::Expression {

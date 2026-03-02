@@ -5,9 +5,9 @@
 use crate::query::plan::{
     AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CreateEdgeOp, CreateNodeOp,
     DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LeftJoinOp,
-    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MapCollectOp, NodeScanOp, ProjectOp,
-    Projection, ReturnItem, ReturnOp, SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
-    UnionOp, UnwindOp,
+    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MapCollectOp, NodeScanOp, PathMode,
+    ProjectOp, Projection, ReturnItem, ReturnOp, SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder,
+    UnaryOp, UnionOp, UnwindOp,
 };
 use crate::query::translator_common::VarGen;
 use grafeo_adapters::query::gremlin::{self, ast};
@@ -506,11 +506,12 @@ impl GremlinTranslator {
                     to_variable: target_var,
                     edge_variable: Some(edge_var.clone()),
                     direction: ExpandDirection::Outgoing, // Use Outgoing to avoid duplicate edges
-                    edge_type: None,
+                    edge_types: vec![],
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(plan),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
 
                 // Filter by edge IDs if specified
@@ -555,100 +556,106 @@ impl GremlinTranslator {
             // Navigation steps
             ast::Step::Out(labels) => {
                 let target_var = self.var_gen.next();
-                let edge_type = labels.first().cloned();
+                let edge_types = labels.clone();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
                     to_variable: target_var.clone(),
                     edge_variable: None,
                     direction: ExpandDirection::Outgoing,
-                    edge_type,
+                    edge_types,
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(input),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
                 Ok((plan, Some(target_var)))
             }
             ast::Step::In(labels) => {
                 let target_var = self.var_gen.next();
-                let edge_type = labels.first().cloned();
+                let edge_types = labels.clone();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
                     to_variable: target_var.clone(),
                     edge_variable: None,
                     direction: ExpandDirection::Incoming,
-                    edge_type,
+                    edge_types,
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(input),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
                 Ok((plan, Some(target_var)))
             }
             ast::Step::Both(labels) => {
                 let target_var = self.var_gen.next();
-                let edge_type = labels.first().cloned();
+                let edge_types = labels.clone();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
                     to_variable: target_var.clone(),
                     edge_variable: None,
                     direction: ExpandDirection::Both,
-                    edge_type,
+                    edge_types,
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(input),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
                 Ok((plan, Some(target_var)))
             }
             ast::Step::OutE(labels) => {
                 let edge_var = self.var_gen.next();
                 let target_var = self.var_gen.next();
-                let edge_type = labels.first().cloned();
+                let edge_types = labels.clone();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
                     to_variable: target_var,
                     edge_variable: Some(edge_var.clone()),
                     direction: ExpandDirection::Outgoing,
-                    edge_type,
+                    edge_types,
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(input),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
                 Ok((plan, Some(edge_var)))
             }
             ast::Step::InE(labels) => {
                 let edge_var = self.var_gen.next();
                 let target_var = self.var_gen.next();
-                let edge_type = labels.first().cloned();
+                let edge_types = labels.clone();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
                     to_variable: target_var,
                     edge_variable: Some(edge_var.clone()),
                     direction: ExpandDirection::Incoming,
-                    edge_type,
+                    edge_types,
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(input),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
                 Ok((plan, Some(edge_var)))
             }
             ast::Step::BothE(labels) => {
                 let edge_var = self.var_gen.next();
                 let target_var = self.var_gen.next();
-                let edge_type = labels.first().cloned();
+                let edge_types = labels.clone();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
                     to_variable: target_var,
                     edge_variable: Some(edge_var.clone()),
                     direction: ExpandDirection::Both,
-                    edge_type,
+                    edge_types,
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(input),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 });
                 Ok((plan, Some(edge_var)))
             }
@@ -1738,7 +1745,7 @@ impl GremlinTranslator {
                         ast::Step::In(_) => ExpandDirection::Incoming,
                         _ => ExpandDirection::Both,
                     };
-                    let edge_type = labels.first().cloned();
+                    let edge_types = labels.clone();
                     let target_var = self.var_gen.next();
                     // Create an existence subquery via Expand + count > 0
                     let expand = LogicalOperator::Expand(ExpandOp {
@@ -1746,7 +1753,7 @@ impl GremlinTranslator {
                         to_variable: target_var,
                         edge_variable: None,
                         direction,
-                        edge_type,
+                        edge_types,
                         min_hops: 1,
                         max_hops: Some(1),
                         input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1755,6 +1762,7 @@ impl GremlinTranslator {
                             input: None,
                         })),
                         path_alias: None,
+                        path_mode: PathMode::Walk,
                     });
                     predicates.push(LogicalExpression::ExistsSubquery(Box::new(expand)));
                 }
@@ -1856,7 +1864,7 @@ mod tests {
         // Should have NodeScan -> Expand -> Return
         if let LogicalOperator::Return(ret) = &plan.root {
             if let LogicalOperator::Expand(expand) = ret.input.as_ref() {
-                assert_eq!(expand.edge_type, Some("knows".to_string()));
+                assert_eq!(expand.edge_types, vec!["knows".to_string()]);
                 assert_eq!(expand.direction, ExpandDirection::Outgoing);
             } else {
                 panic!("Expected Expand operator");

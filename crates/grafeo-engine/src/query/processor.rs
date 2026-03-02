@@ -626,6 +626,22 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
             substitute_in_expression(&mut join.query_vector, params)?;
             substitute_in_operator(&mut join.input, params)?;
         }
+        LogicalOperator::Except(except) => {
+            substitute_in_operator(&mut except.left, params)?;
+            substitute_in_operator(&mut except.right, params)?;
+        }
+        LogicalOperator::Intersect(intersect) => {
+            substitute_in_operator(&mut intersect.left, params)?;
+            substitute_in_operator(&mut intersect.right, params)?;
+        }
+        LogicalOperator::Otherwise(otherwise) => {
+            substitute_in_operator(&mut otherwise.left, params)?;
+            substitute_in_operator(&mut otherwise.right, params)?;
+        }
+        LogicalOperator::Apply(apply) => {
+            substitute_in_operator(&mut apply.input, params)?;
+            substitute_in_operator(&mut apply.subplan, params)?;
+        }
         // DDL operators have no expressions to substitute
         LogicalOperator::CreatePropertyGraph(_) => {}
         // Procedure calls: arguments could contain parameters but we handle at execution time
@@ -725,6 +741,26 @@ fn substitute_in_expression(expr: &mut LogicalExpression, params: &QueryParams) 
         }
         LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => {
             // Subqueries would need recursive parameter substitution
+        }
+        LogicalExpression::PatternComprehension { projection, .. } => {
+            substitute_in_expression(projection, params)?;
+        }
+        LogicalExpression::MapProjection { entries, .. } => {
+            for entry in entries {
+                if let crate::query::plan::MapProjectionEntry::LiteralEntry(_, expr) = entry {
+                    substitute_in_expression(expr, params)?;
+                }
+            }
+        }
+        LogicalExpression::Reduce {
+            initial,
+            list,
+            expression,
+            ..
+        } => {
+            substitute_in_expression(initial, params)?;
+            substitute_in_expression(list, params)?;
+            substitute_in_expression(expression, params)?;
         }
     }
     Ok(())

@@ -348,6 +348,9 @@ fn compare_values(a: &Value, b: &Value) -> Option<Ordering> {
         (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
         (Value::Int64(a), Value::Float64(b)) => (*a as f64).partial_cmp(b),
         (Value::Float64(a), Value::Int64(b)) => a.partial_cmp(&(*b as f64)),
+        (Value::Timestamp(a), Value::Timestamp(b)) => Some(a.cmp(b)),
+        (Value::Date(a), Value::Date(b)) => Some(a.cmp(b)),
+        (Value::Time(a), Value::Time(b)) => Some(a.cmp(b)),
         _ => None,
     }
 }

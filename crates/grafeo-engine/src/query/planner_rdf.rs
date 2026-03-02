@@ -2220,7 +2220,9 @@ impl RdfExpressionPredicate {
             | FilterExpression::SliceAccess { .. }
             | FilterExpression::ListComprehension { .. }
             | FilterExpression::ListPredicate { .. }
-            | FilterExpression::ExistsSubquery { .. } => None,
+            | FilterExpression::ExistsSubquery { .. }
+            | FilterExpression::CountSubquery { .. }
+            | FilterExpression::Reduce { .. } => None,
         }
     }
 
@@ -2962,6 +2964,9 @@ fn value_to_string(value: &Value) -> String {
         Value::String(s) => s.to_string(),
         Value::Bytes(b) => String::from_utf8_lossy(b).to_string(),
         Value::Timestamp(t) => t.to_string(),
+        Value::Date(d) => d.to_string(),
+        Value::Time(t) => t.to_string(),
+        Value::Duration(d) => d.to_string(),
         Value::List(items) => {
             let parts: Vec<String> = items.iter().map(value_to_string).collect();
             format!("[{}]", parts.join(", "))

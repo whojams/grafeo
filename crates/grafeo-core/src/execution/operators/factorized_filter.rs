@@ -167,6 +167,30 @@ impl ColumnPredicate {
                     CompareOp::Ge => af >= *b,
                 }
             }
+            (Value::Timestamp(a), Value::Timestamp(b)) => match self.op {
+                CompareOp::Eq => a == b,
+                CompareOp::Ne => a != b,
+                CompareOp::Lt => a < b,
+                CompareOp::Le => a <= b,
+                CompareOp::Gt => a > b,
+                CompareOp::Ge => a >= b,
+            },
+            (Value::Date(a), Value::Date(b)) => match self.op {
+                CompareOp::Eq => a == b,
+                CompareOp::Ne => a != b,
+                CompareOp::Lt => a < b,
+                CompareOp::Le => a <= b,
+                CompareOp::Gt => a > b,
+                CompareOp::Ge => a >= b,
+            },
+            (Value::Time(a), Value::Time(b)) => match self.op {
+                CompareOp::Eq => a == b,
+                CompareOp::Ne => a != b,
+                CompareOp::Lt => a < b,
+                CompareOp::Le => a <= b,
+                CompareOp::Gt => a > b,
+                CompareOp::Ge => a >= b,
+            },
             _ => false, // Type mismatch
         }
     }
@@ -283,6 +307,30 @@ impl PropertyPredicate {
                 CompareOp::Eq => a == b,
                 CompareOp::Ne => a != b,
                 _ => false,
+            },
+            (Value::Timestamp(a), Value::Timestamp(b)) => match self.op {
+                CompareOp::Eq => a == b,
+                CompareOp::Ne => a != b,
+                CompareOp::Lt => a < b,
+                CompareOp::Le => a <= b,
+                CompareOp::Gt => a > b,
+                CompareOp::Ge => a >= b,
+            },
+            (Value::Date(a), Value::Date(b)) => match self.op {
+                CompareOp::Eq => a == b,
+                CompareOp::Ne => a != b,
+                CompareOp::Lt => a < b,
+                CompareOp::Le => a <= b,
+                CompareOp::Gt => a > b,
+                CompareOp::Ge => a >= b,
+            },
+            (Value::Time(a), Value::Time(b)) => match self.op {
+                CompareOp::Eq => a == b,
+                CompareOp::Ne => a != b,
+                CompareOp::Lt => a < b,
+                CompareOp::Le => a <= b,
+                CompareOp::Gt => a > b,
+                CompareOp::Ge => a >= b,
             },
             _ => false,
         }

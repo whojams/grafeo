@@ -25,8 +25,8 @@ pub struct ShortestPathOperator {
     source_column: usize,
     /// Column index of the target node.
     target_column: usize,
-    /// Optional edge type filter.
-    edge_type: Option<String>,
+    /// Edge type filter (empty means all types).
+    edge_types: Vec<String>,
     /// Direction of edge traversal.
     direction: Direction,
     /// Whether to find all shortest paths (vs. just one).
@@ -42,7 +42,7 @@ impl ShortestPathOperator {
         input: Box<dyn Operator>,
         source_column: usize,
         target_column: usize,
-        edge_type: Option<String>,
+        edge_types: Vec<String>,
         direction: Direction,
     ) -> Self {
         Self {
@@ -50,7 +50,7 @@ impl ShortestPathOperator {
             input,
             source_column,
             target_column,
-            edge_type,
+            edge_types,
             direction,
             all_paths: false,
             exhausted: false,
@@ -179,16 +179,14 @@ impl ShortestPathOperator {
             .edges_from(node, direction)
             .into_iter()
             .filter(|(_target, edge_id)| {
-                if let Some(ref filter_type) = self.edge_type {
-                    if let Some(edge_type) = self.store.edge_type(*edge_id) {
-                        edge_type
-                            .as_str()
-                            .eq_ignore_ascii_case(filter_type.as_str())
-                    } else {
-                        false
-                    }
-                } else {
+                if self.edge_types.is_empty() {
                     true
+                } else if let Some(actual_type) = self.store.edge_type(*edge_id) {
+                    self.edge_types
+                        .iter()
+                        .any(|t| actual_type.as_str().eq_ignore_ascii_case(t.as_str()))
+                } else {
+                    false
                 }
             })
             .map(|(target, _)| target)
@@ -481,7 +479,7 @@ mod tests {
             input,
             0, // source column
             1, // target column
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -505,7 +503,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -535,7 +533,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -561,7 +559,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -598,7 +596,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -626,7 +624,7 @@ mod tests {
             input,
             0,
             1,
-            Some("KNOWS".to_string()),
+            vec!["KNOWS".to_string()],
             Direction::Outgoing,
         );
 
@@ -651,7 +649,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         )
         .with_all_paths(true);
@@ -681,7 +679,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         )
         .with_all_paths(true);
@@ -716,7 +714,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -742,7 +740,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -767,7 +765,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -783,7 +781,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -806,7 +804,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         )
         .with_all_paths(true);
@@ -829,7 +827,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         )
         .with_all_paths(true);
@@ -859,7 +857,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -889,7 +887,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -912,7 +910,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -932,7 +930,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -963,7 +961,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 
@@ -990,7 +988,7 @@ mod tests {
             input,
             0,
             1,
-            Some("KNOWS".to_string()),
+            vec!["KNOWS".to_string()],
             Direction::Outgoing,
         );
 
@@ -1018,7 +1016,7 @@ mod tests {
             input,
             0,
             1,
-            None,
+            vec![],
             Direction::Outgoing,
         );
 

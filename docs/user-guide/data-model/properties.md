@@ -21,8 +21,10 @@ Properties are key-value pairs stored on nodes and edges. Grafeo supports a rich
 | `Vector` | `[0.1, 0.2, 0.3]` | f32 array for embeddings |
 | `List` | `[1, 2, 3]` | Ordered collection |
 | `Map` | `{key: 'value'}` | Key-value collection |
-| `Date` | `'2024-01-15'` | Calendar date |
-| `DateTime` | `'2024-01-15T10:30:00Z'` | Date and time |
+| `Date` | `'2024-01-15'` | Calendar date (ISO 8601) |
+| `Time` | `'14:30:00'` | Time of day with optional timezone |
+| `Duration` | `'P1Y2M3D'` | ISO 8601 duration (months, days, nanoseconds) |
+| `DateTime` | `'2024-01-15T10:30:00Z'` | Date and time (microsecond precision) |
 | `Null` | `null` | Absence of value |
 
 ## Using Properties
@@ -90,6 +92,95 @@ RETURN p.name, p.email
 MATCH (p:Person)
 RETURN p.name, coalesce(p.email, 'no email') AS email
 ```
+
+## Temporal Properties
+
+Grafeo supports temporal types for dates, times, and durations with ISO 8601 formatting.
+
+### Creating Temporal Properties
+
+**GQL typed literal syntax:**
+
+```sql
+MATCH (p:Person {name: 'Alice'})
+SET p.birthday = DATE '1990-06-15'
+
+MATCH (e:Event {name: 'Meeting'})
+SET e.start_time = TIME '14:30:00'
+
+MATCH (t:Task {name: 'Sprint'})
+SET t.length = DURATION 'P2W3D'
+```
+
+**Cypher function syntax:**
+
+```sql
+MATCH (p:Person {name: 'Alice'})
+SET p.birthday = date('1990-06-15')
+
+MATCH (e:Event {name: 'Meeting'})
+SET e.length = duration('PT2H30M')
+```
+
+### Temporal Comparisons
+
+```sql
+-- GQL
+MATCH (p:Person)
+WHERE p.birthday > DATE '2000-01-01'
+RETURN p.name
+
+-- Cypher
+MATCH (p:Person)
+WHERE p.birthday > date('2000-01-01')
+RETURN p.name
+```
+
+### Temporal Arithmetic
+
+```sql
+-- Date + Duration = Date
+RETURN DATE '2024-01-15' + DURATION 'P1M' AS next_month
+-- 2024-02-15
+
+-- Date - Date = Duration
+RETURN DATE '2024-03-15' - DATE '2024-01-01' AS diff
+-- P74D
+
+-- Duration + Duration = Duration
+RETURN duration('P1Y') + duration('P6M') AS combined
+-- P1Y6M
+```
+
+### Component Extraction
+
+```sql
+-- Cypher extraction functions
+RETURN year(date('2024-03-15')) AS y,
+       month(date('2024-03-15')) AS m,
+       day(date('2024-03-15')) AS d
+
+RETURN hour(time('14:30:45')) AS h,
+       minute(time('14:30:45')) AS m,
+       second(time('14:30:45')) AS s
+```
+
+### Duration Format
+
+Durations use ISO 8601 format: `OnYnMnDTnHnMnS`
+
+| Component | Meaning | Example |
+|-----------|---------|---------|
+| `P` | Period marker (required) | `P1Y` |
+| `nY` | Years | `P2Y` = 2 years |
+| `nM` | Months (before T) | `P3M` = 3 months |
+| `nD` | Days | `P10D` = 10 days |
+| `T` | Time separator | `PT5H` = 5 hours |
+| `nH` | Hours | `PT12H` = 12 hours |
+| `nM` | Minutes (after T) | `PT30M` = 30 minutes |
+| `nS` | Seconds | `PT45S` = 45 seconds |
+
+Combined example: `P1Y2M3DT4H5M6S` = 1 year, 2 months, 3 days, 4 hours, 5 minutes, 6 seconds.
 
 ## Vector Properties
 

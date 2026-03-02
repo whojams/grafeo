@@ -2,9 +2,10 @@
 //!
 //! Stored as microseconds since Unix epoch - plenty of precision for most uses.
 
+use super::date::civil_from_days;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
 /// A point in time, stored as microseconds since Unix epoch.
 ///
@@ -51,7 +52,7 @@ impl Timestamp {
     pub fn now() -> Self {
         let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
+            .unwrap_or(StdDuration::ZERO);
         Self::from_micros(duration.as_micros() as i64)
     }
 
@@ -80,9 +81,9 @@ impl Timestamp {
     #[must_use]
     pub fn as_system_time(&self) -> Option<SystemTime> {
         if self.0 >= 0 {
-            Some(UNIX_EPOCH + Duration::from_micros(self.0 as u64))
+            Some(UNIX_EPOCH + StdDuration::from_micros(self.0 as u64))
         } else {
-            UNIX_EPOCH.checked_sub(Duration::from_micros((-self.0) as u64))
+            UNIX_EPOCH.checked_sub(StdDuration::from_micros((-self.0) as u64))
         }
     }
 
@@ -105,6 +106,45 @@ impl Timestamp {
     pub const fn duration_since(self, other: Self) -> i64 {
         self.0 - other.0
     }
+
+    /// Creates a timestamp from a date and time.
+    #[must_use]
+    pub fn from_date_time(date: super::Date, time: super::Time) -> Self {
+        let day_micros = date.as_days() as i64 * 86_400_000_000;
+        let time_micros = (time.as_nanos() / 1000) as i64;
+        // If the time has an offset, subtract it to get UTC
+        let offset_micros = time.offset_seconds().unwrap_or(0) as i64 * 1_000_000;
+        Self(day_micros + time_micros - offset_micros)
+    }
+
+    /// Extracts the date component (UTC).
+    #[must_use]
+    pub fn to_date(self) -> super::Date {
+        let days = self.0.div_euclid(86_400_000_000) as i32;
+        super::Date::from_days(days)
+    }
+
+    /// Extracts the time-of-day component (UTC).
+    #[must_use]
+    pub fn to_time(self) -> super::Time {
+        let day_nanos = self.0.rem_euclid(86_400_000_000) as u64 * 1000;
+        super::Time::from_nanos(day_nanos).unwrap_or_default()
+    }
+
+    /// Adds a temporal duration to this timestamp.
+    #[must_use]
+    pub fn add_duration(self, dur: &super::Duration) -> Self {
+        // Add months via date arithmetic
+        let date = self
+            .to_date()
+            .add_duration(&super::Duration::from_months(dur.months()));
+        let time = self.to_time();
+        let base = Self::from_date_time(date, time);
+        // Add days and nanos directly
+        let day_micros = dur.days() * 86_400_000_000;
+        let nano_micros = dur.nanos() / 1000;
+        Self(base.0 + day_micros + nano_micros)
+    }
 }
 
 impl fmt::Debug for Timestamp {
@@ -115,29 +155,23 @@ impl fmt::Debug for Timestamp {
 
 impl fmt::Display for Timestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Simple ISO 8601-ish format
-        let secs = self.0 / 1_000_000;
-        let micros = (self.0 % 1_000_000).unsigned_abs();
+        let micros = self.0;
+        let micro_frac = micros.rem_euclid(1_000_000) as u64;
 
-        // Calculate date/time components (simplified, doesn't handle all edge cases)
-        const SECS_PER_DAY: i64 = 86400;
-        const DAYS_PER_YEAR: i64 = 365;
+        let total_days = micros.div_euclid(86_400_000_000) as i32;
+        let day_micros = micros.rem_euclid(86_400_000_000);
+        let day_secs = day_micros / 1_000_000;
 
-        let days = secs / SECS_PER_DAY;
-        let time_secs = (secs % SECS_PER_DAY + SECS_PER_DAY) % SECS_PER_DAY;
+        let hours = day_secs / 3600;
+        let minutes = (day_secs % 3600) / 60;
+        let seconds = day_secs % 60;
 
-        let hours = time_secs / 3600;
-        let minutes = (time_secs % 3600) / 60;
-        let seconds = time_secs % 60;
-
-        // Very rough year calculation (ignores leap years for display)
-        let year = 1970 + days / DAYS_PER_YEAR;
-        let day_of_year = days % DAYS_PER_YEAR;
+        let (year, month, day) = civil_from_days(total_days);
 
         write!(
             f,
-            "{:04}-{:03}T{:02}:{:02}:{:02}.{:06}Z",
-            year, day_of_year, hours, minutes, seconds, micros
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+            year, month, day, hours, minutes, seconds, micro_frac
         )
     }
 }

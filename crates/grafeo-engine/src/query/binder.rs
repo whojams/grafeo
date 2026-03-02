@@ -586,6 +586,26 @@ impl Binder {
                 );
                 Ok(())
             }
+            LogicalOperator::Except(except) => {
+                self.bind_operator(&except.left)?;
+                self.bind_operator(&except.right)?;
+                Ok(())
+            }
+            LogicalOperator::Intersect(intersect) => {
+                self.bind_operator(&intersect.left)?;
+                self.bind_operator(&intersect.right)?;
+                Ok(())
+            }
+            LogicalOperator::Otherwise(otherwise) => {
+                self.bind_operator(&otherwise.left)?;
+                self.bind_operator(&otherwise.right)?;
+                Ok(())
+            }
+            LogicalOperator::Apply(apply) => {
+                self.bind_operator(&apply.input)?;
+                self.bind_operator(&apply.subplan)?;
+                Ok(())
+            }
             // DDL operators don't need binding — they're handled before the binder
             LogicalOperator::CreatePropertyGraph(_) => Ok(()),
             // Procedure calls: register yielded columns as variables for downstream operators
@@ -955,6 +975,37 @@ impl Binder {
                 let _ = subquery; // Would need recursive binding
                 Ok(())
             }
+            LogicalExpression::PatternComprehension { projection, .. } => {
+                // Subplan has its own scope; validate the projection expression
+                self.validate_expression(projection)
+            }
+            LogicalExpression::MapProjection { base, entries } => {
+                if !self.context.contains(base) && !base.starts_with("_anon_") {
+                    return Err(undefined_variable_error(
+                        base,
+                        &self.context,
+                        " in map projection",
+                    ));
+                }
+                for entry in entries {
+                    if let crate::query::plan::MapProjectionEntry::LiteralEntry(_, expr) = entry {
+                        self.validate_expression(expr)?;
+                    }
+                }
+                Ok(())
+            }
+            LogicalExpression::Reduce {
+                initial,
+                list,
+                expression,
+                ..
+            } => {
+                self.validate_expression(initial)?;
+                self.validate_expression(list)?;
+                // accumulator and variable are locally scoped
+                self.validate_expression(expression)?;
+                Ok(())
+            }
         }
     }
 
@@ -1168,7 +1219,7 @@ mod tests {
 
     #[test]
     fn test_bind_expand() {
-        use crate::query::plan::{ExpandDirection, ExpandOp};
+        use crate::query::plan::{ExpandDirection, ExpandOp, PathMode};
 
         let plan = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
             items: vec![
@@ -1187,7 +1238,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: Some("e".to_string()),
                 direction: ExpandDirection::Outgoing,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1196,6 +1247,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -1215,7 +1267,7 @@ mod tests {
     #[test]
     fn test_bind_expand_from_undefined_variable() {
         // Tests that expanding from an undefined variable produces a clear error
-        use crate::query::plan::{ExpandDirection, ExpandOp};
+        use crate::query::plan::{ExpandDirection, ExpandOp, PathMode};
 
         let plan = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
             items: vec![ReturnItem {
@@ -1228,7 +1280,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: None,
+                edge_types: vec![],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1237,6 +1289,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -1748,7 +1801,7 @@ mod tests {
             })),
             source_var: "missing".to_string(), // not defined
             target_var: "b".to_string(),
-            edge_type: None,
+            edge_types: vec![],
             direction: ExpandDirection::Both,
             path_alias: "p".to_string(),
             all_paths: false,
@@ -1783,7 +1836,7 @@ mod tests {
             })),
             source_var: "a".to_string(),
             target_var: "b".to_string(),
-            edge_type: Some("ROAD".to_string()),
+            edge_types: vec!["ROAD".to_string()],
             direction: ExpandDirection::Outgoing,
             path_alias: "p".to_string(),
             all_paths: false,
@@ -1995,7 +2048,7 @@ mod tests {
 
     #[test]
     fn test_expand_rejects_non_node_source() {
-        use crate::query::plan::{ExpandDirection, ExpandOp, UnwindOp};
+        use crate::query::plan::{ExpandDirection, ExpandOp, PathMode, UnwindOp};
 
         // UNWIND [1,2] AS x  -- x is not a node
         // MATCH (x)-[:E]->(b)  -- should fail: x isn't a node
@@ -2010,7 +2063,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: None,
+                edge_types: vec![],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::Unwind(UnwindOp {
@@ -2021,6 +2074,7 @@ mod tests {
                     input: Box::new(LogicalOperator::Empty),
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 

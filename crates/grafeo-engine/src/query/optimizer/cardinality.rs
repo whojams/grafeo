@@ -701,8 +701,8 @@ impl CardinalityEstimator {
         let input_cardinality = self.estimate(&expand.input);
 
         // Apply fanout based on edge type
-        let fanout = if expand.edge_type.is_some() {
-            // Specific edge type typically has lower fanout
+        let fanout = if !expand.edge_types.is_empty() {
+            // Specific edge type(s) typically have lower fanout
             self.avg_fanout * 0.5
         } else {
             self.avg_fanout
@@ -1070,8 +1070,8 @@ impl Default for CardinalityEstimator {
 mod tests {
     use super::*;
     use crate::query::plan::{
-        DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinCondition, NodeScanOp, ProjectOp,
-        Projection, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, SortOrder,
+        DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinCondition, NodeScanOp, PathMode,
+        ProjectOp, Projection, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, SortOrder,
     };
     use grafeo_common::types::Value;
 
@@ -1467,7 +1467,7 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: None,
+            edge_types: vec![],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1476,6 +1476,7 @@ mod tests {
                 input: None,
             })),
             path_alias: None,
+            path_mode: PathMode::Walk,
         });
 
         let cardinality = estimator.estimate(&expand);
@@ -1493,7 +1494,7 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: Some("KNOWS".to_string()),
+            edge_types: vec!["KNOWS".to_string()],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1502,6 +1503,7 @@ mod tests {
                 input: None,
             })),
             path_alias: None,
+            path_mode: PathMode::Walk,
         });
 
         let cardinality = estimator.estimate(&expand);
@@ -1519,7 +1521,7 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: None,
+            edge_types: vec![],
             min_hops: 1,
             max_hops: Some(3),
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1528,6 +1530,7 @@ mod tests {
                 input: None,
             })),
             path_alias: None,
+            path_mode: PathMode::Walk,
         });
 
         let cardinality = estimator.estimate(&expand);
@@ -1789,7 +1792,7 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: None,
+            edge_types: vec![],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1798,6 +1801,7 @@ mod tests {
                 input: None,
             })),
             path_alias: None,
+            path_mode: PathMode::Walk,
         });
 
         let cardinality = estimator.estimate(&expand);

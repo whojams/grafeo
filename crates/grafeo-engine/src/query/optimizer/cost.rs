@@ -159,8 +159,8 @@ impl CostModel {
     /// Uses per-edge-type degree stats when available, falling back to the
     /// global average fanout.
     fn fanout_for_expand(&self, expand: &ExpandOp) -> f64 {
-        if let Some(edge_type) = &expand.edge_type
-            && let Some(&(out_deg, in_deg)) = self.edge_type_degrees.get(edge_type)
+        if expand.edge_types.len() == 1
+            && let Some(&(out_deg, in_deg)) = self.edge_type_degrees.get(&expand.edge_types[0])
         {
             return match expand.direction {
                 ExpandDirection::Outgoing => out_deg,
@@ -514,7 +514,7 @@ mod tests {
     use super::*;
     use crate::query::plan::{
         AggregateExpr, AggregateFunction, ExpandDirection, JoinCondition, LogicalExpression,
-        Projection, ReturnItem, SortOrder,
+        PathMode, Projection, ReturnItem, SortOrder,
     };
 
     #[test]
@@ -634,11 +634,12 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: None,
+            edge_types: vec![],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::Empty),
             path_alias: None,
+            path_mode: PathMode::Walk,
         };
         let cost = model.expand_cost(&expand, 1000.0);
 
@@ -660,11 +661,12 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: Some("KNOWS".to_string()),
+            edge_types: vec!["KNOWS".to_string()],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::Empty),
             path_alias: None,
+            path_mode: PathMode::Walk,
         };
         let cost_knows = model.expand_cost(&knows_out, 1000.0);
 
@@ -674,11 +676,12 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: Some("WORKS_AT".to_string()),
+            edge_types: vec!["WORKS_AT".to_string()],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::Empty),
             path_alias: None,
+            path_mode: PathMode::Walk,
         };
         let cost_works = model.expand_cost(&works_out, 1000.0);
 
@@ -694,11 +697,12 @@ mod tests {
             to_variable: "p".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Incoming,
-            edge_type: Some("WORKS_AT".to_string()),
+            edge_types: vec!["WORKS_AT".to_string()],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::Empty),
             path_alias: None,
+            path_mode: PathMode::Walk,
         };
         let cost_works_in = model.expand_cost(&works_in, 1000.0);
 
@@ -717,11 +721,12 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: Some("UNKNOWN_TYPE".to_string()),
+            edge_types: vec!["UNKNOWN_TYPE".to_string()],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::Empty),
             path_alias: None,
+            path_mode: PathMode::Walk,
         };
         let cost_unknown = model.expand_cost(&expand, 1000.0);
 
@@ -731,11 +736,12 @@ mod tests {
             to_variable: "b".to_string(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: None,
+            edge_types: vec![],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(LogicalOperator::Empty),
             path_alias: None,
+            path_mode: PathMode::Walk,
         };
         let cost_no_type = model.expand_cost(&expand_no_type, 1000.0);
 

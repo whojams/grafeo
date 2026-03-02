@@ -413,8 +413,17 @@ pub enum PropertyPath {
     /// Zero or one (?).
     ZeroOrOne(Box<PropertyPath>),
 
-    /// Negated property set (!(iri1|iri2)).
-    Negation(Vec<Iri>),
+    /// Negated property set (!(iri1|iri2|^iri3)).
+    Negation(Vec<NegatedIri>),
+}
+
+/// An IRI in a negated property set, optionally inverse.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NegatedIri {
+    /// The IRI.
+    pub iri: Iri,
+    /// Whether this is an inverse path (`^iri`).
+    pub inverse: bool,
 }
 
 /// A literal value.

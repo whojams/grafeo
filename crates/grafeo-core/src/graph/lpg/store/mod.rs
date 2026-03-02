@@ -56,6 +56,9 @@ pub(super) fn compare_values_for_range(a: &Value, b: &Value) -> Option<CmpOrderi
         (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
+        (Value::Timestamp(a), Value::Timestamp(b)) => Some(a.cmp(b)),
+        (Value::Date(a), Value::Date(b)) => Some(a.cmp(b)),
+        (Value::Time(a), Value::Time(b)) => Some(a.cmp(b)),
         _ => None,
     }
 }

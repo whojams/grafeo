@@ -65,6 +65,10 @@ impl<'a> Parser<'a> {
         if self.current.kind == TokenKind::Union {
             return self.parse_union_continuation(stmt);
         }
+        // Consume optional trailing semicolon(s)
+        while self.current.kind == TokenKind::Semicolon {
+            self.advance();
+        }
         if self.current.kind != TokenKind::Eof {
             return Err(self.error("Expected end of query"));
         }
@@ -156,9 +160,27 @@ impl<'a> Parser<'a> {
                     clauses.push(Clause::Limit(self.parse_expression()?));
                 }
                 TokenKind::Call => {
-                    clauses.push(Clause::Call(self.parse_call_clause()?));
+                    // CALL { subquery } vs CALL procedure(...)
+                    if self.peek_kind() == TokenKind::LBrace {
+                        self.advance(); // consume CALL
+                        self.advance(); // consume {
+                        let inner = self.parse_subquery_body()?;
+                        self.expect(TokenKind::RBrace)?;
+                        clauses.push(Clause::CallSubquery(inner));
+                    } else {
+                        clauses.push(Clause::Call(self.parse_call_clause()?));
+                    }
                 }
-                _ => break,
+                _ => {
+                    // FOREACH is a contextual keyword (not reserved)
+                    if self.can_be_identifier()
+                        && self.get_identifier_text().to_uppercase() == "FOREACH"
+                    {
+                        clauses.push(Clause::ForEach(self.parse_foreach_clause()?));
+                    } else {
+                        break;
+                    }
+                }
             }
         }
 
@@ -219,6 +241,90 @@ impl<'a> Parser<'a> {
                 1,
                 1,
             )),
+        })
+    }
+
+    /// Parses a FOREACH clause: `FOREACH (var IN expr | clauses)`.
+    fn parse_foreach_clause(&mut self) -> Result<ForEachClause> {
+        self.advance(); // consume FOREACH identifier
+        self.expect(TokenKind::LParen)?;
+        let variable = self.expect_identifier()?;
+        self.expect(TokenKind::In)?;
+        let list = self.parse_expression()?;
+        self.expect(TokenKind::Pipe)?;
+        let mut clauses = Vec::new();
+        // Parse mutation clauses until closing paren
+        while self.current.kind != TokenKind::RParen {
+            match self.current.kind {
+                TokenKind::Set => clauses.push(Clause::Set(self.parse_set_clause()?)),
+                TokenKind::Delete | TokenKind::Detach => {
+                    clauses.push(Clause::Delete(self.parse_delete_clause()?));
+                }
+                TokenKind::Remove => clauses.push(Clause::Remove(self.parse_remove_clause()?)),
+                TokenKind::Create => clauses.push(Clause::Create(self.parse_create_clause()?)),
+                TokenKind::Merge => clauses.push(Clause::Merge(self.parse_merge_clause()?)),
+                _ => {
+                    if self.can_be_identifier()
+                        && self.get_identifier_text().to_uppercase() == "FOREACH"
+                    {
+                        clauses.push(Clause::ForEach(self.parse_foreach_clause()?));
+                    } else {
+                        return Err(self.error("Expected mutation clause in FOREACH"));
+                    }
+                }
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(ForEachClause {
+            variable,
+            list,
+            clauses,
+        })
+    }
+
+    /// Parses the body of an inline subquery (CALL { ... } or COUNT { ... }).
+    ///
+    /// Expects to be positioned after the opening `{`.
+    fn parse_subquery_body(&mut self) -> Result<Query> {
+        let mut clauses = Vec::new();
+        while self.current.kind != TokenKind::RBrace && self.current.kind != TokenKind::Eof {
+            match self.current.kind {
+                TokenKind::Match => {
+                    clauses.push(Clause::Match(self.parse_match_clause()?));
+                }
+                TokenKind::Optional => {
+                    self.advance();
+                    self.expect(TokenKind::Match)?;
+                    let match_clause = self.parse_match_clause_body()?;
+                    clauses.push(Clause::OptionalMatch(match_clause));
+                }
+                TokenKind::Where => {
+                    clauses.push(Clause::Where(self.parse_where_clause()?));
+                }
+                TokenKind::With => {
+                    clauses.push(Clause::With(self.parse_with_clause()?));
+                }
+                TokenKind::Return => {
+                    clauses.push(Clause::Return(self.parse_return_clause()?));
+                }
+                TokenKind::Unwind => {
+                    clauses.push(Clause::Unwind(self.parse_unwind_clause()?));
+                }
+                TokenKind::Create => {
+                    clauses.push(Clause::Create(self.parse_create_clause()?));
+                }
+                TokenKind::Set => {
+                    clauses.push(Clause::Set(self.parse_set_clause()?));
+                }
+                _ => break,
+            }
+        }
+        if clauses.is_empty() {
+            return Err(self.error("Expected at least one clause in subquery"));
+        }
+        Ok(Query {
+            clauses,
+            span: None,
         })
     }
 
@@ -1089,12 +1195,71 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::LBracket => {
                     self.advance();
-                    let index = self.parse_expression()?;
-                    self.expect(TokenKind::RBracket)?;
-                    expr = Expression::IndexAccess {
-                        base: Box::new(expr),
-                        index: Box::new(index),
-                    };
+                    // Detect slice: [start..end], [start..], [..end], [..]
+                    if self.current.kind == TokenKind::DotDot {
+                        // [..end] or [..]
+                        self.advance();
+                        let end = if self.current.kind != TokenKind::RBracket {
+                            Some(Box::new(self.parse_expression()?))
+                        } else {
+                            None
+                        };
+                        self.expect(TokenKind::RBracket)?;
+                        expr = Expression::SliceAccess {
+                            base: Box::new(expr),
+                            start: None,
+                            end,
+                        };
+                    } else {
+                        let index = self.parse_expression()?;
+                        if self.current.kind == TokenKind::DotDot {
+                            // [start..end] or [start..]
+                            self.advance();
+                            let end = if self.current.kind != TokenKind::RBracket {
+                                Some(Box::new(self.parse_expression()?))
+                            } else {
+                                None
+                            };
+                            self.expect(TokenKind::RBracket)?;
+                            expr = Expression::SliceAccess {
+                                base: Box::new(expr),
+                                start: Some(Box::new(index)),
+                                end,
+                            };
+                        } else {
+                            // Regular index access
+                            self.expect(TokenKind::RBracket)?;
+                            expr = Expression::IndexAccess {
+                                base: Box::new(expr),
+                                index: Box::new(index),
+                            };
+                        }
+                    }
+                }
+                TokenKind::Colon => {
+                    // n:Label label-check syntax, emits hasLabel() function calls.
+                    // Multiple labels (n:Person:Actor) are ANDead together.
+                    let base = expr;
+                    let mut combined: Option<Expression> = None;
+                    while self.current.kind == TokenKind::Colon {
+                        self.advance();
+                        let label = self.expect_identifier()?;
+                        let check = Expression::FunctionCall {
+                            name: "hasLabel".to_string(),
+                            distinct: false,
+                            args: vec![base.clone(), Expression::Literal(Literal::String(label))],
+                        };
+                        combined = Some(match combined {
+                            None => check,
+                            Some(prev) => Expression::Binary {
+                                left: Box::new(prev),
+                                op: BinaryOp::And,
+                                right: Box::new(check),
+                            },
+                        });
+                    }
+                    expr = combined.unwrap();
+                    break;
                 }
                 _ => break,
             }
@@ -1118,7 +1283,14 @@ impl<'a> Parser<'a> {
                 Ok(Expression::Literal(Literal::Bool(false)))
             }
             TokenKind::Integer => {
-                let value = self.current.text.parse().unwrap_or(0);
+                let text = &self.current.text;
+                let value = if text.starts_with("0x") || text.starts_with("0X") {
+                    i64::from_str_radix(&text[2..], 16).unwrap_or(0)
+                } else if text.starts_with("0o") || text.starts_with("0O") {
+                    i64::from_str_radix(&text[2..], 8).unwrap_or(0)
+                } else {
+                    text.parse().unwrap_or(0)
+                };
                 self.advance();
                 Ok(Expression::Literal(Literal::Integer(value)))
             }
@@ -1203,6 +1375,100 @@ impl<'a> Parser<'a> {
                     return Ok(Expression::Exists(Box::new(inner_query)));
                 }
 
+                // COUNT { MATCH ... WHERE ... } subquery form
+                if lower == "count" && self.current.kind == TokenKind::LBrace {
+                    self.advance(); // consume {
+                    let inner_query = self.parse_exists_inner_query()?;
+                    self.expect(TokenKind::RBrace)?;
+                    return Ok(Expression::CountSubquery(Box::new(inner_query)));
+                }
+
+                // reduce(acc = init, x IN list | expr)
+                if lower == "reduce" && self.current.kind == TokenKind::LParen {
+                    let saved = (
+                        self.lexer.clone(),
+                        self.current.clone(),
+                        self.previous.clone(),
+                    );
+                    self.advance(); // consume (
+                    if self.can_be_identifier() {
+                        let accumulator = self.get_identifier_text();
+                        self.advance();
+                        if self.current.kind == TokenKind::Eq {
+                            self.advance(); // consume =
+                            let initial = self.parse_expression()?;
+                            if self.current.kind == TokenKind::Comma {
+                                self.advance(); // consume ,
+                                let variable = self.get_identifier_text();
+                                self.advance();
+                                self.expect(TokenKind::In)?;
+                                let list = self.parse_expression()?;
+                                self.expect(TokenKind::Pipe)?;
+                                let expression = self.parse_expression()?;
+                                self.expect(TokenKind::RParen)?;
+                                return Ok(Expression::Reduce {
+                                    accumulator,
+                                    initial: Box::new(initial),
+                                    variable,
+                                    list: Box::new(list),
+                                    expression: Box::new(expression),
+                                });
+                            }
+                        }
+                    }
+                    // Not valid reduce syntax, restore and fall through
+                    (self.lexer, self.current, self.previous) = saved;
+                }
+
+                // Map projection: variable { .prop, key: expr, .* }
+                if self.current.kind == TokenKind::LBrace {
+                    let saved = (
+                        self.lexer.clone(),
+                        self.current.clone(),
+                        self.previous.clone(),
+                    );
+                    self.advance(); // consume {
+                    if self.current.kind == TokenKind::Dot || self.current.kind == TokenKind::RBrace
+                    {
+                        let mut entries = Vec::new();
+                        while self.current.kind != TokenKind::RBrace {
+                            if self.current.kind == TokenKind::Dot {
+                                self.advance();
+                                if self.current.kind == TokenKind::Star {
+                                    self.advance();
+                                    entries.push(MapProjectionEntry::AllProperties);
+                                } else if self.can_be_identifier() {
+                                    let prop = self.get_identifier_text();
+                                    self.advance();
+                                    entries.push(MapProjectionEntry::PropertySelector(prop));
+                                } else {
+                                    break;
+                                }
+                            } else if self.can_be_identifier() {
+                                let key = self.get_identifier_text();
+                                self.advance();
+                                self.expect(TokenKind::Colon)?;
+                                let value = self.parse_expression()?;
+                                entries.push(MapProjectionEntry::LiteralEntry(key, value));
+                            } else {
+                                break;
+                            }
+                            if self.current.kind == TokenKind::Comma {
+                                self.advance();
+                            }
+                        }
+                        if self.current.kind == TokenKind::RBrace {
+                            self.advance();
+                            return Ok(Expression::MapProjection {
+                                base: name,
+                                entries,
+                            });
+                        }
+                    }
+                    // Not valid map projection, restore
+                    (self.lexer, self.current, self.previous) = saved;
+                }
+
                 // Check if function call
                 if self.current.kind == TokenKind::LParen {
                     self.advance();
@@ -1239,8 +1505,70 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             }
             TokenKind::LBracket => {
-                // List literal
                 self.advance();
+
+                // Detect pattern comprehension: [(pattern) WHERE pred | expr]
+                // A pattern starts with `(`, while list elements starting with `(`
+                // are parenthesized expressions. We use backtracking to distinguish.
+                if self.current.kind == TokenKind::LParen {
+                    let saved = (
+                        self.lexer.clone(),
+                        self.current.clone(),
+                        self.previous.clone(),
+                    );
+                    if let Ok(pattern) = self.parse_pattern() {
+                        let where_clause = if self.current.kind == TokenKind::Where {
+                            self.advance();
+                            Some(Box::new(self.parse_expression()?))
+                        } else {
+                            None
+                        };
+                        if self.current.kind == TokenKind::Pipe {
+                            self.advance();
+                            let projection = self.parse_expression()?;
+                            self.expect(TokenKind::RBracket)?;
+                            return Ok(Expression::PatternComprehension {
+                                pattern: Box::new(pattern),
+                                where_clause,
+                                projection: Box::new(projection),
+                            });
+                        }
+                    }
+                    // Not a pattern comprehension, restore and continue
+                    (self.lexer, self.current, self.previous) = saved;
+                }
+
+                // Detect list comprehension: [var IN list WHERE pred | expr]
+                if self.can_be_identifier() && self.peek_kind() == TokenKind::In {
+                    let variable = self.get_identifier_text();
+                    self.advance(); // consume variable
+                    self.advance(); // consume IN
+                    let list = self.parse_expression()?;
+
+                    let filter = if self.current.kind == TokenKind::Where {
+                        self.advance();
+                        Some(Box::new(self.parse_expression()?))
+                    } else {
+                        None
+                    };
+
+                    let projection = if self.current.kind == TokenKind::Pipe {
+                        self.advance();
+                        Some(Box::new(self.parse_expression()?))
+                    } else {
+                        None
+                    };
+
+                    self.expect(TokenKind::RBracket)?;
+                    return Ok(Expression::ListComprehension {
+                        variable,
+                        list: Box::new(list),
+                        filter,
+                        projection,
+                    });
+                }
+
+                // List literal
                 let mut items = Vec::new();
                 if self.current.kind != TokenKind::RBracket {
                     items.push(self.parse_expression()?);
@@ -1277,10 +1605,18 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.parse_case_expression()
             }
-            // Aggregate functions (COUNT, SUM, AVG, MIN, MAX, COLLECT)
+            // COUNT aggregate or COUNT { subquery }
             TokenKind::Count => {
                 self.advance();
-                self.parse_aggregate_function("count")
+                if self.current.kind == TokenKind::LBrace {
+                    // COUNT { MATCH ... WHERE ... } subquery
+                    self.advance(); // consume {
+                    let inner_query = self.parse_subquery_body()?;
+                    self.expect(TokenKind::RBrace)?;
+                    Ok(Expression::CountSubquery(Box::new(inner_query)))
+                } else {
+                    self.parse_aggregate_function("count")
+                }
             }
             _ => Err(self.error("Expected expression")),
         }
@@ -2414,5 +2750,57 @@ mod tests {
                 panic!("expected WHERE clause");
             }
         }
+    }
+
+    #[test]
+    fn test_parse_hex_integer_literal() {
+        let stmt = parse_ok("RETURN 0xFF");
+        if let Statement::Query(Query { clauses, .. }) = stmt
+            && let Clause::Return(ret) = &clauses[0]
+            && let ReturnItems::Explicit(items) = &ret.items
+            && let Expression::Literal(Literal::Integer(val)) = &items[0].expression
+        {
+            assert_eq!(*val, 255, "0xFF should parse to 255");
+        } else {
+            panic!("Expected integer literal in RETURN");
+        }
+    }
+
+    #[test]
+    fn test_parse_octal_integer_literal() {
+        let stmt = parse_ok("RETURN 0o77");
+        if let Statement::Query(Query { clauses, .. }) = stmt
+            && let Clause::Return(ret) = &clauses[0]
+            && let ReturnItems::Explicit(items) = &ret.items
+            && let Expression::Literal(Literal::Integer(val)) = &items[0].expression
+        {
+            assert_eq!(*val, 63, "0o77 should parse to 63");
+        } else {
+            panic!("Expected integer literal in RETURN");
+        }
+    }
+
+    #[test]
+    fn test_parse_scientific_float_literal() {
+        let stmt = parse_ok("RETURN 1.5e10");
+        if let Statement::Query(Query { clauses, .. }) = stmt
+            && let Clause::Return(ret) = &clauses[0]
+            && let ReturnItems::Explicit(items) = &ret.items
+            && let Expression::Literal(Literal::Float(val)) = &items[0].expression
+        {
+            assert!((*val - 1.5e10).abs() < 1.0, "1.5e10 should parse correctly");
+        } else {
+            panic!("Expected float literal in RETURN");
+        }
+    }
+
+    #[test]
+    fn test_trailing_semicolons() {
+        // Single trailing semicolon
+        parse_ok("RETURN 1;");
+        // Multiple trailing semicolons
+        parse_ok("RETURN 1;;;");
+        // Semicolon after full query
+        parse_ok("MATCH (n) RETURN n;");
     }
 }

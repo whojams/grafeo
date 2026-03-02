@@ -29,6 +29,32 @@ pub enum TokenKind {
     Or,
     /// NOT keyword.
     Not,
+    /// XOR keyword.
+    Xor,
+    /// CAST keyword.
+    Cast,
+    /// UNION keyword.
+    Union,
+    /// EXCEPT keyword.
+    Except,
+    /// INTERSECT keyword.
+    Intersect,
+    /// ALL keyword.
+    All,
+    /// OTHERWISE keyword.
+    Otherwise,
+    /// WALK keyword (path mode).
+    Walk,
+    /// TRAIL keyword (path mode).
+    Trail,
+    /// SIMPLE keyword (path mode).
+    Simple,
+    /// ACYCLIC keyword (path mode).
+    Acyclic,
+    /// FILTER keyword (standalone WHERE).
+    Filter,
+    /// GROUP keyword (for GROUP BY).
+    Group,
     /// INSERT keyword.
     Insert,
     /// DELETE keyword.
@@ -115,6 +141,10 @@ pub enum TokenKind {
     Ordinality,
     /// OFFSET keyword (FOR ... WITH OFFSET, 0-based index).
     Offset,
+    /// SHORTEST keyword (for path search prefix).
+    Shortest,
+    /// GROUPS keyword (for SHORTEST k GROUPS).
+    Groups,
     /// VECTOR keyword (for vector index and type).
     Vector,
     /// INDEX keyword (for CREATE INDEX).
@@ -163,6 +193,16 @@ pub enum TokenKind {
     Percent,
     /// || operator.
     Concat,
+    /// | pipe (label disjunction).
+    Pipe,
+    /// & ampersand (label conjunction).
+    Ampersand,
+    /// ! exclamation (label negation).
+    Exclamation,
+    /// ~ tilde (undirected edge).
+    Tilde,
+    /// ? question mark (questioned path).
+    QuestionMark,
 
     // Punctuation
     /// ( punctuation.
@@ -336,8 +376,24 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     TokenKind::Concat
                 } else {
-                    TokenKind::Error
+                    TokenKind::Pipe
                 }
+            }
+            '&' => {
+                self.advance();
+                TokenKind::Ampersand
+            }
+            '!' => {
+                self.advance();
+                TokenKind::Exclamation
+            }
+            '~' => {
+                self.advance();
+                TokenKind::Tilde
+            }
+            '?' => {
+                self.advance();
+                TokenKind::QuestionMark
             }
             '\'' | '"' => self.scan_string(),
             '`' => self.scan_quoted_identifier(),
@@ -369,10 +425,46 @@ impl<'a> Lexer<'a> {
                     self.column += 1;
                 }
                 self.position += ch.len_utf8();
+            } else if self.rest().starts_with("/*") {
+                // Block comment: skip to */
+                self.position += 2;
+                self.column += 2;
+                while self.position < self.input.len() {
+                    if self.rest().starts_with("*/") {
+                        self.position += 2;
+                        self.column += 2;
+                        break;
+                    }
+                    let c = self.current_char();
+                    if c == '\n' {
+                        self.line += 1;
+                        self.column = 1;
+                    } else {
+                        self.column += 1;
+                    }
+                    self.position += c.len_utf8();
+                }
             } else {
-                break;
+                // Line comment: "-- " (with space/tab) to disambiguate from undirected edge "--"
+                let rest = self.rest();
+                let is_line_comment = rest.starts_with("-- ")
+                    || rest.starts_with("--\t")
+                    || rest.starts_with("--\n")
+                    || rest.starts_with("--\r");
+                if is_line_comment {
+                    while self.position < self.input.len() && self.current_char() != '\n' {
+                        self.position += self.current_char().len_utf8();
+                    }
+                } else {
+                    break;
+                }
             }
         }
+    }
+
+    /// Returns the remaining input from the current position.
+    fn rest(&self) -> &str {
+        &self.input[self.position..]
     }
 
     fn current_char(&self) -> char {
@@ -442,6 +534,28 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_number(&mut self) -> TokenKind {
+        // Check for hex (0x/0X) or octal (0o/0O) prefix
+        if self.current_char() == '0' {
+            let next = self.peek_char();
+            if next == 'x' || next == 'X' {
+                self.advance(); // '0'
+                self.advance(); // 'x'
+                while self.position < self.input.len() && self.current_char().is_ascii_hexdigit() {
+                    self.advance();
+                }
+                return TokenKind::Integer;
+            }
+            if next == 'o' || next == 'O' {
+                self.advance(); // '0'
+                self.advance(); // 'o'
+                while self.position < self.input.len() && ('0'..='7').contains(&self.current_char())
+                {
+                    self.advance();
+                }
+                return TokenKind::Integer;
+            }
+        }
+
         while self.position < self.input.len() && self.current_char().is_ascii_digit() {
             self.advance();
         }
@@ -449,6 +563,26 @@ impl<'a> Lexer<'a> {
         // Only consume '.' if followed by a digit (to avoid consuming '..' as part of a number)
         if self.current_char() == '.' && self.peek_char().is_ascii_digit() {
             self.advance();
+            while self.position < self.input.len() && self.current_char().is_ascii_digit() {
+                self.advance();
+            }
+            // Check for exponent after decimal
+            if self.current_char() == 'e' || self.current_char() == 'E' {
+                self.advance();
+                if self.current_char() == '+' || self.current_char() == '-' {
+                    self.advance();
+                }
+                while self.position < self.input.len() && self.current_char().is_ascii_digit() {
+                    self.advance();
+                }
+            }
+            TokenKind::Float
+        } else if self.current_char() == 'e' || self.current_char() == 'E' {
+            // Scientific notation without decimal: 1e10, 2E-3
+            self.advance();
+            if self.current_char() == '+' || self.current_char() == '-' {
+                self.advance();
+            }
             while self.position < self.input.len() && self.current_char().is_ascii_digit() {
                 self.advance();
             }
@@ -518,6 +652,21 @@ impl<'a> Lexer<'a> {
             "FOR" => TokenKind::For,
             "ORDINALITY" => TokenKind::Ordinality,
             "OFFSET" => TokenKind::Offset,
+            "XOR" => TokenKind::Xor,
+            "CAST" => TokenKind::Cast,
+            "UNION" => TokenKind::Union,
+            "EXCEPT" => TokenKind::Except,
+            "INTERSECT" => TokenKind::Intersect,
+            "ALL" => TokenKind::All,
+            "OTHERWISE" => TokenKind::Otherwise,
+            "FILTER" => TokenKind::Filter,
+            "GROUP" => TokenKind::Group,
+            "WALK" => TokenKind::Walk,
+            "TRAIL" => TokenKind::Trail,
+            "SIMPLE" => TokenKind::Simple,
+            "ACYCLIC" => TokenKind::Acyclic,
+            "SHORTEST" => TokenKind::Shortest,
+            "GROUPS" => TokenKind::Groups,
             "VECTOR" => TokenKind::Vector,
             "INDEX" => TokenKind::Index,
             "DIMENSION" => TokenKind::Dimension,
@@ -736,6 +885,137 @@ mod tests {
     }
 
     #[test]
+    fn test_line_comment_skipped() {
+        let mut lexer = Lexer::new("MATCH -- this is a comment\n(n) RETURN n");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Match);
+        assert_eq!(lexer.next_token().kind, TokenKind::LParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // n
+        assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Return);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // n
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_block_comment_skipped() {
+        let mut lexer = Lexer::new("MATCH /* multi\nline */ (n) RETURN n");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Match);
+        assert_eq!(lexer.next_token().kind, TokenKind::LParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // n
+        assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Return);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // n
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_double_dash_without_space_is_edge() {
+        // `--` without trailing space is a double-dash (undirected edge), not a comment
+        let mut lexer = Lexer::new("(a)--(b)");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::LParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // a
+        assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::DoubleDash);
+        assert_eq!(lexer.next_token().kind, TokenKind::LParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // b
+        assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_xor_token() {
+        let mut lexer = Lexer::new("a XOR b");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // a
+        assert_eq!(lexer.next_token().kind, TokenKind::Xor);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // b
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_path_mode_tokens() {
+        let mut lexer = Lexer::new("WALK TRAIL SIMPLE ACYCLIC");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Walk);
+        assert_eq!(lexer.next_token().kind, TokenKind::Trail);
+        assert_eq!(lexer.next_token().kind, TokenKind::Simple);
+        assert_eq!(lexer.next_token().kind, TokenKind::Acyclic);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_composite_query_tokens() {
+        let mut lexer = Lexer::new("UNION EXCEPT INTERSECT OTHERWISE ALL");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Union);
+        assert_eq!(lexer.next_token().kind, TokenKind::Except);
+        assert_eq!(lexer.next_token().kind, TokenKind::Intersect);
+        assert_eq!(lexer.next_token().kind, TokenKind::Otherwise);
+        assert_eq!(lexer.next_token().kind, TokenKind::All);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_cast_token() {
+        let mut lexer = Lexer::new("CAST(x AS INTEGER)");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Cast);
+        assert_eq!(lexer.next_token().kind, TokenKind::LParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // x
+        assert_eq!(lexer.next_token().kind, TokenKind::As);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // INTEGER
+        assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_filter_and_group_tokens() {
+        let mut lexer = Lexer::new("FILTER GROUP BY");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Filter);
+        assert_eq!(lexer.next_token().kind, TokenKind::Group);
+        assert_eq!(lexer.next_token().kind, TokenKind::By);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_pipe_and_ampersand_tokens() {
+        let mut lexer = Lexer::new("| &");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Pipe);
+        assert_eq!(lexer.next_token().kind, TokenKind::Ampersand);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_is_token_in_pattern() {
+        let mut lexer = Lexer::new("(n IS Person)");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::LParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // n
+        assert_eq!(lexer.next_token().kind, TokenKind::Is);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // Person
+        assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_lbrace_rbrace_tokens() {
+        // Used by ISO path quantifiers {m,n}
+        let mut lexer = Lexer::new("{2,5}");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::LBrace);
+        assert_eq!(lexer.next_token().kind, TokenKind::Integer);
+        assert_eq!(lexer.next_token().kind, TokenKind::Comma);
+        assert_eq!(lexer.next_token().kind, TokenKind::Integer);
+        assert_eq!(lexer.next_token().kind, TokenKind::RBrace);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
     fn test_ordinality_and_offset_tokens() {
         let mut lexer = Lexer::new("FOR x IN list WITH ORDINALITY i");
 
@@ -757,6 +1037,83 @@ mod tests {
         assert_eq!(lexer.next_token().kind, TokenKind::With);
         assert_eq!(lexer.next_token().kind, TokenKind::Offset);
         assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // idx
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_hex_integer_literals() {
+        let mut lexer = Lexer::new("0xFF 0X1A 0x0 0xDEAD");
+
+        let t1 = lexer.next_token();
+        assert_eq!(t1.kind, TokenKind::Integer);
+        assert_eq!(t1.text, "0xFF");
+
+        let t2 = lexer.next_token();
+        assert_eq!(t2.kind, TokenKind::Integer);
+        assert_eq!(t2.text, "0X1A");
+
+        let t3 = lexer.next_token();
+        assert_eq!(t3.kind, TokenKind::Integer);
+        assert_eq!(t3.text, "0x0");
+
+        let t4 = lexer.next_token();
+        assert_eq!(t4.kind, TokenKind::Integer);
+        assert_eq!(t4.text, "0xDEAD");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_octal_integer_literals() {
+        let mut lexer = Lexer::new("0o77 0O10 0o0 0o755");
+
+        let t1 = lexer.next_token();
+        assert_eq!(t1.kind, TokenKind::Integer);
+        assert_eq!(t1.text, "0o77");
+
+        let t2 = lexer.next_token();
+        assert_eq!(t2.kind, TokenKind::Integer);
+        assert_eq!(t2.text, "0O10");
+
+        let t3 = lexer.next_token();
+        assert_eq!(t3.kind, TokenKind::Integer);
+        assert_eq!(t3.text, "0o0");
+
+        let t4 = lexer.next_token();
+        assert_eq!(t4.kind, TokenKind::Integer);
+        assert_eq!(t4.text, "0o755");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_scientific_notation_literals() {
+        let mut lexer = Lexer::new("1.5e10 2.0E-3 3.14e+2 1e5");
+
+        let t1 = lexer.next_token();
+        assert_eq!(t1.kind, TokenKind::Float);
+        assert_eq!(t1.text, "1.5e10");
+
+        let t2 = lexer.next_token();
+        assert_eq!(t2.kind, TokenKind::Float);
+        assert_eq!(t2.text, "2.0E-3");
+
+        let t3 = lexer.next_token();
+        assert_eq!(t3.kind, TokenKind::Float);
+        assert_eq!(t3.text, "3.14e+2");
+
+        let t4 = lexer.next_token();
+        assert_eq!(t4.kind, TokenKind::Float);
+        assert_eq!(t4.text, "1e5");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_tilde_token() {
+        let mut lexer = Lexer::new("~ ~");
+        assert_eq!(lexer.next_token().kind, TokenKind::Tilde);
+        assert_eq!(lexer.next_token().kind, TokenKind::Tilde);
         assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }
 }

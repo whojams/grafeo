@@ -12,7 +12,7 @@
 
 use crate::query::plan::{
     BinaryOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, FilterOp, LimitOp,
-    LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, ReturnItem, ReturnOp,
+    LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, PathMode, ReturnItem, ReturnOp,
     SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder,
 };
 use crate::query::translator_common::{VarGen, capitalize_first};
@@ -598,11 +598,12 @@ impl GraphQLTranslator {
             to_variable: to_var.clone(),
             edge_variable: None,
             direction: ExpandDirection::Outgoing,
-            edge_type: Some(field.name.clone()),
+            edge_types: vec![field.name.clone()],
             min_hops: 1,
             max_hops: Some(1),
             input: Box::new(input),
             path_alias: None,
+            path_mode: PathMode::Walk,
         });
 
         // Apply argument filters

@@ -12,6 +12,8 @@ pub struct Parser<'a> {
     current: Token,
     /// Source string for error reporting.
     source: &'a str,
+    /// Counter for generating unique blank node labels (used by RDF collections).
+    collection_counter: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -23,7 +25,15 @@ impl<'a> Parser<'a> {
             lexer,
             current,
             source,
+            collection_counter: 0,
         }
+    }
+
+    /// Generates a unique blank node label for RDF collection desugaring.
+    fn next_collection_blank(&mut self) -> String {
+        let id = self.collection_counter;
+        self.collection_counter += 1;
+        format!("_coll{id}")
     }
 
     /// Parses the entire query.
@@ -879,7 +889,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_triples_same_subject(&mut self, triples: &mut Vec<TriplePattern>) -> Result<()> {
-        let subject = self.parse_var_or_term()?;
+        // Handle RDF collection in subject position: (item1 item2) pred obj .
+        let subject = if self.current.kind == TokenKind::LeftParen {
+            self.parse_collection(triples)?
+        } else {
+            self.parse_var_or_term()?
+        };
         self.parse_property_list_not_empty(&subject, triples)?;
         Ok(())
     }
@@ -971,9 +986,80 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::RightBracket)?;
 
             Ok(blank_subject)
+        } else if self.current.kind == TokenKind::LeftParen {
+            // RDF collection in object position: subj pred (item1 item2) .
+            self.parse_collection(triples)
         } else {
             self.parse_var_or_term()
         }
+    }
+
+    /// Parses an RDF collection `(item1 item2 ...)` and desugars it into
+    /// `rdf:first`/`rdf:rest` blank node chains per SPARQL 1.1 sec 19.3.
+    ///
+    /// Returns the head blank node (or `rdf:nil` for empty collections).
+    /// Generated triples are appended to `triples`.
+    fn parse_collection(&mut self, triples: &mut Vec<TriplePattern>) -> Result<TripleTerm> {
+        self.expect(TokenKind::LeftParen)?;
+
+        // Empty collection: () => rdf:nil
+        if self.current.kind == TokenKind::RightParen {
+            self.advance();
+            return Ok(TripleTerm::Iri(Iri::new(
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil",
+            )));
+        }
+
+        let rdf_first =
+            PropertyPath::Predicate(Iri::new("http://www.w3.org/1999/02/22-rdf-syntax-ns#first"));
+        let rdf_rest =
+            PropertyPath::Predicate(Iri::new("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"));
+        let rdf_nil = TripleTerm::Iri(Iri::new("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"));
+
+        let head_label = self.next_collection_blank();
+        let head = TripleTerm::BlankNode(BlankNode::Labeled(head_label.clone()));
+        let mut current_node = head_label;
+
+        loop {
+            // Parse the item (which may itself be a collection or blank node)
+            let item = if self.current.kind == TokenKind::LeftParen {
+                self.parse_collection(triples)?
+            } else if self.current.kind == TokenKind::LeftBracket {
+                self.parse_object(triples)?
+            } else {
+                self.parse_var_or_term()?
+            };
+
+            // _:bN rdf:first item
+            triples.push(TriplePattern {
+                subject: TripleTerm::BlankNode(BlankNode::Labeled(current_node.clone())),
+                predicate: rdf_first.clone(),
+                object: item,
+            });
+
+            // Check if there are more items
+            if self.current.kind == TokenKind::RightParen {
+                // Last item: _:bN rdf:rest rdf:nil
+                triples.push(TriplePattern {
+                    subject: TripleTerm::BlankNode(BlankNode::Labeled(current_node)),
+                    predicate: rdf_rest.clone(),
+                    object: rdf_nil,
+                });
+                break;
+            }
+
+            // More items: _:bN rdf:rest _:bN+1
+            let next_label = self.next_collection_blank();
+            triples.push(TriplePattern {
+                subject: TripleTerm::BlankNode(BlankNode::Labeled(current_node)),
+                predicate: rdf_rest.clone(),
+                object: TripleTerm::BlankNode(BlankNode::Labeled(next_label.clone())),
+            });
+            current_node = next_label;
+        }
+
+        self.expect(TokenKind::RightParen)?;
+        Ok(head)
     }
 
     fn parse_var_or_term(&mut self) -> Result<TripleTerm> {
@@ -1136,19 +1222,31 @@ impl<'a> Parser<'a> {
             let mut iris = Vec::new();
 
             if self.current.kind != TokenKind::RightParen {
-                iris.push(self.expect_iri_or_prefixed()?);
+                iris.push(self.parse_negated_iri()?);
                 while self.current.kind == TokenKind::Pipe {
                     self.advance();
-                    iris.push(self.expect_iri_or_prefixed()?);
+                    iris.push(self.parse_negated_iri()?);
                 }
             }
 
             self.expect(TokenKind::RightParen)?;
             Ok(PropertyPath::Negation(iris))
         } else {
-            let iri = self.expect_iri_or_prefixed()?;
+            let iri = self.parse_negated_iri()?;
             Ok(PropertyPath::Negation(vec![iri]))
         }
+    }
+
+    /// Parses an IRI in a negated property set, optionally preceded by `^` for inverse.
+    fn parse_negated_iri(&mut self) -> Result<NegatedIri> {
+        let inverse = if self.current.kind == TokenKind::Caret {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        let iri = self.expect_iri_or_prefixed()?;
+        Ok(NegatedIri { iri, inverse })
     }
 
     // ==================== CONSTRUCT Template ====================
@@ -2272,5 +2370,168 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(query.query_form, QueryForm::Select(_)));
+    }
+
+    // ==================== RDF Collection Tests ====================
+
+    /// Helper to extract triples from a WHERE clause (handles both Basic and Group).
+    fn extract_triples(pattern: &GraphPattern) -> &[TriplePattern] {
+        match pattern {
+            GraphPattern::Basic(triples) => triples,
+            GraphPattern::Group(patterns) => {
+                for p in patterns {
+                    if let GraphPattern::Basic(triples) = p {
+                        return triples;
+                    }
+                }
+                panic!("no Basic pattern found in Group");
+            }
+            _ => panic!("expected Basic or Group pattern, got: {pattern:?}"),
+        }
+    }
+
+    #[test]
+    fn test_collection_empty() {
+        // Empty collection () desugars to rdf:nil
+        let query = parse("SELECT ?s WHERE { ?s ?p () }").unwrap();
+        if let QueryForm::Select(select) = &query.query_form {
+            let triples = extract_triples(&select.where_clause);
+            assert_eq!(triples.len(), 1);
+            assert_eq!(
+                triples[0].object,
+                TripleTerm::Iri(Iri::new("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"))
+            );
+        } else {
+            panic!("expected SELECT query");
+        }
+    }
+
+    #[test]
+    fn test_collection_single_item() {
+        // (1) desugars to _:b rdf:first 1 . _:b rdf:rest rdf:nil
+        let query = parse("SELECT ?s WHERE { ?s ?p (1) }").unwrap();
+        if let QueryForm::Select(select) = &query.query_form {
+            let triples = extract_triples(&select.where_clause);
+            // Should have: 2 collection triples (first + rest) + 1 original triple = 3
+            assert_eq!(triples.len(), 3);
+            // Check that rdf:first is used
+            assert!(triples.iter().any(|t| matches!(
+                &t.predicate,
+                PropertyPath::Predicate(iri)
+                    if iri.as_str().ends_with("first")
+            )));
+            // Check that rdf:rest is used
+            assert!(triples.iter().any(|t| matches!(
+                &t.predicate,
+                PropertyPath::Predicate(iri)
+                    if iri.as_str().ends_with("rest")
+            )));
+        } else {
+            panic!("expected SELECT query");
+        }
+    }
+
+    #[test]
+    fn test_collection_multiple_items() {
+        // (1 2 3) desugars to chain of rdf:first/rdf:rest
+        let query = parse("SELECT ?s WHERE { ?s ?p (1 2 3) }").unwrap();
+        if let QueryForm::Select(select) = &query.query_form {
+            let triples = extract_triples(&select.where_clause);
+            // 3 rdf:first + 3 rdf:rest + 1 original triple = 7
+            assert_eq!(triples.len(), 7);
+        } else {
+            panic!("expected SELECT query");
+        }
+    }
+
+    #[test]
+    fn test_collection_as_subject() {
+        // Collection in subject position
+        let query = parse("SELECT ?p WHERE { (1 2) ?p ?o }").unwrap();
+        assert!(matches!(query.query_form, QueryForm::Select(_)));
+    }
+
+    #[test]
+    fn test_collection_nested() {
+        // Nested collection ((1 2) 3)
+        let query = parse("SELECT ?s WHERE { ?s ?p ((1 2) 3) }").unwrap();
+        assert!(matches!(query.query_form, QueryForm::Select(_)));
+    }
+
+    #[test]
+    fn test_collection_with_variables() {
+        // Collection containing variables
+        let query = parse("SELECT ?s WHERE { ?s ?p (?x ?y ?z) }").unwrap();
+        assert!(matches!(query.query_form, QueryForm::Select(_)));
+    }
+
+    // ==================== Negated Property Set Tests ====================
+
+    #[test]
+    fn test_negated_path_forward() {
+        // !foaf:knows - exclude single forward IRI
+        let query = parse(
+            "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?o WHERE { ?s !foaf:knows ?o }",
+        )
+        .unwrap();
+        assert!(matches!(query.query_form, QueryForm::Select(_)));
+    }
+
+    #[test]
+    fn test_negated_path_inverse_single() {
+        // !^foaf:knows - exclude single inverse IRI
+        let query = parse(
+            "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?o WHERE { ?s !^foaf:knows ?o }",
+        )
+        .unwrap();
+        if let QueryForm::Select(select) = &query.query_form {
+            let triples = extract_triples(&select.where_clause);
+            assert_eq!(triples.len(), 1);
+            if let PropertyPath::Negation(iris) = &triples[0].predicate {
+                assert_eq!(iris.len(), 1);
+                assert!(iris[0].inverse);
+            } else {
+                panic!("expected Negation path");
+            }
+        } else {
+            panic!("expected SELECT query");
+        }
+    }
+
+    #[test]
+    fn test_negated_path_inverse_mixed() {
+        // !(foaf:knows|^foaf:name) - mixed forward and inverse
+        let query = parse(
+            "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?o WHERE { ?s !(foaf:knows|^foaf:name) ?o }",
+        )
+        .unwrap();
+        if let QueryForm::Select(select) = &query.query_form {
+            let triples = extract_triples(&select.where_clause);
+            if let PropertyPath::Negation(iris) = &triples[0].predicate {
+                assert_eq!(iris.len(), 2);
+                assert!(!iris[0].inverse); // foaf:knows is forward
+                assert!(iris[1].inverse); // ^foaf:name is inverse
+            } else {
+                panic!("expected Negation path");
+            }
+        } else {
+            panic!("expected SELECT query");
+        }
+    }
+
+    #[test]
+    fn test_negated_path_empty_parens() {
+        // !() - empty negated set (matches everything)
+        let query = parse("SELECT ?s ?o WHERE { ?s !() ?o }").unwrap();
+        if let QueryForm::Select(select) = &query.query_form {
+            let triples = extract_triples(&select.where_clause);
+            if let PropertyPath::Negation(iris) = &triples[0].predicate {
+                assert!(iris.is_empty());
+            } else {
+                panic!("expected Negation path");
+            }
+        } else {
+            panic!("expected SELECT query");
+        }
     }
 }

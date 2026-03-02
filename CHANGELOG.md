@@ -2,6 +2,49 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.13] - Unreleased
+
+Full syntax support for GQL, SPARQL and Cypher
+
+### Added
+
+- **GQL label expressions** (ISO sec 16.8): `IS` syntax with conjunction (`&`), disjunction (`|`), negation (`!`), and wildcard (`%`) operators for pattern matching, e.g. `MATCH (n IS Person | Company)`
+- **GQL path modes** (ISO sec 16.6): WALK, TRAIL (no repeated edges), SIMPLE (no repeated nodes except endpoints), ACYCLIC (no repeated nodes) for variable-length traversals
+- **GQL composite queries** (ISO sec 14.2): UNION, UNION ALL with full execution; EXCEPT, INTERSECT, OTHERWISE parsed and accepted
+- **GQL ISO path quantifiers**: `{m,n}` curly-brace syntax alongside existing `*m..n` star syntax
+- **GQL CAST expressions** (ISO sec 20.8): `CAST(expr AS INTEGER/FLOAT/STRING/BOOLEAN)` desugars to existing type conversion functions
+- **GQL FILTER statement**: accepted as synonym for WHERE clause
+- **GQL GROUP BY clause** (ISO sec 16.15): explicit grouping in RETURN
+- **GQL OFFSET clause**: accepted as synonym for SKIP
+- **GQL ELEMENT_ID function** (ISO G100): returns string element identity `"n:{id}"` or `"e:{id}"`
+- **GQL comments**: line comments (double-dash with space) and block comments (`/* */`)
+- **GQL XOR operator**: full pipeline support for logical exclusive-or
+- **GQL list index access**: `list[i]` for element indexing
+- **Cypher list comprehensions**: `[x IN list WHERE cond | expr]` syntax wired in parser
+- **Cypher list slicing**: `list[start..end]` syntax wired in parser
+- **Cypher multi-label WHERE check**: `WHERE n:Person` recognized as label-check expression
+- **Cypher runtime functions**: `left()`, `right()`, `sign()`, `log()`, `log10()`, `exp()`, `e()`, `pi()`, trig functions (sin, cos, tan, asin, acos, atan, atan2, degrees, radians)
+- **SPARQL RDF collections**: `(item1 item2)` list syntax desugars to `rdf:first`/`rdf:rest` blank node chains
+- **SPARQL negated inverse paths**: `!^iri` in negated property sets
+- **SPARQL blank node scoping**: per-query ID prefix prevents cross-query blank node collisions
+- **Temporal types**: `Date`, `Time`, and `Duration` value types with ISO 8601 parsing, arithmetic, comparison, and component extraction
+- **GQL temporal literals**: `DATE '2024-01-15'`, `TIME '14:30:00'`, `DURATION 'P1Y2M'`, `DATETIME '2024-03-15T14:30:00Z'` typed literal syntax
+- **Cypher temporal functions**: `date()`, `time()`, `duration()`, `datetime()` constructors; `year()`, `month()`, `day()`, `hour()`, `minute()`, `second()` extraction; `current_date`, `current_time`, `now`
+- **Temporal arithmetic**: date +/- duration, date - date, duration +/- duration, duration * integer across GQL and Cypher
+- **SPARQL XSD temporal types**: `xsd:date`, `xsd:time`, `xsd:duration`, `xsd:dateTime` typed literal translation
+- **Temporal JSON encoding**: `{"$date": "..."}`, `{"$time": "..."}`, `{"$duration": "..."}` for parameter passing and result serialization
+- **Python temporal bindings**: `datetime.date` and `datetime.time` round-trip; Duration as dict `{"months", "days", "nanos"}`
+
+### Fixed
+
+- **Cypher power operator**: `^` no longer returns an error in the translator
+- **Cypher anonymous variable collisions**: anonymous nodes/edges now use unique counter-based names instead of a bare `"_anon"` string
+- **Temporal comparison in optimized paths**: 10 `compare_values` functions across zone maps, property columns, factorized filters, sort operators, and statistics now handle Date/Time/Timestamp (previously silently returned false for ordering operators)
+
+### Improved
+
+- **Test coverage**: 80+ GQL parser tests (was 44), 23 GQL lexer tests (was 12), 137 Python GQL compliance tests (was 100), new SPARQL and Cypher compliance tests
+
 ## [0.5.12] - 2026-03-02
 
 ### Added

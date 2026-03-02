@@ -306,6 +306,9 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
         (Value::Int64(a), Value::Int64(b)) => a.cmp(b),
         (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
         (Value::String(a), Value::String(b)) => a.cmp(b),
+        (Value::Timestamp(a), Value::Timestamp(b)) => a.cmp(b),
+        (Value::Date(a), Value::Date(b)) => a.cmp(b),
+        (Value::Time(a), Value::Time(b)) => a.cmp(b),
         _ => Ordering::Equal,
     }
 }

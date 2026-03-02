@@ -266,6 +266,37 @@ impl PyValue {
                     .call_method1("utcfromtimestamp", (timestamp_float,))
                     .map_or_else(|_| py.None(), |dt| dt.unbind().into_any())
             }
+            Value::Date(d) => {
+                let datetime_mod = py.import("datetime").expect("datetime module should exist");
+                let date_class = datetime_mod
+                    .getattr("date")
+                    .expect("datetime.date should exist");
+                date_class
+                    .call1((d.year(), d.month(), d.day()))
+                    .map_or_else(|_| py.None(), |dt| dt.unbind().into_any())
+            }
+            Value::Time(t) => {
+                let datetime_mod = py.import("datetime").expect("datetime module should exist");
+                let time_class = datetime_mod
+                    .getattr("time")
+                    .expect("datetime.time should exist");
+                let micros = t.nanosecond() / 1000;
+                time_class
+                    .call1((t.hour(), t.minute(), t.second(), micros))
+                    .map_or_else(|_| py.None(), |dt| dt.unbind().into_any())
+            }
+            Value::Duration(d) => {
+                use pyo3::conversion::IntoPyObjectExt;
+                let dict = PyDict::new(py);
+                dict.set_item("months", d.months())
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.set_item("days", d.days())
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.set_item("nanos", d.nanos())
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.into_py_any(py)
+                    .expect("dict to Python conversion cannot fail")
+            }
             Value::Vector(v) => {
                 // Convert vector to Python list of floats
                 let py_floats: Vec<f32> = v.iter().copied().collect();

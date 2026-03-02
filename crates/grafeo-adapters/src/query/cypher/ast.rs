@@ -70,6 +70,25 @@ pub enum Clause {
     Remove(RemoveClause),
     /// CALL procedure clause.
     Call(CallClause),
+    /// CALL { subquery } (inline subquery).
+    CallSubquery(Query),
+    /// FOREACH (variable IN list | update_clauses).
+    ForEach(ForEachClause),
+}
+
+/// A FOREACH clause for iterating and applying updates.
+///
+/// ```text
+/// FOREACH (x IN list | SET x.visited = true)
+/// ```
+#[derive(Debug, Clone)]
+pub struct ForEachClause {
+    /// The iteration variable name.
+    pub variable: String,
+    /// The list expression to iterate over.
+    pub list: Expression,
+    /// The update clauses to apply for each element.
+    pub clauses: Vec<Clause>,
 }
 
 /// A CALL clause for invoking procedures.
@@ -504,6 +523,37 @@ pub enum Expression {
     Exists(Box<Query>),
     /// COUNT subquery.
     CountSubquery(Box<Query>),
+    /// Map projection: `node { .prop1, .prop2, key: expr, .* }`.
+    MapProjection {
+        /// The base variable (node/relationship).
+        base: String,
+        /// Projection entries.
+        entries: Vec<MapProjectionEntry>,
+    },
+    /// reduce() accumulator: `reduce(acc = init, x IN list | expr)`.
+    Reduce {
+        /// Accumulator variable name.
+        accumulator: String,
+        /// Initial value for the accumulator.
+        initial: Box<Expression>,
+        /// Iteration variable name.
+        variable: String,
+        /// List to iterate over.
+        list: Box<Expression>,
+        /// Expression to evaluate (references both accumulator and variable).
+        expression: Box<Expression>,
+    },
+}
+
+/// An entry in a map projection.
+#[derive(Debug, Clone)]
+pub enum MapProjectionEntry {
+    /// `.propertyName` - shorthand for `propertyName: base.propertyName`.
+    PropertySelector(String),
+    /// `key: expression` - explicit key-value pair.
+    LiteralEntry(String, Expression),
+    /// `.*` - include all properties.
+    AllProperties,
 }
 
 /// The kind of list predicate function.

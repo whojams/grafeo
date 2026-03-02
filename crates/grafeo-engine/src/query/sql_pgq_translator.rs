@@ -7,8 +7,8 @@
 use crate::query::plan::{
     AggregateExpr, AggregateOp, BinaryOp, CallProcedureOp, CreatePropertyGraphOp, ExpandDirection,
     ExpandOp, FilterOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp,
-    ProcedureYield, PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, ReturnOp, SkipOp,
-    SortKey, SortOp, SortOrder, UnaryOp,
+    PathMode, ProcedureYield, PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, ReturnOp,
+    SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
 };
 use crate::query::translator_common::{
     combine_with_and, is_aggregate_function, to_aggregate_function,
@@ -370,7 +370,7 @@ impl SqlPgqTranslator {
     ) -> Result<LogicalOperator> {
         let from_variable = Self::get_last_variable(&input)?;
         let edge_variable = edge.variable.clone();
-        let edge_type = edge.types.first().cloned();
+        let edge_types = edge.types.clone();
         let to_variable = edge
             .target
             .variable
@@ -400,11 +400,12 @@ impl SqlPgqTranslator {
             to_variable: to_variable.clone(),
             edge_variable,
             direction,
-            edge_type,
+            edge_types,
             min_hops,
             max_hops,
             input: Box::new(input),
             path_alias,
+            path_mode: PathMode::Walk,
         });
 
         // Add label filter on the target node if present
@@ -689,6 +690,26 @@ impl SqlPgqTranslator {
                 QueryErrorKind::Semantic,
                 "EXISTS subquery not supported in SQL/PGQ",
             ))),
+            ast::Expression::CountSubquery { .. } => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "COUNT subquery not supported in SQL/PGQ",
+            ))),
+            ast::Expression::ValueSubquery { .. } => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "VALUE subquery not supported in SQL/PGQ",
+            ))),
+            ast::Expression::IndexAccess { base, index } => {
+                let base_expr = self.translate_expression(base, table_alias)?;
+                let index_expr = self.translate_expression(index, table_alias)?;
+                Ok(LogicalExpression::IndexAccess {
+                    base: Box::new(base_expr),
+                    index: Box::new(index_expr),
+                })
+            }
+            ast::Expression::LetIn { .. } => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "LET expressions not supported in SQL/PGQ",
+            ))),
         }
     }
 
@@ -699,6 +720,26 @@ impl SqlPgqTranslator {
             ast::Literal::Integer(i) => Value::Int64(*i),
             ast::Literal::Float(f) => Value::Float64(*f),
             ast::Literal::String(s) => Value::from(s.as_str()),
+            ast::Literal::Date(s) => grafeo_common::types::Date::parse(s)
+                .map_or_else(|| Value::from(s.as_str()), Value::Date),
+            ast::Literal::Time(s) => grafeo_common::types::Time::parse(s)
+                .map_or_else(|| Value::from(s.as_str()), Value::Time),
+            ast::Literal::Duration(s) => grafeo_common::types::Duration::parse(s)
+                .map_or_else(|| Value::from(s.as_str()), Value::Duration),
+            ast::Literal::Datetime(s) => {
+                if let Some(pos) = s.find('T') {
+                    if let (Some(d), Some(t)) = (
+                        grafeo_common::types::Date::parse(&s[..pos]),
+                        grafeo_common::types::Time::parse(&s[pos + 1..]),
+                    ) {
+                        Value::Timestamp(grafeo_common::types::Timestamp::from_date_time(d, t))
+                    } else {
+                        Value::from(s.as_str())
+                    }
+                } else {
+                    Value::from(s.as_str())
+                }
+            }
         };
         Ok(LogicalExpression::Literal(value))
     }
@@ -713,6 +754,7 @@ impl SqlPgqTranslator {
             ast::BinaryOp::Ge => BinaryOp::Ge,
             ast::BinaryOp::And => BinaryOp::And,
             ast::BinaryOp::Or => BinaryOp::Or,
+            ast::BinaryOp::Xor => BinaryOp::Xor,
             ast::BinaryOp::Add => BinaryOp::Add,
             ast::BinaryOp::Sub => BinaryOp::Sub,
             ast::BinaryOp::Mul => BinaryOp::Mul,

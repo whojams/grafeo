@@ -247,9 +247,11 @@ impl<'a> Parser<'a> {
             Some(ReturnClause {
                 distinct: false,
                 items: vec![],
+                group_by: vec![],
                 order_by,
                 skip: None,
                 limit,
+                is_finish: false,
                 span: None,
             })
         } else {
@@ -341,6 +343,9 @@ impl<'a> Parser<'a> {
 
         Ok(MatchClause {
             optional: false,
+            path_mode: None,
+            search_prefix: None,
+            match_mode: None,
             patterns,
             span: None,
         })
@@ -443,7 +448,9 @@ impl<'a> Parser<'a> {
         Ok(NodePattern {
             variable,
             labels,
+            label_expression: None,
             properties,
+            where_clause: None,
             span: None,
         })
     }
@@ -572,6 +579,8 @@ impl<'a> Parser<'a> {
             min_hops,
             max_hops,
             properties,
+            where_clause: None,
+            questioned: false,
             span: None,
         })
     }

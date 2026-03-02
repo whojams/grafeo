@@ -11,7 +11,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use super::Timestamp;
+use super::{Date, Duration, Time, Timestamp};
 
 /// An interned property name - cheap to clone and compare.
 ///
@@ -106,6 +106,15 @@ pub enum Value {
     /// Timestamp with timezone
     Timestamp(Timestamp),
 
+    /// Calendar date (days since 1970-01-01)
+    Date(Date),
+
+    /// Time of day with optional UTC offset
+    Time(Time),
+
+    /// ISO 8601 duration (months, days, nanos)
+    Duration(Duration),
+
     /// Ordered list of values
     List(Arc<[Value]>),
 
@@ -187,6 +196,36 @@ impl Value {
         }
     }
 
+    /// Returns the date value if this is a Date, otherwise None.
+    #[inline]
+    #[must_use]
+    pub const fn as_date(&self) -> Option<Date> {
+        match self {
+            Value::Date(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    /// Returns the time value if this is a Time, otherwise None.
+    #[inline]
+    #[must_use]
+    pub const fn as_time(&self) -> Option<Time> {
+        match self {
+            Value::Time(t) => Some(*t),
+            _ => None,
+        }
+    }
+
+    /// Returns the duration value if this is a Duration, otherwise None.
+    #[inline]
+    #[must_use]
+    pub const fn as_duration(&self) -> Option<Duration> {
+        match self {
+            Value::Duration(d) => Some(*d),
+            _ => None,
+        }
+    }
+
     /// Returns the list value if this is a List, otherwise None.
     #[inline]
     #[must_use]
@@ -245,6 +284,9 @@ impl Value {
             Value::String(_) => "STRING",
             Value::Bytes(_) => "BYTES",
             Value::Timestamp(_) => "TIMESTAMP",
+            Value::Date(_) => "DATE",
+            Value::Time(_) => "TIME",
+            Value::Duration(_) => "DURATION",
             Value::List(_) => "LIST",
             Value::Map(_) => "MAP",
             Value::Vector(_) => "VECTOR",
@@ -281,6 +323,9 @@ impl fmt::Debug for Value {
             Value::String(s) => write!(f, "String({s:?})"),
             Value::Bytes(b) => write!(f, "Bytes([{}; {} bytes])", b.first().unwrap_or(&0), b.len()),
             Value::Timestamp(t) => write!(f, "Timestamp({t:?})"),
+            Value::Date(d) => write!(f, "Date({d})"),
+            Value::Time(t) => write!(f, "Time({t})"),
+            Value::Duration(d) => write!(f, "Duration({d})"),
             Value::List(l) => write!(f, "List({l:?})"),
             Value::Map(m) => write!(f, "Map({m:?})"),
             Value::Vector(v) => write!(
@@ -303,6 +348,9 @@ impl fmt::Display for Value {
             Value::String(s) => write!(f, "{s:?}"),
             Value::Bytes(b) => write!(f, "<bytes: {} bytes>", b.len()),
             Value::Timestamp(t) => write!(f, "{t}"),
+            Value::Date(d) => write!(f, "{d}"),
+            Value::Time(t) => write!(f, "{t}"),
+            Value::Duration(d) => write!(f, "{d}"),
             Value::List(l) => {
                 write!(f, "[")?;
                 for (i, v) in l.iter().enumerate() {
@@ -408,6 +456,24 @@ impl From<Timestamp> for Value {
     }
 }
 
+impl From<Date> for Value {
+    fn from(d: Date) -> Self {
+        Value::Date(d)
+    }
+}
+
+impl From<Time> for Value {
+    fn from(t: Time) -> Self {
+        Value::Time(t)
+    }
+}
+
+impl From<Duration> for Value {
+    fn from(d: Duration) -> Self {
+        Value::Duration(d)
+    }
+}
+
 impl<T: Into<Value>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
         Value::List(v.into_iter().map(Into::into).collect())
@@ -492,6 +558,10 @@ pub enum OrderableValue {
     Bool(bool),
     /// Timestamp (microseconds since epoch)
     Timestamp(Timestamp),
+    /// Calendar date (days since epoch)
+    Date(Date),
+    /// Time of day with optional offset
+    Time(Time),
 }
 
 /// A wrapper around `f64` that implements `Ord` with total ordering.
@@ -577,9 +647,14 @@ impl TryFrom<&Value> for OrderableValue {
             Value::String(s) => Ok(Self::String(s.clone())),
             Value::Bool(b) => Ok(Self::Bool(*b)),
             Value::Timestamp(t) => Ok(Self::Timestamp(*t)),
-            Value::Null | Value::Bytes(_) | Value::List(_) | Value::Map(_) | Value::Vector(_) => {
-                Err(())
-            }
+            Value::Date(d) => Ok(Self::Date(*d)),
+            Value::Time(t) => Ok(Self::Time(*t)),
+            Value::Null
+            | Value::Bytes(_)
+            | Value::Duration(_)
+            | Value::List(_)
+            | Value::Map(_)
+            | Value::Vector(_) => Err(()),
         }
     }
 }
@@ -594,6 +669,8 @@ impl OrderableValue {
             Self::String(s) => Value::String(s),
             Self::Bool(b) => Value::Bool(b),
             Self::Timestamp(t) => Value::Timestamp(t),
+            Self::Date(d) => Value::Date(d),
+            Self::Time(t) => Value::Time(t),
         }
     }
 
@@ -633,6 +710,8 @@ impl PartialEq for OrderableValue {
             (Self::String(a), Self::String(b)) => a == b,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Timestamp(a), Self::Timestamp(b)) => a == b,
+            (Self::Date(a), Self::Date(b)) => a == b,
+            (Self::Time(a), Self::Time(b)) => a == b,
             // Cross-type numeric comparison
             (Self::Int64(a), Self::Float64(b)) => (*a as f64) == b.0,
             (Self::Float64(a), Self::Int64(b)) => a.0 == (*b as f64),
@@ -657,11 +736,13 @@ impl Ord for OrderableValue {
             (Self::String(a), Self::String(b)) => a.cmp(b),
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
             (Self::Timestamp(a), Self::Timestamp(b)) => a.cmp(b),
+            (Self::Date(a), Self::Date(b)) => a.cmp(b),
+            (Self::Time(a), Self::Time(b)) => a.cmp(b),
             // Cross-type numeric comparison
             (Self::Int64(a), Self::Float64(b)) => OrderedFloat64(*a as f64).cmp(b),
             (Self::Float64(a), Self::Int64(b)) => a.cmp(&OrderedFloat64(*b as f64)),
             // Different types: order by type ordinal for consistency
-            // Order: Bool < Int64 < Float64 < String < Timestamp
+            // Order: Bool < Int64 < Float64 < String < Timestamp < Date < Time
             _ => self.type_ordinal().cmp(&other.type_ordinal()),
         }
     }
@@ -676,6 +757,8 @@ impl OrderableValue {
             Self::Float64(_) => 2,
             Self::String(_) => 3,
             Self::Timestamp(_) => 4,
+            Self::Date(_) => 5,
+            Self::Time(_) => 6,
         }
     }
 }
@@ -689,6 +772,8 @@ impl Hash for OrderableValue {
             Self::String(s) => s.hash(state),
             Self::Bool(b) => b.hash(state),
             Self::Timestamp(t) => t.hash(state),
+            Self::Date(d) => d.hash(state),
+            Self::Time(t) => t.hash(state),
         }
     }
 }
@@ -725,6 +810,9 @@ fn hash_value<H: Hasher>(value: &Value, state: &mut H) {
         Value::String(s) => s.hash(state),
         Value::Bytes(b) => b.hash(state),
         Value::Timestamp(t) => t.hash(state),
+        Value::Date(d) => d.hash(state),
+        Value::Time(t) => t.hash(state),
+        Value::Duration(d) => d.hash(state),
         Value::List(l) => {
             l.len().hash(state);
             for v in l.iter() {
@@ -872,6 +960,15 @@ mod tests {
         assert_eq!(Value::Float64(0.0).type_name(), "FLOAT64");
         assert_eq!(Value::String("".into()).type_name(), "STRING");
         assert_eq!(Value::Bytes(vec![].into()).type_name(), "BYTES");
+        assert_eq!(
+            Value::Date(Date::from_ymd(2024, 1, 15).unwrap()).type_name(),
+            "DATE"
+        );
+        assert_eq!(
+            Value::Time(Time::from_hms(12, 0, 0).unwrap()).type_name(),
+            "TIME"
+        );
+        assert_eq!(Value::Duration(Duration::default()).type_name(), "DURATION");
         assert_eq!(Value::List(vec![].into()).type_name(), "LIST");
         assert_eq!(Value::Map(BTreeMap::new().into()).type_name(), "MAP");
         assert_eq!(Value::Vector(vec![].into()).type_name(), "VECTOR");
@@ -1018,10 +1115,15 @@ mod tests {
         assert!(OrderableValue::try_from(&Value::String("test".into())).is_ok());
         assert!(OrderableValue::try_from(&Value::Bool(true)).is_ok());
         assert!(OrderableValue::try_from(&Value::Timestamp(Timestamp::from_secs(1000))).is_ok());
+        assert!(
+            OrderableValue::try_from(&Value::Date(Date::from_ymd(2024, 1, 15).unwrap())).is_ok()
+        );
+        assert!(OrderableValue::try_from(&Value::Time(Time::from_hms(12, 0, 0).unwrap())).is_ok());
 
         // Unsupported types
         assert!(OrderableValue::try_from(&Value::Null).is_err());
         assert!(OrderableValue::try_from(&Value::Bytes(vec![1, 2, 3].into())).is_err());
+        assert!(OrderableValue::try_from(&Value::Duration(Duration::default())).is_err());
         assert!(OrderableValue::try_from(&Value::List(vec![].into())).is_err());
         assert!(OrderableValue::try_from(&Value::Map(BTreeMap::new().into())).is_err());
     }
@@ -1109,5 +1211,98 @@ mod tests {
         assert!(neg_inf < zero);
         assert!(zero < inf);
         assert!(inf < nan1);
+    }
+
+    #[test]
+    fn test_value_temporal_accessors() {
+        let date = Date::from_ymd(2024, 3, 15).unwrap();
+        let time = Time::from_hms(14, 30, 0).unwrap();
+        let dur = Duration::from_months(3);
+
+        let vd = Value::Date(date);
+        let vt = Value::Time(time);
+        let vr = Value::Duration(dur);
+
+        assert_eq!(vd.as_date(), Some(date));
+        assert_eq!(vt.as_time(), Some(time));
+        assert_eq!(vr.as_duration(), Some(dur));
+
+        // Wrong type returns None
+        assert_eq!(vd.as_time(), None);
+        assert_eq!(vt.as_date(), None);
+        assert_eq!(vd.as_duration(), None);
+    }
+
+    #[test]
+    fn test_value_temporal_from_conversions() {
+        let date = Date::from_ymd(2024, 1, 15).unwrap();
+        let v: Value = date.into();
+        assert_eq!(v.as_date(), Some(date));
+
+        let time = Time::from_hms(10, 30, 0).unwrap();
+        let v: Value = time.into();
+        assert_eq!(v.as_time(), Some(time));
+
+        let dur = Duration::from_days(7);
+        let v: Value = dur.into();
+        assert_eq!(v.as_duration(), Some(dur));
+    }
+
+    #[test]
+    fn test_value_temporal_display() {
+        let v = Value::Date(Date::from_ymd(2024, 3, 15).unwrap());
+        assert_eq!(format!("{v}"), "2024-03-15");
+
+        let v = Value::Time(Time::from_hms(14, 30, 0).unwrap());
+        assert_eq!(format!("{v}"), "14:30:00");
+
+        let v = Value::Duration(Duration::from_days(7));
+        assert_eq!(format!("{v}"), "P7D");
+    }
+
+    #[test]
+    fn test_value_temporal_serialization_roundtrip() {
+        let values = vec![
+            Value::Date(Date::from_ymd(2024, 6, 15).unwrap()),
+            Value::Time(Time::from_hms(23, 59, 59).unwrap()),
+            Value::Duration(Duration::new(1, 2, 3_000_000_000)),
+        ];
+
+        for v in values {
+            let bytes = v.serialize().unwrap();
+            let decoded = Value::deserialize(&bytes).unwrap();
+            assert_eq!(v, decoded);
+        }
+    }
+
+    #[test]
+    fn test_orderable_value_date_ordering() {
+        let d1 =
+            OrderableValue::try_from(&Value::Date(Date::from_ymd(2024, 1, 1).unwrap())).unwrap();
+        let d2 =
+            OrderableValue::try_from(&Value::Date(Date::from_ymd(2024, 6, 15).unwrap())).unwrap();
+        assert!(d1 < d2);
+
+        let back = d1.into_value();
+        assert_eq!(back.as_date(), Some(Date::from_ymd(2024, 1, 1).unwrap()));
+    }
+
+    #[test]
+    fn test_hashable_value_temporal() {
+        use std::collections::HashMap;
+
+        let mut map: HashMap<HashableValue, i32> = HashMap::new();
+
+        let date_val = Value::Date(Date::from_ymd(2024, 3, 15).unwrap());
+        map.insert(HashableValue::new(date_val.clone()), 1);
+        assert_eq!(map.get(&HashableValue::new(date_val)), Some(&1));
+
+        let time_val = Value::Time(Time::from_hms(12, 0, 0).unwrap());
+        map.insert(HashableValue::new(time_val.clone()), 2);
+        assert_eq!(map.get(&HashableValue::new(time_val)), Some(&2));
+
+        let dur_val = Value::Duration(Duration::from_months(6));
+        map.insert(HashableValue::new(dur_val.clone()), 3);
+        assert_eq!(map.get(&HashableValue::new(dur_val)), Some(&3));
     }
 }

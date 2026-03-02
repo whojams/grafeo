@@ -13,6 +13,32 @@ pub enum Statement {
     Schema(SchemaStatement),
     /// A procedure call statement (CALL ... YIELD).
     Call(CallStatement),
+    /// A composite query (UNION, EXCEPT, INTERSECT, OTHERWISE).
+    CompositeQuery {
+        /// The left query.
+        left: Box<Statement>,
+        /// The composite operation.
+        op: CompositeOp,
+        /// The right query.
+        right: Box<Statement>,
+    },
+}
+
+/// Composite query operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositeOp {
+    /// UNION (distinct).
+    Union,
+    /// UNION ALL (keep duplicates).
+    UnionAll,
+    /// EXCEPT (set difference).
+    Except,
+    /// INTERSECT (set intersection).
+    Intersect,
+    /// OTHERWISE (fallback if left is empty).
+    Otherwise,
+    /// NEXT (linear composition: output of left feeds into right).
+    Next,
 }
 
 /// A CALL procedure statement (ISO GQL Section 15).
@@ -67,6 +93,8 @@ pub enum QueryClause {
     Set(SetClause),
     /// A MERGE clause.
     Merge(MergeClause),
+    /// A LET clause (variable bindings).
+    Let(Vec<(String, Expression)>),
 }
 
 /// A query statement.
@@ -140,11 +168,56 @@ pub struct RemoveClause {
     pub span: Option<SourceSpan>,
 }
 
+/// Path traversal mode (ISO GQL sec 16.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathMode {
+    /// Allows repeated nodes and edges.
+    Walk,
+    /// No repeated edges.
+    Trail,
+    /// No repeated nodes except endpoints.
+    Simple,
+    /// No repeated nodes at all.
+    Acyclic,
+}
+
+/// Path search prefix for ISO GQL shortest path queries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathSearchPrefix {
+    /// `ANY`: return any single matching path.
+    Any,
+    /// `ANY k`: return up to k matching paths.
+    AnyK(usize),
+    /// `ALL SHORTEST`: return all paths of minimum length.
+    AllShortest,
+    /// `ANY SHORTEST`: return any single shortest path.
+    AnyShortest,
+    /// `SHORTEST k`: return the k shortest paths.
+    ShortestK(usize),
+    /// `SHORTEST k GROUPS`: return paths grouped by length.
+    ShortestKGroups(usize),
+}
+
+/// Match mode controlling edge/node uniqueness (ISO GQL sec 16.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchMode {
+    /// `DIFFERENT EDGES`: each edge matched at most once (like TRAIL).
+    DifferentEdges,
+    /// `REPEATABLE ELEMENTS`: edges and nodes may repeat (like WALK).
+    RepeatableElements,
+}
+
 /// A MATCH clause.
 #[derive(Debug, Clone)]
 pub struct MatchClause {
     /// Whether this is an OPTIONAL MATCH.
     pub optional: bool,
+    /// Path mode for traversal (WALK, TRAIL, SIMPLE, ACYCLIC).
+    pub path_mode: Option<PathMode>,
+    /// Path search prefix (ANY, ALL SHORTEST, SHORTEST k, etc.).
+    pub search_prefix: Option<PathSearchPrefix>,
+    /// Match mode (DIFFERENT EDGES, REPEATABLE ELEMENTS).
+    pub match_mode: Option<MatchMode>,
     /// Graph patterns to match, potentially with aliases and path functions.
     pub patterns: Vec<AliasedPattern>,
     /// Source span.
@@ -221,15 +294,34 @@ pub enum Pattern {
     Path(PathPattern),
 }
 
-/// A node pattern like (n:Person).
+/// A label expression for GQL IS syntax (e.g., `IS Person | Employee`, `IS Person & !Employee`).
+#[derive(Debug, Clone)]
+pub enum LabelExpression {
+    /// A single label name.
+    Label(String),
+    /// Conjunction (AND): all labels must match.
+    Conjunction(Vec<LabelExpression>),
+    /// Disjunction (OR): any label must match.
+    Disjunction(Vec<LabelExpression>),
+    /// Negation (NOT): label must not match.
+    Negation(Box<LabelExpression>),
+    /// Wildcard (%): matches any label.
+    Wildcard,
+}
+
+/// A node pattern like (n:Person) or (n IS Person | Employee).
 #[derive(Debug, Clone)]
 pub struct NodePattern {
     /// Variable name (optional).
     pub variable: Option<String>,
-    /// Labels to match.
+    /// Labels to match (colon syntax: `:Label1:Label2`).
     pub labels: Vec<String>,
+    /// Label expression (IS syntax: `IS Person | Employee`).
+    pub label_expression: Option<LabelExpression>,
     /// Property filters.
     pub properties: Vec<(String, Expression)>,
+    /// Element pattern WHERE clause: `(n WHERE n.age > 30)`.
+    pub where_clause: Option<Expression>,
     /// Source span.
     pub span: Option<SourceSpan>,
 }
@@ -262,6 +354,10 @@ pub struct EdgePattern {
     pub max_hops: Option<u32>,
     /// Property filters for the edge.
     pub properties: Vec<(String, Expression)>,
+    /// Element pattern WHERE clause: `-[e WHERE e.weight > 5]->`.
+    pub where_clause: Option<Expression>,
+    /// Questioned edge: `->?` means "optional" (0 or 1 hop).
+    pub questioned: bool,
     /// Source span.
     pub span: Option<SourceSpan>,
 }
@@ -293,12 +389,16 @@ pub struct ReturnClause {
     pub distinct: bool,
     /// Items to return.
     pub items: Vec<ReturnItem>,
+    /// Explicit GROUP BY expressions.
+    pub group_by: Vec<Expression>,
     /// Optional ORDER BY.
     pub order_by: Option<OrderByClause>,
     /// Optional SKIP.
     pub skip: Option<Expression>,
     /// Optional LIMIT.
     pub limit: Option<Expression>,
+    /// Whether this is a FINISH statement (consume input, return empty).
+    pub is_finish: bool,
     /// Source span.
     pub span: Option<SourceSpan>,
 }
@@ -523,13 +623,37 @@ pub enum Expression {
         /// Else clause.
         else_clause: Option<Box<Expression>>,
     },
-    /// EXISTS subquery expression - checks if inner query returns results.
+    /// EXISTS subquery expression: checks if inner query returns results.
     ExistsSubquery {
         /// The inner query pattern to check for existence.
         query: Box<QueryStatement>,
     },
+    /// COUNT subquery expression: counts rows from inner query.
+    CountSubquery {
+        /// The inner query pattern to count.
+        query: Box<QueryStatement>,
+    },
+    /// VALUE { subquery }: evaluates subquery and returns scalar result.
+    ValueSubquery {
+        /// The inner subquery.
+        query: Box<QueryStatement>,
+    },
     /// A map literal: `{key: value, ...}`.
     Map(Vec<(String, Expression)>),
+    /// Index access: `expr[index]`.
+    IndexAccess {
+        /// The base expression.
+        base: Box<Expression>,
+        /// The index expression.
+        index: Box<Expression>,
+    },
+    /// LET ... IN ... END expression.
+    LetIn {
+        /// Variable bindings.
+        bindings: Vec<(String, Expression)>,
+        /// The body expression.
+        body: Box<Expression>,
+    },
 }
 
 /// A literal value.
@@ -545,6 +669,14 @@ pub enum Literal {
     Float(f64),
     /// String literal.
     String(String),
+    /// Typed date literal: `DATE '2024-01-15'`
+    Date(String),
+    /// Typed time literal: `TIME '14:30:00'`
+    Time(String),
+    /// Typed duration literal: `DURATION 'P1Y2M'`
+    Duration(String),
+    /// Typed datetime literal: `DATETIME '2024-01-15T14:30:00Z'`
+    Datetime(String),
 }
 
 /// A binary operator.
@@ -569,6 +701,8 @@ pub enum BinaryOp {
     And,
     /// Logical OR.
     Or,
+    /// Logical XOR.
+    Xor,
 
     // Arithmetic
     /// Addition.

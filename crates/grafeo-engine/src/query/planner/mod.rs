@@ -14,12 +14,12 @@ mod project;
 mod scan;
 
 use crate::query::plan::{
-    AddLabelOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp, BinaryOp,
-    CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteEdgeOp, DeleteNodeOp, DistinctOp,
-    ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LeftJoinOp, LimitOp, LogicalExpression,
-    LogicalOperator, LogicalPlan, MapCollectOp, MergeOp, MergeRelationshipOp, NodeScanOp,
-    RemoveLabelOp, ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortOp, SortOrder, UnaryOp,
-    UnionOp, UnwindOp,
+    AddLabelOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp, ApplyOp,
+    BinaryOp, CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteEdgeOp, DeleteNodeOp, DistinctOp,
+    ExceptOp, ExpandDirection, ExpandOp, FilterOp, IntersectOp, JoinOp, JoinType, LeftJoinOp,
+    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MapCollectOp, MergeOp,
+    MergeRelationshipOp, NodeScanOp, OtherwiseOp, PathMode, RemoveLabelOp, ReturnOp, SetPropertyOp,
+    ShortestPathOp, SkipOp, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
 use grafeo_common::types::{EpochId, TxId};
 use grafeo_common::types::{LogicalType, Value};
@@ -27,17 +27,18 @@ use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::execution::AdaptiveContext;
 use grafeo_core::execution::operators::{
     AddLabelOperator, AggregateExpr as PhysicalAggregateExpr,
-    AggregateFunction as PhysicalAggregateFunction, BinaryFilterOp, CreateEdgeOperator,
-    CreateNodeOperator, DeleteEdgeOperator, DeleteNodeOperator, DistinctOperator, EmptyOperator,
-    ExpandOperator, ExpandStep, ExpressionPredicate, FactorizedAggregate,
-    FactorizedAggregateOperator, FilterExpression, FilterOperator, HashAggregateOperator,
-    HashJoinOperator, JoinType as PhysicalJoinType, LazyFactorizedChainOperator,
-    LeapfrogJoinOperator, LimitOperator, MapCollectOperator, MergeOperator,
-    MergeRelationshipConfig, MergeRelationshipOperator, NestedLoopJoinOperator, NodeListOperator,
-    NullOrder, Operator, ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOperator,
-    ScanOperator, SetPropertyOperator, ShortestPathOperator, SimpleAggregateOperator, SkipOperator,
-    SortDirection, SortKey as PhysicalSortKey, SortOperator, UnaryFilterOp, UnionOperator,
-    UnwindOperator, VariableLengthExpandOperator,
+    AggregateFunction as PhysicalAggregateFunction, ApplyOperator, BinaryFilterOp,
+    CreateEdgeOperator, CreateNodeOperator, DeleteEdgeOperator, DeleteNodeOperator,
+    DistinctOperator, EmptyOperator, ExceptOperator, ExecutionPathMode, ExpandOperator, ExpandStep,
+    ExpressionPredicate, FactorizedAggregate, FactorizedAggregateOperator, FilterExpression,
+    FilterOperator, HashAggregateOperator, HashJoinOperator, IntersectOperator,
+    JoinType as PhysicalJoinType, LazyFactorizedChainOperator, LeapfrogJoinOperator, LimitOperator,
+    MapCollectOperator, MergeOperator, MergeRelationshipConfig, MergeRelationshipOperator,
+    NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator, OtherwiseOperator, ProjectExpr,
+    ProjectOperator, PropertySource, RemoveLabelOperator, ScanOperator, SetPropertyOperator,
+    ShortestPathOperator, SimpleAggregateOperator, SkipOperator, SortDirection,
+    SortKey as PhysicalSortKey, SortOperator, UnaryFilterOp, UnionOperator, UnwindOperator,
+    VariableLengthExpandOperator,
 };
 use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::HashMap;
@@ -387,6 +388,19 @@ impl Planner {
                 .iter()
                 .map(|input| self.estimate_cardinality(input))
                 .sum(),
+            LogicalOperator::Except(except) => {
+                let left = self.estimate_cardinality(&except.left);
+                let right = self.estimate_cardinality(&except.right);
+                (left - right).max(0.0)
+            }
+            LogicalOperator::Intersect(intersect) => {
+                let left = self.estimate_cardinality(&intersect.left);
+                let right = self.estimate_cardinality(&intersect.right);
+                left.min(right)
+            }
+            LogicalOperator::Otherwise(otherwise) => self
+                .estimate_cardinality(&otherwise.left)
+                .max(self.estimate_cardinality(&otherwise.right)),
             _ => 1000.0, // Default estimate for unknown operators
         }
     }
@@ -398,8 +412,8 @@ impl Planner {
         expand: &ExpandOp,
     ) -> f64 {
         let outgoing = !matches!(expand.direction, ExpandDirection::Incoming);
-        if let Some(edge_type) = &expand.edge_type {
-            stats.estimate_avg_degree(edge_type, outgoing)
+        if expand.edge_types.len() == 1 {
+            stats.estimate_avg_degree(&expand.edge_types[0], outgoing)
         } else if stats.total_nodes > 0 {
             (stats.total_edges as f64 / stats.total_nodes as f64).max(1.0)
         } else {
@@ -431,6 +445,10 @@ impl Planner {
             LogicalOperator::Aggregate(agg) => self.plan_aggregate(agg),
             LogicalOperator::Join(join) => self.plan_join(join),
             LogicalOperator::Union(union) => self.plan_union(union),
+            LogicalOperator::Except(except) => self.plan_except(except),
+            LogicalOperator::Intersect(intersect) => self.plan_intersect(intersect),
+            LogicalOperator::Otherwise(otherwise) => self.plan_otherwise(otherwise),
+            LogicalOperator::Apply(apply) => self.plan_apply(apply),
             LogicalOperator::Distinct(distinct) => self.plan_distinct(distinct),
             LogicalOperator::CreateNode(create) => self.plan_create_node(create),
             LogicalOperator::CreateEdge(create) => self.plan_create_edge(create),
@@ -714,6 +732,51 @@ pub fn convert_filter_expression(expr: &LogicalExpression) -> Result<FilterExpre
         LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => Err(
             Error::Internal("Subqueries not yet supported in filters".to_string()),
         ),
+        LogicalExpression::MapProjection { base, entries } => {
+            let physical_entries: Vec<(String, FilterExpression)> = entries
+                .iter()
+                .map(|entry| match entry {
+                    crate::query::plan::MapProjectionEntry::PropertySelector(name) => Ok((
+                        name.clone(),
+                        FilterExpression::Property {
+                            variable: base.clone(),
+                            property: name.clone(),
+                        },
+                    )),
+                    crate::query::plan::MapProjectionEntry::LiteralEntry(key, expr) => {
+                        Ok((key.clone(), convert_filter_expression(expr)?))
+                    }
+                    crate::query::plan::MapProjectionEntry::AllProperties => Ok((
+                        "*".to_string(),
+                        FilterExpression::FunctionCall {
+                            name: "properties".to_string(),
+                            args: vec![FilterExpression::Variable(base.clone())],
+                        },
+                    )),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(FilterExpression::Map(physical_entries))
+        }
+        LogicalExpression::Reduce {
+            accumulator,
+            initial,
+            variable,
+            list,
+            expression,
+        } => Ok(FilterExpression::Reduce {
+            accumulator: accumulator.clone(),
+            initial: Box::new(convert_filter_expression(initial)?),
+            variable: variable.clone(),
+            list: Box::new(convert_filter_expression(list)?),
+            expression: Box::new(convert_filter_expression(expression)?),
+        }),
+        LogicalExpression::PatternComprehension { projection, .. } => {
+            let proj = convert_filter_expression(projection)?;
+            Ok(FilterExpression::FunctionCall {
+                name: "collect".to_string(),
+                args: vec![proj],
+            })
+        }
     }
 }
 
@@ -728,6 +791,9 @@ fn value_to_logical_type(value: &grafeo_common::types::Value) -> LogicalType {
         Value::String(_) => LogicalType::String,
         Value::Bytes(_) => LogicalType::String, // No Bytes logical type, use String
         Value::Timestamp(_) => LogicalType::Timestamp,
+        Value::Date(_) => LogicalType::Date,
+        Value::Time(_) => LogicalType::Time,
+        Value::Duration(_) => LogicalType::Duration,
         Value::List(_) => LogicalType::String, // Lists not yet supported as logical type
         Value::Map(_) => LogicalType::String,  // Maps not yet supported as logical type
         Value::Vector(v) => LogicalType::Vector(v.len()),
@@ -837,8 +903,8 @@ mod tests {
     use crate::query::plan::{
         AggregateExpr as LogicalAggregateExpr, CreateEdgeOp, CreateNodeOp, DeleteNodeOp,
         DistinctOp as LogicalDistinctOp, ExpandOp, FilterOp, JoinCondition, JoinOp,
-        LimitOp as LogicalLimitOp, NodeScanOp, ReturnItem, ReturnOp, SkipOp as LogicalSkipOp,
-        SortKey, SortOp,
+        LimitOp as LogicalLimitOp, NodeScanOp, PathMode, ReturnItem, ReturnOp,
+        SkipOp as LogicalSkipOp, SortKey, SortOp,
     };
     use grafeo_common::types::Value;
     use grafeo_core::graph::GraphStoreMut;
@@ -1177,7 +1243,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1186,6 +1252,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -1222,7 +1289,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: Some("r".to_string()),
                 direction: ExpandDirection::Outgoing,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1231,6 +1298,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -1963,7 +2031,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1972,6 +2040,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -2201,7 +2270,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(3),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -2210,6 +2279,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -2241,7 +2311,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(3),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -2250,6 +2320,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: Some("p".to_string()),
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -2282,7 +2353,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Incoming,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -2291,6 +2362,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -2322,7 +2394,7 @@ mod tests {
                 to_variable: "b".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Both,
-                edge_type: Some("KNOWS".to_string()),
+                edge_types: vec!["KNOWS".to_string()],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -2331,6 +2403,7 @@ mod tests {
                     input: None,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 
@@ -2385,7 +2458,7 @@ mod tests {
                 to_variable: "c".to_string(),
                 edge_variable: None,
                 direction: ExpandDirection::Outgoing,
-                edge_type: None,
+                edge_types: vec![],
                 min_hops: 1,
                 max_hops: Some(1),
                 input: Box::new(LogicalOperator::Expand(ExpandOp {
@@ -2393,7 +2466,7 @@ mod tests {
                     to_variable: "b".to_string(),
                     edge_variable: None,
                     direction: ExpandDirection::Outgoing,
-                    edge_type: None,
+                    edge_types: vec![],
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -2402,8 +2475,10 @@ mod tests {
                         input: None,
                     })),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 })),
                 path_alias: None,
+                path_mode: PathMode::Walk,
             })),
         }));
 

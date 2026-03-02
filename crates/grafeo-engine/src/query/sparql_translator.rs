@@ -13,6 +13,10 @@ use grafeo_adapters::query::sparql::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Global counter for generating unique query IDs (blank node scoping).
+static QUERY_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// Translates a SPARQL query string to a logical plan.
 ///
@@ -35,6 +39,8 @@ struct SparqlTranslator {
     anon_counter: u32,
     /// Stack of active graph contexts (pushed/popped around GRAPH patterns).
     graph_context_stack: Vec<TripleComponent>,
+    /// Unique ID for this query (used for blank node scoping).
+    query_id: u32,
 }
 
 impl SparqlTranslator {
@@ -44,6 +50,7 @@ impl SparqlTranslator {
             base: None,
             anon_counter: 0,
             graph_context_stack: Vec::new(),
+            query_id: QUERY_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -838,6 +845,26 @@ impl SparqlTranslator {
             return self.translate_zero_or_more_path(triple, inner);
         }
 
+        // Handle Inverse (^path): swap subject and object, translate inner path
+        if let ast::PropertyPath::Inverse(inner) = &triple.predicate {
+            let swapped = ast::TriplePattern {
+                subject: triple.object.clone(),
+                predicate: *inner.clone(),
+                object: triple.subject.clone(),
+            };
+            return self.translate_triple_pattern(&swapped);
+        }
+
+        // Handle ZeroOrOne (path?): union of reflexive 0-hop and 1-hop
+        if let ast::PropertyPath::ZeroOrOne(inner) = &triple.predicate {
+            return self.translate_zero_or_one_path(triple, inner);
+        }
+
+        // Handle Negation: !(iri1|^iri2) scans all triples and filters out excluded predicates
+        if let ast::PropertyPath::Negation(negated_iris) = &triple.predicate {
+            return self.translate_negated_property_set(triple, negated_iris);
+        }
+
         let subject = self.translate_triple_term(&triple.subject)?;
         let predicate = self.translate_property_path(&triple.predicate)?;
         let object = self.translate_triple_term(&triple.object)?;
@@ -860,13 +887,15 @@ impl SparqlTranslator {
                 Ok(TripleComponent::Literal(value))
             }
             ast::TripleTerm::BlankNode(bnode) => {
-                // Treat blank nodes as variables
+                // Treat blank nodes as variables, scoped by query_id
                 match bnode {
-                    ast::BlankNode::Labeled(label) => {
-                        Ok(TripleComponent::Variable(format!("_:{}", label)))
-                    }
+                    ast::BlankNode::Labeled(label) => Ok(TripleComponent::Variable(format!(
+                        "_:q{}_{label}",
+                        self.query_id
+                    ))),
                     ast::BlankNode::Anonymous(_) => {
-                        let var = format!("_:anon{}", self.next_anon());
+                        let anon = self.next_anon();
+                        let var = format!("_:q{}_anon{anon}", self.query_id);
                         Ok(TripleComponent::Variable(var))
                     }
                 }
@@ -1332,6 +1361,35 @@ impl SparqlTranslator {
                 "http://www.w3.org/2001/XMLSchema#boolean" => {
                     return Value::Bool(lit.value == "true" || lit.value == "1");
                 }
+                "http://www.w3.org/2001/XMLSchema#date" => {
+                    if let Some(d) = grafeo_common::types::Date::parse(&lit.value) {
+                        return Value::Date(d);
+                    }
+                }
+                "http://www.w3.org/2001/XMLSchema#time" => {
+                    if let Some(t) = grafeo_common::types::Time::parse(&lit.value) {
+                        return Value::Time(t);
+                    }
+                }
+                "http://www.w3.org/2001/XMLSchema#duration"
+                | "http://www.w3.org/2001/XMLSchema#dayTimeDuration"
+                | "http://www.w3.org/2001/XMLSchema#yearMonthDuration" => {
+                    if let Some(d) = grafeo_common::types::Duration::parse(&lit.value) {
+                        return Value::Duration(d);
+                    }
+                }
+                "http://www.w3.org/2001/XMLSchema#dateTime" => {
+                    if let Some(pos) = lit.value.find('T')
+                        && let (Some(d), Some(t)) = (
+                            grafeo_common::types::Date::parse(&lit.value[..pos]),
+                            grafeo_common::types::Time::parse(&lit.value[pos + 1..]),
+                        )
+                    {
+                        return Value::Timestamp(grafeo_common::types::Timestamp::from_date_time(
+                            d, t,
+                        ));
+                    }
+                }
                 _ => {}
             }
         }
@@ -1345,6 +1403,97 @@ impl SparqlTranslator {
         match dv {
             ast::DataValue::Iri(iri) => Value::String(self.resolve_iri(iri).into()),
             ast::DataValue::Literal(lit) => self.literal_to_value(lit),
+        }
+    }
+
+    /// Translates a negated property set `!(iri1|^iri2)`.
+    ///
+    /// For forward IRIs: scans `?s ?p ?o` and filters out excluded predicates.
+    /// For inverse IRIs: scans `?o ?p ?s` (swapped) and filters out excluded predicates.
+    /// Mixed sets produce a `Union` of forward and inverse branches.
+    fn translate_negated_property_set(
+        &mut self,
+        triple: &ast::TriplePattern,
+        negated_iris: &[ast::NegatedIri],
+    ) -> Result<LogicalOperator> {
+        let subject = self.translate_triple_term(&triple.subject)?;
+        let object = self.translate_triple_term(&triple.object)?;
+        let graph = self.graph_context_stack.last().cloned();
+
+        let forward_iris: Vec<&ast::Iri> = negated_iris
+            .iter()
+            .filter(|ni| !ni.inverse)
+            .map(|ni| &ni.iri)
+            .collect();
+        let inverse_iris: Vec<&ast::Iri> = negated_iris
+            .iter()
+            .filter(|ni| ni.inverse)
+            .map(|ni| &ni.iri)
+            .collect();
+
+        let has_forward = !forward_iris.is_empty() || inverse_iris.is_empty();
+        let has_inverse = !inverse_iris.is_empty();
+
+        let build_branch = |translator: &mut Self,
+                            subj: TripleComponent,
+                            obj: TripleComponent,
+                            excluded: &[&ast::Iri]|
+         -> Result<LogicalOperator> {
+            let pred_var = format!("_:neg_pred{}", translator.next_anon());
+            let scan = LogicalOperator::TripleScan(TripleScanOp {
+                subject: subj,
+                predicate: TripleComponent::Variable(pred_var.clone()),
+                object: obj,
+                graph: graph.clone(),
+                input: None,
+            });
+
+            if excluded.is_empty() {
+                return Ok(scan);
+            }
+
+            // Build filter: _:neg_pred != iri1 AND _:neg_pred != iri2 AND ...
+            let conditions: Vec<LogicalExpression> = excluded
+                .iter()
+                .map(|iri| LogicalExpression::Binary {
+                    left: Box::new(LogicalExpression::Variable(pred_var.clone())),
+                    op: BinaryOp::Ne,
+                    right: Box::new(LogicalExpression::Literal(Value::String(
+                        translator.resolve_iri(iri).into(),
+                    ))),
+                })
+                .collect();
+
+            let predicate = conditions
+                .into_iter()
+                .reduce(|left, right| LogicalExpression::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::And,
+                    right: Box::new(right),
+                })
+                .unwrap();
+
+            Ok(LogicalOperator::Filter(FilterOp {
+                predicate,
+                input: Box::new(scan),
+            }))
+        };
+
+        if has_forward && has_inverse {
+            // Union of forward scan (excluding forward IRIs) and
+            // inverse scan with swapped s/o (excluding inverse IRIs)
+            let forward_branch =
+                build_branch(self, subject.clone(), object.clone(), &forward_iris)?;
+            let inverse_branch = build_branch(self, object, subject, &inverse_iris)?;
+            Ok(LogicalOperator::Union(UnionOp {
+                inputs: vec![forward_branch, inverse_branch],
+            }))
+        } else if has_inverse {
+            // Only inverse exclusions: scan with swapped subject/object
+            build_branch(self, object, subject, &inverse_iris)
+        } else {
+            // Only forward exclusions (most common case)
+            build_branch(self, subject, object, &forward_iris)
         }
     }
 
@@ -1430,6 +1579,59 @@ impl SparqlTranslator {
                 self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, depth)?;
             branches.push(branch);
         }
+
+        let union = LogicalOperator::Union(UnionOp { inputs: branches });
+        Ok(LogicalOperator::Distinct(DistinctOp {
+            input: Box::new(union),
+            columns: None,
+        }))
+    }
+
+    /// Translates a `ZeroOrOne` property path (`path?`).
+    ///
+    /// Produces a union of 0-hop reflexive matches and exactly 1-hop matches,
+    /// then deduplicates. Same structure as `translate_zero_or_more_path` but
+    /// bounded to depth 0..1 instead of 0..MAX_DEPTH.
+    fn translate_zero_or_one_path(
+        &mut self,
+        triple: &ast::TriplePattern,
+        inner_path: &ast::PropertyPath,
+    ) -> Result<LogicalOperator> {
+        let subject = self.translate_triple_term(&triple.subject)?;
+        let object = self.translate_triple_term(&triple.object)?;
+        let graph = self.graph_context_stack.last().cloned();
+
+        let mut branches = Vec::new();
+
+        // 0-hop: reflexive matches from subjects of the predicate
+        let fresh_obj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+        let pred = self.translate_property_path(inner_path)?;
+        let subj_scan = LogicalOperator::TripleScan(TripleScanOp {
+            subject: subject.clone(),
+            predicate: pred,
+            object: fresh_obj,
+            graph: graph.clone(),
+            input: None,
+        });
+        let subj_reflexive = self.project_reflexive(&subject, &object, subj_scan)?;
+        branches.push(subj_reflexive);
+
+        // 0-hop: reflexive matches from objects of the predicate
+        let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+        let pred2 = self.translate_property_path(inner_path)?;
+        let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
+            subject: fresh_subj,
+            predicate: pred2,
+            object: object.clone(),
+            graph: graph.clone(),
+            input: None,
+        });
+        let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
+        branches.push(obj_reflexive);
+
+        // 1-hop: exactly one traversal of the predicate
+        let one_hop = self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, 1)?;
+        branches.push(one_hop);
 
         let union = LogicalOperator::Union(UnionOp { inputs: branches });
         Ok(LogicalOperator::Distinct(DistinctOp {

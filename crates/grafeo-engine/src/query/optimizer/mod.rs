@@ -1006,6 +1006,27 @@ impl Optimizer {
             LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => {
                 // Subqueries have their own variable scope
             }
+            LogicalExpression::PatternComprehension { projection, .. } => {
+                Self::collect_variables(projection, vars);
+            }
+            LogicalExpression::MapProjection { base, entries } => {
+                vars.insert(base.clone());
+                for entry in entries {
+                    if let crate::query::plan::MapProjectionEntry::LiteralEntry(_, expr) = entry {
+                        Self::collect_variables(expr, vars);
+                    }
+                }
+            }
+            LogicalExpression::Reduce {
+                initial,
+                list,
+                expression,
+                ..
+            } => {
+                Self::collect_variables(initial, vars);
+                Self::collect_variables(list, vars);
+                Self::collect_variables(expression, vars);
+            }
         }
     }
 
@@ -1029,8 +1050,8 @@ mod tests {
     use super::*;
     use crate::query::plan::{
         AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, DistinctOp, ExpandDirection,
-        ExpandOp, JoinOp, JoinType, LimitOp, NodeScanOp, ProjectOp, Projection, ReturnItem,
-        ReturnOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
+        ExpandOp, JoinOp, JoinType, LimitOp, NodeScanOp, PathMode, ProjectOp, Projection,
+        ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
     };
     use grafeo_common::types::Value;
 
@@ -1102,7 +1123,7 @@ mod tests {
                     to_variable: "b".to_string(),
                     edge_variable: None,
                     direction: ExpandDirection::Outgoing,
-                    edge_type: Some("KNOWS".to_string()),
+                    edge_types: vec!["KNOWS".to_string()],
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1111,6 +1132,7 @@ mod tests {
                         input: None,
                     })),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 })),
             })),
         }));
@@ -1158,7 +1180,7 @@ mod tests {
                     to_variable: "b".to_string(),
                     edge_variable: None,
                     direction: ExpandDirection::Outgoing,
-                    edge_type: Some("KNOWS".to_string()),
+                    edge_types: vec!["KNOWS".to_string()],
                     min_hops: 1,
                     max_hops: Some(1),
                     input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1167,6 +1189,7 @@ mod tests {
                         input: None,
                     })),
                     path_alias: None,
+                    path_mode: PathMode::Walk,
                 })),
             })),
         }));

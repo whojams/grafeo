@@ -414,6 +414,26 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_number(&mut self) -> TokenKind {
+        // Note: the first digit was already consumed by advance() in next_token().
+        // Check for hex (0x/0X) or octal (0o/0O) prefix after leading '0'.
+        if self.source.as_bytes()[self.start] == b'0' {
+            let ch = self.current_char();
+            if ch == 'x' || ch == 'X' {
+                self.advance(); // consume 'x'/'X'
+                while self.current_char().is_ascii_hexdigit() {
+                    self.advance();
+                }
+                return TokenKind::Integer;
+            }
+            if ch == 'o' || ch == 'O' {
+                self.advance(); // consume 'o'/'O'
+                while ('0'..='7').contains(&self.current_char()) {
+                    self.advance();
+                }
+                return TokenKind::Integer;
+            }
+        }
+
         while self.current_char().is_ascii_digit() {
             self.advance();
         }
@@ -915,5 +935,51 @@ mod tests {
         let t2 = lexer.next_token(); // (
         assert_eq!(t2.span.line, 2);
         assert_eq!(t2.span.column, 1);
+    }
+
+    #[test]
+    fn test_hex_integer_literals() {
+        let mut lexer = Lexer::new("0xFF 0X1A 0x0 0xDEAD");
+
+        let t1 = lexer.next_token();
+        assert_eq!(t1.kind, TokenKind::Integer);
+        assert_eq!(t1.text, "0xFF");
+
+        let t2 = lexer.next_token();
+        assert_eq!(t2.kind, TokenKind::Integer);
+        assert_eq!(t2.text, "0X1A");
+
+        let t3 = lexer.next_token();
+        assert_eq!(t3.kind, TokenKind::Integer);
+        assert_eq!(t3.text, "0x0");
+
+        let t4 = lexer.next_token();
+        assert_eq!(t4.kind, TokenKind::Integer);
+        assert_eq!(t4.text, "0xDEAD");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_octal_integer_literals() {
+        let mut lexer = Lexer::new("0o77 0O10 0o0 0o755");
+
+        let t1 = lexer.next_token();
+        assert_eq!(t1.kind, TokenKind::Integer);
+        assert_eq!(t1.text, "0o77");
+
+        let t2 = lexer.next_token();
+        assert_eq!(t2.kind, TokenKind::Integer);
+        assert_eq!(t2.text, "0O10");
+
+        let t3 = lexer.next_token();
+        assert_eq!(t3.kind, TokenKind::Integer);
+        assert_eq!(t3.text, "0o0");
+
+        let t4 = lexer.next_token();
+        assert_eq!(t4.kind, TokenKind::Integer);
+        assert_eq!(t4.text, "0o755");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }
 }

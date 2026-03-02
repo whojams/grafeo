@@ -292,7 +292,7 @@ impl super::Planner {
             steps.push(ExpandStep {
                 source_column,
                 direction,
-                edge_type: expand.edge_type.clone(),
+                edge_types: expand.edge_types.clone(),
             });
 
             let edge_col_name = expand.edge_variable.clone().unwrap_or_else(|| {

@@ -184,6 +184,13 @@ CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
 - **MVCC auto-GC**: automatic version chain garbage collection
 - **Dead code removal**: ~1,500 lines of confirmed dead code removed
 
+### Temporal Types (0.5.13)
+
+- **Date, Time, Duration** value types with ISO 8601 parsing and arithmetic
+- **GQL typed literals**: `DATE '...'`, `TIME '...'`, `DURATION '...'`, `DATETIME '...'`
+- **Cypher temporal functions**: `date()`, `time()`, `duration()`, `datetime()`, extraction functions
+- **SPARQL XSD typed literals**: `xsd:date`, `xsd:time`, `xsd:duration` translation
+
 ### Ecosystem (0.5.1)
 
 - **[grafeo-memory](https://github.com/GrafeoDB/grafeo-memory)**: AI memory layer, LLM-driven fact extraction, knowledge graph storage

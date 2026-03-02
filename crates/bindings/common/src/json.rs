@@ -36,6 +36,24 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
             if let Some(ts) = obj.get("$timestamp_us").and_then(serde_json::Value::as_i64) {
                 return Value::Timestamp(grafeo_common::types::Timestamp::from_micros(ts));
             }
+            // Check for $date encoding
+            if let Some(s) = obj.get("$date").and_then(serde_json::Value::as_str)
+                && let Some(d) = grafeo_common::types::Date::parse(s)
+            {
+                return Value::Date(d);
+            }
+            // Check for $time encoding
+            if let Some(s) = obj.get("$time").and_then(serde_json::Value::as_str)
+                && let Some(t) = grafeo_common::types::Time::parse(s)
+            {
+                return Value::Time(t);
+            }
+            // Check for $duration encoding
+            if let Some(s) = obj.get("$duration").and_then(serde_json::Value::as_str)
+                && let Some(d) = grafeo_common::types::Duration::parse(s)
+            {
+                return Value::Duration(d);
+            }
             let mut map = BTreeMap::new();
             for (k, v) in obj {
                 map.insert(PropertyKey::new(k.clone()), json_to_value(v));
@@ -63,6 +81,9 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
             serde_json::Value::Array(arr)
         }
         Value::Timestamp(ts) => serde_json::json!({ "$timestamp_us": ts.as_micros() }),
+        Value::Date(d) => serde_json::json!({ "$date": d.to_string() }),
+        Value::Time(t) => serde_json::json!({ "$time": t.to_string() }),
+        Value::Duration(d) => serde_json::json!({ "$duration": d.to_string() }),
         Value::List(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
         Value::Map(map) => {
             let obj: serde_json::Map<String, serde_json::Value> = map

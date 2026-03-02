@@ -20,8 +20,8 @@ pub struct ExpandOperator {
     source_column: usize,
     /// Direction of edge traversal.
     direction: Direction,
-    /// Optional edge type filter.
-    edge_type: Option<String>,
+    /// Edge type filter (empty = match all types, multiple = match any).
+    edge_types: Vec<String>,
     /// Chunk capacity.
     chunk_capacity: usize,
     /// Current input chunk being processed.
@@ -47,14 +47,14 @@ impl ExpandOperator {
         input: Box<dyn Operator>,
         source_column: usize,
         direction: Direction,
-        edge_type: Option<String>,
+        edge_types: Vec<String>,
     ) -> Self {
         Self {
             store,
             input,
             source_column,
             direction,
-            edge_type,
+            edge_types,
             chunk_capacity: 2048,
             current_input: None,
             current_row: 0,
@@ -130,16 +130,14 @@ impl ExpandOperator {
             .into_iter()
             .filter(|(target_id, edge_id)| {
                 // Filter by edge type if specified
-                let type_matches = if let Some(ref filter_type) = self.edge_type {
-                    if let Some(edge_type) = self.store.edge_type(*edge_id) {
-                        edge_type
-                            .as_str()
-                            .eq_ignore_ascii_case(filter_type.as_str())
-                    } else {
-                        false
-                    }
-                } else {
+                let type_matches = if self.edge_types.is_empty() {
                     true
+                } else if let Some(actual_type) = self.store.edge_type(*edge_id) {
+                    self.edge_types
+                        .iter()
+                        .any(|t| actual_type.as_str().eq_ignore_ascii_case(t.as_str()))
+                } else {
+                    false
                 };
 
                 if !type_matches {
@@ -312,7 +310,7 @@ mod tests {
             scan,
             0, // source column
             Direction::Outgoing,
-            None,
+            vec![],
         );
 
         // Collect all results
@@ -358,7 +356,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            Some("KNOWS".to_string()),
+            vec!["KNOWS".to_string()],
         );
 
         let mut results = Vec::new();
@@ -387,7 +385,7 @@ mod tests {
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
 
         let mut expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Incoming, None);
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Incoming, vec![]);
 
         let mut results = Vec::new();
         while let Ok(Some(chunk)) = expand.next() {
@@ -413,7 +411,7 @@ mod tests {
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
 
         let mut expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, None);
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
 
         let result = expand.next().unwrap();
         assert!(result.is_none());
@@ -429,7 +427,7 @@ mod tests {
 
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
         let mut expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, None);
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
 
         // First pass
         let mut count1 = 0;
@@ -453,7 +451,7 @@ mod tests {
         let (_store, dyn_store) = test_store();
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
         let expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, None);
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
         assert_eq!(expand.name(), "Expand");
     }
 
@@ -469,7 +467,7 @@ mod tests {
 
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
         let mut expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, None)
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![])
                 .with_chunk_capacity(2);
 
         // With capacity 2 and 5 edges from node a, we should get multiple chunks
@@ -501,7 +499,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            Some("knows".to_string()), // lowercase
+            vec!["knows".to_string()], // lowercase
         );
 
         let mut count = 0;
@@ -526,7 +524,7 @@ mod tests {
 
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
         let mut expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, None);
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
 
         let mut results = Vec::new();
         while let Ok(Some(chunk)) = expand.next() {
@@ -551,7 +549,7 @@ mod tests {
             "Nonexistent",
         ));
         let mut expand =
-            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, None);
+            ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
 
         let result = expand.next().unwrap();
         assert!(result.is_none());

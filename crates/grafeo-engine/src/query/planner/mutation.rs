@@ -626,7 +626,7 @@ impl super::Planner {
                 input_op,
                 source_column,
                 target_column,
-                sp.edge_type.clone(),
+                sp.edge_types.clone(),
                 direction,
             )
             .with_all_paths(sp.all_paths),

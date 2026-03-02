@@ -18,6 +18,9 @@ pub fn value_to_js(value: &Value) -> JsValue {
             arr.into()
         }
         Value::Timestamp(ts) => JsValue::from_str(&ts.to_string()),
+        Value::Date(d) => JsValue::from_str(&d.to_string()),
+        Value::Time(t) => JsValue::from_str(&t.to_string()),
+        Value::Duration(d) => JsValue::from_str(&d.to_string()),
         Value::List(items) => {
             let arr = Array::new_with_length(items.len() as u32);
             for (i, item) in items.iter().enumerate() {

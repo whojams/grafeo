@@ -500,6 +500,18 @@ fn hash_key(key: &[Value]) -> u64 {
                 6u8.hash(&mut hasher);
                 t.hash(&mut hasher);
             }
+            Value::Date(d) => {
+                10u8.hash(&mut hasher);
+                d.hash(&mut hasher);
+            }
+            Value::Time(t) => {
+                11u8.hash(&mut hasher);
+                t.hash(&mut hasher);
+            }
+            Value::Duration(d) => {
+                12u8.hash(&mut hasher);
+                d.hash(&mut hasher);
+            }
             Value::List(l) => {
                 7u8.hash(&mut hasher);
                 l.len().hash(&mut hasher);

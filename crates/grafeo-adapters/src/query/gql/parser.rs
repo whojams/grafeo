@@ -156,6 +156,62 @@ impl<'a> Parser<'a> {
 
     /// Parses the input into a statement.
     pub fn parse(&mut self) -> Result<Statement> {
+        let mut left = self.parse_single_statement()?;
+
+        // Handle NEXT (linear composition): output of left becomes input of right
+        while self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("NEXT") {
+            self.advance(); // consume NEXT
+            let right = self.parse_single_statement()?;
+            // NEXT semantics: chain right after left (like WITH pipe).
+            // Represent as CompositeQuery with a dedicated op.
+            left = Statement::CompositeQuery {
+                left: Box::new(left),
+                op: CompositeOp::Next,
+                right: Box::new(right),
+            };
+        }
+
+        // Check for composite query operators (UNION, EXCEPT, INTERSECT, OTHERWISE)
+        while matches!(
+            self.current.kind,
+            TokenKind::Union | TokenKind::Except | TokenKind::Intersect | TokenKind::Otherwise
+        ) {
+            let op = match self.current.kind {
+                TokenKind::Union => {
+                    self.advance();
+                    if self.current.kind == TokenKind::All {
+                        self.advance();
+                        CompositeOp::UnionAll
+                    } else {
+                        CompositeOp::Union
+                    }
+                }
+                TokenKind::Except => {
+                    self.advance();
+                    CompositeOp::Except
+                }
+                TokenKind::Intersect => {
+                    self.advance();
+                    CompositeOp::Intersect
+                }
+                TokenKind::Otherwise => {
+                    self.advance();
+                    CompositeOp::Otherwise
+                }
+                _ => unreachable!(),
+            };
+            let right = self.parse_single_statement()?;
+            left = Statement::CompositeQuery {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(left)
+    }
+
+    fn parse_single_statement(&mut self) -> Result<Statement> {
         match self.current.kind {
             TokenKind::Match
             | TokenKind::Optional
@@ -342,13 +398,19 @@ impl<'a> Parser<'a> {
                     ordered_clauses.push(QueryClause::Delete(clause.clone()));
                     delete_clauses.push(clause);
                 }
+                _ if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("LET") =>
+                {
+                    let bindings = self.parse_let_clause()?;
+                    ordered_clauses.push(QueryClause::Let(bindings));
+                }
                 _ => break,
             }
         }
 
-        // Parse WHERE clause (after all MATCH clauses)
-        let where_clause = if self.current.kind == TokenKind::Where {
-            Some(self.parse_where_clause()?)
+        // Parse WHERE or FILTER clause (after all MATCH clauses)
+        let where_clause = if matches!(self.current.kind, TokenKind::Where | TokenKind::Filter) {
+            Some(self.parse_where_or_filter_clause()?)
         } else {
             None
         };
@@ -422,9 +484,28 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Parse RETURN clause (optional if we have SET, REMOVE, MERGE, CREATE, or DELETE clauses)
+        // Parse RETURN, FINISH, or SELECT clause
         let return_clause = if self.current.kind == TokenKind::Return {
             self.parse_return_clause()?
+        } else if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("FINISH")
+        {
+            // FINISH: consume input, return empty result
+            self.advance();
+            ReturnClause {
+                distinct: false,
+                items: Vec::new(),
+                group_by: Vec::new(),
+                order_by: None,
+                skip: None,
+                limit: None,
+                is_finish: true,
+                span: None,
+            }
+        } else if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("SELECT")
+        {
+            // SELECT: SQL-style projection, parsed as RETURN
+            self.advance(); // consume SELECT
+            self.parse_select_clause()?
         } else if !set_clauses.is_empty()
             || !remove_clauses.is_empty()
             || !merge_clauses.is_empty()
@@ -435,13 +516,15 @@ impl<'a> Parser<'a> {
             ReturnClause {
                 distinct: false,
                 items: Vec::new(),
+                group_by: Vec::new(),
                 order_by: None,
                 skip: None,
                 limit: None,
+                is_finish: false,
                 span: None,
             }
         } else {
-            return Err(self.error("Expected RETURN"));
+            return Err(self.error("Expected RETURN, FINISH, or SELECT"));
         };
 
         // Parse optional HAVING clause (after RETURN, filters aggregate results)
@@ -670,6 +753,27 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parses `LET var = expr [, var2 = expr2]*` as a clause.
+    fn parse_let_clause(&mut self) -> Result<Vec<(String, Expression)>> {
+        self.advance(); // consume LET
+        let mut bindings = Vec::new();
+        loop {
+            if !self.is_identifier() {
+                return Err(self.error("Expected variable name in LET clause"));
+            }
+            let var = self.get_identifier_name();
+            self.advance();
+            self.expect(TokenKind::Eq)?;
+            let expr = self.parse_expression()?;
+            bindings.push((var, expr));
+            if self.current.kind != TokenKind::Comma {
+                break;
+            }
+            self.advance(); // consume comma
+        }
+        Ok(bindings)
+    }
+
     fn parse_merge_clause(&mut self) -> Result<MergeClause> {
         let span_start = self.current.span.start;
         self.expect(TokenKind::Merge)?;
@@ -756,6 +860,55 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Match)?;
 
+        // Check for path mode (WALK, TRAIL, SIMPLE, ACYCLIC)
+        let path_mode = match self.current.kind {
+            TokenKind::Walk => {
+                self.advance();
+                Some(PathMode::Walk)
+            }
+            TokenKind::Trail => {
+                self.advance();
+                Some(PathMode::Trail)
+            }
+            TokenKind::Simple => {
+                self.advance();
+                Some(PathMode::Simple)
+            }
+            TokenKind::Acyclic => {
+                self.advance();
+                Some(PathMode::Acyclic)
+            }
+            _ => None,
+        };
+
+        // Check for match mode (DIFFERENT EDGES, REPEATABLE ELEMENTS)
+        let match_mode = if self.is_identifier()
+            && self.get_identifier_name().eq_ignore_ascii_case("DIFFERENT")
+        {
+            self.advance(); // consume DIFFERENT
+            // Expect EDGES (contextual keyword)
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("EDGES") {
+                self.advance();
+            }
+            Some(MatchMode::DifferentEdges)
+        } else if self.is_identifier()
+            && self
+                .get_identifier_name()
+                .eq_ignore_ascii_case("REPEATABLE")
+        {
+            self.advance(); // consume REPEATABLE
+            // Expect ELEMENTS (contextual keyword)
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("ELEMENTS") {
+                self.advance();
+            }
+            Some(MatchMode::RepeatableElements)
+        } else {
+            None
+        };
+
+        // Check for path search prefix (ANY, ALL SHORTEST, ANY SHORTEST, SHORTEST k)
+        let search_prefix = self.parse_path_search_prefix()?;
+
         let mut patterns = Vec::new();
         patterns.push(self.parse_aliased_pattern()?);
 
@@ -766,9 +919,65 @@ impl<'a> Parser<'a> {
 
         Ok(MatchClause {
             optional,
+            path_mode,
+            search_prefix,
+            match_mode,
             patterns,
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
         })
+    }
+
+    /// Parses an optional path search prefix before patterns.
+    ///
+    /// ```text
+    /// ANY [k]
+    /// ALL SHORTEST
+    /// ANY SHORTEST
+    /// SHORTEST k [GROUPS]
+    /// ```
+    fn parse_path_search_prefix(&mut self) -> Result<Option<PathSearchPrefix>> {
+        if self.current.kind == TokenKind::All && self.peek_kind() == TokenKind::Shortest {
+            // ALL SHORTEST
+            self.advance(); // consume ALL
+            self.advance(); // consume SHORTEST
+            return Ok(Some(PathSearchPrefix::AllShortest));
+        }
+        if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("ANY") {
+            let next = self.peek_kind();
+            if next == TokenKind::Shortest {
+                // ANY SHORTEST
+                self.advance(); // consume ANY
+                self.advance(); // consume SHORTEST
+                return Ok(Some(PathSearchPrefix::AnyShortest));
+            }
+            if next == TokenKind::Integer {
+                // ANY k
+                self.advance(); // consume ANY
+                let k: usize = self.current.text.parse().unwrap_or(1);
+                self.advance(); // consume k
+                return Ok(Some(PathSearchPrefix::AnyK(k)));
+            }
+            if next == TokenKind::LParen {
+                // ANY (pattern...) - just ANY prefix
+                self.advance(); // consume ANY
+                return Ok(Some(PathSearchPrefix::Any));
+            }
+        }
+        if self.current.kind == TokenKind::Shortest {
+            self.advance(); // consume SHORTEST
+            if self.current.kind == TokenKind::Integer {
+                let k: usize = self.current.text.parse().unwrap_or(1);
+                self.advance(); // consume k
+                if self.current.kind == TokenKind::Groups {
+                    self.advance(); // consume GROUPS
+                    return Ok(Some(PathSearchPrefix::ShortestKGroups(k)));
+                }
+                return Ok(Some(PathSearchPrefix::ShortestK(k)));
+            }
+            // SHORTEST without k: treat as SHORTEST 1
+            return Ok(Some(PathSearchPrefix::ShortestK(1)));
+        }
+        Ok(None)
     }
 
     /// Parses a pattern with optional alias and path function.
@@ -852,13 +1061,21 @@ impl<'a> Parser<'a> {
         // Handle both `-[...]->`/`<-[...]-` style and `->` style
         if matches!(
             self.current.kind,
-            TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::DoubleDash | TokenKind::Minus
+            TokenKind::Arrow
+                | TokenKind::LeftArrow
+                | TokenKind::DoubleDash
+                | TokenKind::Minus
+                | TokenKind::Tilde
         ) {
             let mut edges = Vec::new();
 
             while matches!(
                 self.current.kind,
-                TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::DoubleDash | TokenKind::Minus
+                TokenKind::Arrow
+                    | TokenKind::LeftArrow
+                    | TokenKind::DoubleDash
+                    | TokenKind::Minus
+                    | TokenKind::Tilde
             ) {
                 edges.push(self.parse_edge_pattern()?);
             }
@@ -885,13 +1102,22 @@ impl<'a> Parser<'a> {
         };
 
         let mut labels = Vec::new();
-        while self.current.kind == TokenKind::Colon {
+        let mut label_expression = None;
+
+        if self.current.kind == TokenKind::Is {
+            // GQL IS syntax: (n IS Person | Employee)
             self.advance();
-            if !self.is_label_or_type_name() {
-                return Err(self.error("Expected label name"));
+            label_expression = Some(self.parse_label_expression()?);
+        } else {
+            // Colon syntax: (n:Person:Employee)
+            while self.current.kind == TokenKind::Colon {
+                self.advance();
+                if !self.is_label_or_type_name() {
+                    return Err(self.error("Expected label name"));
+                }
+                labels.push(self.get_identifier_name());
+                self.advance();
             }
-            labels.push(self.get_identifier_name());
-            self.advance();
         }
 
         // Parse properties { key: value, ... }
@@ -901,14 +1127,83 @@ impl<'a> Parser<'a> {
             Vec::new()
         };
 
+        // Parse optional element pattern WHERE clause: (n WHERE n.age > 30)
+        let where_clause = if self.current.kind == TokenKind::Where {
+            self.advance();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
         self.expect(TokenKind::RParen)?;
 
         Ok(NodePattern {
             variable,
             labels,
+            label_expression,
             properties,
+            where_clause,
             span: None,
         })
+    }
+
+    /// Parses a label expression with precedence: `|` < `&` < `!`.
+    fn parse_label_expression(&mut self) -> Result<LabelExpression> {
+        let mut left = self.parse_label_conjunction()?;
+
+        while self.current.kind == TokenKind::Pipe {
+            let mut operands = vec![left];
+            while self.current.kind == TokenKind::Pipe {
+                self.advance();
+                operands.push(self.parse_label_conjunction()?);
+            }
+            left = LabelExpression::Disjunction(operands);
+        }
+
+        Ok(left)
+    }
+
+    fn parse_label_conjunction(&mut self) -> Result<LabelExpression> {
+        let mut left = self.parse_label_negation()?;
+
+        while self.current.kind == TokenKind::Ampersand {
+            let mut operands = vec![left];
+            while self.current.kind == TokenKind::Ampersand {
+                self.advance();
+                operands.push(self.parse_label_negation()?);
+            }
+            left = LabelExpression::Conjunction(operands);
+        }
+
+        Ok(left)
+    }
+
+    fn parse_label_negation(&mut self) -> Result<LabelExpression> {
+        if self.current.kind == TokenKind::Exclamation {
+            self.advance();
+            let inner = self.parse_label_primary()?;
+            return Ok(LabelExpression::Negation(Box::new(inner)));
+        }
+        self.parse_label_primary()
+    }
+
+    fn parse_label_primary(&mut self) -> Result<LabelExpression> {
+        if self.current.kind == TokenKind::Percent {
+            self.advance();
+            return Ok(LabelExpression::Wildcard);
+        }
+        if self.current.kind == TokenKind::LParen {
+            self.advance();
+            let expr = self.parse_label_expression()?;
+            self.expect(TokenKind::RParen)?;
+            return Ok(expr);
+        }
+        if self.is_label_or_type_name() {
+            let name = self.get_identifier_name();
+            self.advance();
+            return Ok(LabelExpression::Label(name));
+        }
+        Err(self.error("Expected label name, %, or ("))
     }
 
     fn parse_edge_pattern(&mut self) -> Result<EdgePattern> {
@@ -955,6 +1250,15 @@ impl<'a> Parser<'a> {
                             }
                             tps.push(self.get_identifier_name());
                             self.advance();
+                            // Support pipe-separated alternatives: :T1|T2|T3
+                            while self.current.kind == TokenKind::Pipe {
+                                self.advance();
+                                if !self.is_label_or_type_name() {
+                                    return Err(self.error("Expected edge type after |"));
+                                }
+                                tps.push(self.get_identifier_name());
+                                self.advance();
+                            }
                         }
 
                         // Parse variable-length path quantifier: *min..max
@@ -1022,6 +1326,15 @@ impl<'a> Parser<'a> {
                             }
                             tps.push(self.get_identifier_name());
                             self.advance();
+                            // Support pipe-separated alternatives: :T1|T2|T3
+                            while self.current.kind == TokenKind::Pipe {
+                                self.advance();
+                                if !self.is_label_or_type_name() {
+                                    return Err(self.error("Expected edge type after |"));
+                                }
+                                tps.push(self.get_identifier_name());
+                                self.advance();
+                            }
                         }
 
                         // Parse variable-length path quantifier
@@ -1075,9 +1388,89 @@ impl<'a> Parser<'a> {
                     Vec::new(),
                     EdgeDirection::Undirected,
                 )
+            } else if self.current.kind == TokenKind::Tilde {
+                // GQL undirected edge: ~[variable:TYPE*min..max {props}]~
+                self.advance();
+
+                let (var, edge_types, min_h, max_h, props) =
+                    if self.current.kind == TokenKind::LBracket {
+                        self.advance();
+
+                        let v = if self.is_identifier() {
+                            let peek = self.peek_kind();
+                            if matches!(
+                                peek,
+                                TokenKind::Colon
+                                    | TokenKind::Star
+                                    | TokenKind::LBrace
+                                    | TokenKind::RBracket
+                            ) {
+                                let name = self.get_identifier_name();
+                                self.advance();
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        let mut tps = Vec::new();
+                        while self.current.kind == TokenKind::Colon {
+                            self.advance();
+                            if !self.is_label_or_type_name() {
+                                return Err(self.error("Expected edge type"));
+                            }
+                            tps.push(self.get_identifier_name());
+                            self.advance();
+                            while self.current.kind == TokenKind::Pipe {
+                                self.advance();
+                                if !self.is_label_or_type_name() {
+                                    return Err(self.error("Expected edge type after |"));
+                                }
+                                tps.push(self.get_identifier_name());
+                                self.advance();
+                            }
+                        }
+
+                        let (min_h, max_h) = self.parse_path_quantifier()?;
+
+                        let edge_props = if self.current.kind == TokenKind::LBrace {
+                            self.parse_property_map()?
+                        } else {
+                            Vec::new()
+                        };
+
+                        self.expect(TokenKind::RBracket)?;
+                        (v, tps, min_h, max_h, edge_props)
+                    } else {
+                        (None, Vec::new(), None, None, Vec::new())
+                    };
+
+                // Consume trailing ~
+                if self.current.kind == TokenKind::Tilde {
+                    self.advance();
+                }
+
+                (
+                    var,
+                    edge_types,
+                    min_h,
+                    max_h,
+                    props,
+                    EdgeDirection::Undirected,
+                )
             } else {
                 return Err(self.error("Expected edge pattern"));
             };
+
+        // Check for questioned edge: ->?(node) means optional (0 or 1 hop)
+        let questioned = if self.current.kind == TokenKind::QuestionMark {
+            self.advance();
+            true
+        } else {
+            false
+        };
 
         let target = self.parse_node_pattern()?;
 
@@ -1089,13 +1482,55 @@ impl<'a> Parser<'a> {
             min_hops,
             max_hops,
             properties,
+            where_clause: None, // Element WHERE on edges parsed inside brackets
+            questioned,
             span: None,
         })
     }
 
-    /// Parses a path quantifier like `*`, `*2`, `*1..3`, `*..5`, `*2..`.
+    /// Parses a path quantifier like `*`, `*2`, `*1..3`, `*..5`, `*2..`,
+    /// or ISO `{m,n}`, `{m,}`, `{,n}`, `{m}`.
     /// Returns (min_hops, max_hops) where None means no quantifier was present.
     fn parse_path_quantifier(&mut self) -> Result<(Option<u32>, Option<u32>)> {
+        // ISO GQL {m,n} quantifier syntax
+        if self.current.kind == TokenKind::LBrace {
+            self.advance(); // consume {
+            if self.current.kind == TokenKind::Comma {
+                // {,n}
+                self.advance();
+                let max_text = self.current.text.clone();
+                let max: u32 = max_text
+                    .parse()
+                    .map_err(|_| self.error("Invalid path length"))?;
+                self.advance();
+                self.expect(TokenKind::RBrace)?;
+                return Ok((Some(1), Some(max)));
+            }
+            let min_text = self.current.text.clone();
+            let min: u32 = min_text
+                .parse()
+                .map_err(|_| self.error("Invalid path length"))?;
+            self.advance();
+            if self.current.kind == TokenKind::RBrace {
+                // {m} means exactly m
+                self.advance();
+                return Ok((Some(min), Some(min)));
+            }
+            self.expect(TokenKind::Comma)?;
+            if self.current.kind == TokenKind::RBrace {
+                // {m,} means m to unbounded
+                self.advance();
+                return Ok((Some(min), None));
+            }
+            let max_text = self.current.text.clone();
+            let max: u32 = max_text
+                .parse()
+                .map_err(|_| self.error("Invalid path length"))?;
+            self.advance();
+            self.expect(TokenKind::RBrace)?;
+            return Ok((Some(min), Some(max)));
+        }
+
         if self.current.kind != TokenKind::Star {
             return Ok((None, None));
         }
@@ -1155,6 +1590,22 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parses either WHERE or FILTER clause (FILTER is a GQL alias for WHERE).
+    fn parse_where_or_filter_clause(&mut self) -> Result<WhereClause> {
+        // Accept both WHERE and FILTER
+        if self.current.kind == TokenKind::Filter {
+            self.advance();
+        } else {
+            self.expect(TokenKind::Where)?;
+        }
+        let expression = self.parse_expression()?;
+
+        Ok(WhereClause {
+            expression,
+            span: None,
+        })
+    }
+
     fn parse_having_clause(&mut self) -> Result<HavingClause> {
         self.expect(TokenKind::Having)?;
         let expression = self.parse_expression()?;
@@ -1183,13 +1634,27 @@ impl<'a> Parser<'a> {
             items.push(self.parse_return_item()?);
         }
 
+        // Parse optional GROUP BY
+        let group_by = if self.current.kind == TokenKind::Group {
+            self.advance();
+            self.expect(TokenKind::By)?;
+            let mut exprs = vec![self.parse_expression()?];
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                exprs.push(self.parse_expression()?);
+            }
+            exprs
+        } else {
+            Vec::new()
+        };
+
         let order_by = if self.current.kind == TokenKind::Order {
             Some(self.parse_order_by()?)
         } else {
             None
         };
 
-        let skip = if self.current.kind == TokenKind::Skip {
+        let skip = if matches!(self.current.kind, TokenKind::Skip | TokenKind::Offset) {
             self.advance();
             Some(self.parse_expression()?)
         } else {
@@ -1206,9 +1671,74 @@ impl<'a> Parser<'a> {
         Ok(ReturnClause {
             distinct,
             items,
+            group_by,
             order_by,
             skip,
             limit,
+            is_finish: false,
+            span: None,
+        })
+    }
+
+    /// Parses a SELECT clause (SQL-style projection, same semantics as RETURN).
+    /// Called after SELECT token has already been consumed.
+    fn parse_select_clause(&mut self) -> Result<ReturnClause> {
+        let distinct = if self.current.kind == TokenKind::Distinct {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        let mut items = Vec::new();
+        items.push(self.parse_return_item()?);
+        while self.current.kind == TokenKind::Comma {
+            self.advance();
+            items.push(self.parse_return_item()?);
+        }
+
+        // Parse optional GROUP BY
+        let group_by = if self.current.kind == TokenKind::Group {
+            self.advance();
+            self.expect(TokenKind::By)?;
+            let mut exprs = vec![self.parse_expression()?];
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                exprs.push(self.parse_expression()?);
+            }
+            exprs
+        } else {
+            Vec::new()
+        };
+
+        let order_by = if self.current.kind == TokenKind::Order {
+            Some(self.parse_order_by()?)
+        } else {
+            None
+        };
+
+        let skip = if matches!(self.current.kind, TokenKind::Skip | TokenKind::Offset) {
+            self.advance();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        let limit = if self.current.kind == TokenKind::Limit {
+            self.advance();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(ReturnClause {
+            distinct,
+            items,
+            group_by,
+            order_by,
+            skip,
+            limit,
+            is_finish: false,
             span: None,
         })
     }
@@ -1273,14 +1803,30 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_or_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_and_expression()?;
+        let mut left = self.parse_xor_expression()?;
 
         while self.current.kind == TokenKind::Or {
+            self.advance();
+            let right = self.parse_xor_expression()?;
+            left = Expression::Binary {
+                left: Box::new(left),
+                op: BinaryOp::Or,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(left)
+    }
+
+    fn parse_xor_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_and_expression()?;
+
+        while self.current.kind == TokenKind::Xor {
             self.advance();
             let right = self.parse_and_expression()?;
             left = Expression::Binary {
                 left: Box::new(left),
-                op: BinaryOp::Or,
+                op: BinaryOp::Xor,
                 right: Box::new(right),
             };
         }
@@ -1386,15 +1932,155 @@ impl<'a> Parser<'a> {
                 if negated {
                     self.advance(); // consume NOT
                 }
-                self.expect(TokenKind::Null)?;
-                return Ok(Expression::Unary {
-                    op: if negated {
-                        UnaryOp::IsNotNull
-                    } else {
-                        UnaryOp::IsNull
-                    },
-                    operand: Box::new(left),
-                });
+
+                let predicate = if self.current.kind == TokenKind::Null {
+                    // IS [NOT] NULL
+                    self.advance();
+                    Expression::Unary {
+                        op: if negated {
+                            UnaryOp::IsNotNull
+                        } else {
+                            UnaryOp::IsNull
+                        },
+                        operand: Box::new(left),
+                    }
+                } else if self.is_identifier() {
+                    let kw = self.get_identifier_name().to_uppercase();
+                    match kw.as_str() {
+                        "TYPED" => {
+                            // IS [NOT] TYPED <type_name>
+                            self.advance();
+                            let type_name = if self.is_identifier() {
+                                self.get_identifier_name().to_uppercase()
+                            } else {
+                                return Err(self.error("Expected type name after IS TYPED"));
+                            };
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "isTyped".to_string(),
+                                args: vec![left, Expression::Literal(Literal::String(type_name))],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
+                        "DIRECTED" => {
+                            // IS [NOT] DIRECTED
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "isDirected".to_string(),
+                                args: vec![left],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
+                        "LABELED" => {
+                            // IS [NOT] LABELED <label>
+                            self.advance();
+                            let label = if self.is_identifier() {
+                                self.get_identifier_name()
+                            } else {
+                                return Err(self.error("Expected label name after IS LABELED"));
+                            };
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "hasLabel".to_string(),
+                                args: vec![left, Expression::Literal(Literal::String(label))],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
+                        "SOURCE" => {
+                            // IS [NOT] SOURCE OF <variable>
+                            self.advance();
+                            if !(self.is_identifier()
+                                && self.get_identifier_name().eq_ignore_ascii_case("OF"))
+                            {
+                                return Err(self.error("Expected OF after IS SOURCE"));
+                            }
+                            self.advance(); // consume OF
+                            let var = if self.is_identifier() {
+                                self.get_identifier_name()
+                            } else {
+                                return Err(self.error("Expected variable after IS SOURCE OF"));
+                            };
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "isSource".to_string(),
+                                args: vec![left, Expression::Variable(var)],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
+                        "DESTINATION" => {
+                            // IS [NOT] DESTINATION OF <variable>
+                            self.advance();
+                            if !(self.is_identifier()
+                                && self.get_identifier_name().eq_ignore_ascii_case("OF"))
+                            {
+                                return Err(self.error("Expected OF after IS DESTINATION"));
+                            }
+                            self.advance(); // consume OF
+                            let var = if self.is_identifier() {
+                                self.get_identifier_name()
+                            } else {
+                                return Err(self.error("Expected variable after IS DESTINATION OF"));
+                            };
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "isDestination".to_string(),
+                                args: vec![left, Expression::Variable(var)],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
+                        _ => {
+                            return Err(self.error(
+                                "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, or DESTINATION after IS",
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(self.error(
+                        "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, or DESTINATION after IS",
+                    ));
+                };
+
+                return Ok(predicate);
             }
             _ => {}
         }
@@ -1454,7 +2140,28 @@ impl<'a> Parser<'a> {
                 operand: Box::new(operand),
             });
         }
-        self.parse_primary_expression()
+        self.parse_postfix_expression()
+    }
+
+    fn parse_postfix_expression(&mut self) -> Result<Expression> {
+        let mut expr = self.parse_primary_expression()?;
+
+        loop {
+            match self.current.kind {
+                TokenKind::LBracket => {
+                    self.advance();
+                    let index = self.parse_expression()?;
+                    self.expect(TokenKind::RBracket)?;
+                    expr = Expression::IndexAccess {
+                        base: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
@@ -1472,11 +2179,15 @@ impl<'a> Parser<'a> {
                 Ok(Expression::Literal(Literal::Bool(false)))
             }
             TokenKind::Integer => {
-                let value = self
-                    .current
-                    .text
-                    .parse()
-                    .map_err(|_| self.error("Invalid integer"))?;
+                let text = &self.current.text;
+                let value = if text.starts_with("0x") || text.starts_with("0X") {
+                    i64::from_str_radix(&text[2..], 16)
+                } else if text.starts_with("0o") || text.starts_with("0O") {
+                    i64::from_str_radix(&text[2..], 8)
+                } else {
+                    text.parse()
+                }
+                .map_err(|_| self.error("Invalid integer"))?;
                 self.advance();
                 Ok(Expression::Literal(Literal::Integer(value)))
             }
@@ -1548,7 +2259,60 @@ impl<'a> Parser<'a> {
             }
             _ if self.is_identifier() => {
                 let name = self.get_identifier_name();
+
+                // LET ... IN ... END expression
+                if name.eq_ignore_ascii_case("LET") {
+                    self.advance(); // consume LET
+                    let mut bindings = Vec::new();
+                    loop {
+                        if !self.is_identifier() {
+                            return Err(self.error("Expected variable name in LET expression"));
+                        }
+                        let var = self.get_identifier_name();
+                        self.advance();
+                        self.expect(TokenKind::Eq)?;
+                        let expr = self.parse_expression()?;
+                        bindings.push((var, expr));
+                        if self.current.kind != TokenKind::Comma {
+                            break;
+                        }
+                        self.advance(); // consume comma
+                    }
+                    // Expect IN keyword
+                    if self.current.kind != TokenKind::In {
+                        return Err(self.error("Expected IN after LET bindings"));
+                    }
+                    self.advance(); // consume IN
+                    let body = self.parse_expression()?;
+                    self.expect(TokenKind::End)?;
+                    return Ok(Expression::LetIn {
+                        bindings,
+                        body: Box::new(body),
+                    });
+                }
+
                 self.advance();
+
+                // Typed temporal literals: DATE 'str', TIME 'str', DURATION 'str', DATETIME 'str'
+                if self.current.kind == TokenKind::String {
+                    let upper = name.to_uppercase();
+                    let make_val = |parser: &Self| {
+                        let text = &parser.current.text;
+                        let inner = &text[1..text.len() - 1];
+                        unescape_string(inner)
+                    };
+                    let typed_lit = match upper.as_str() {
+                        "DATE" => Some(Literal::Date(make_val(self))),
+                        "TIME" => Some(Literal::Time(make_val(self))),
+                        "DURATION" => Some(Literal::Duration(make_val(self))),
+                        "DATETIME" => Some(Literal::Datetime(make_val(self))),
+                        _ => None,
+                    };
+                    if let Some(lit) = typed_lit {
+                        self.advance();
+                        return Ok(Expression::Literal(lit));
+                    }
+                }
 
                 if self.current.kind == TokenKind::Dot {
                     self.advance();
@@ -1560,6 +2324,26 @@ impl<'a> Parser<'a> {
                     Ok(Expression::PropertyAccess {
                         variable: name,
                         property,
+                    })
+                } else if self.current.kind == TokenKind::LBrace
+                    && name.eq_ignore_ascii_case("count")
+                {
+                    // COUNT { MATCH ... } subquery expression
+                    self.advance(); // consume {
+                    let inner_query = self.parse_exists_inner_query()?;
+                    self.expect(TokenKind::RBrace)?;
+                    Ok(Expression::CountSubquery {
+                        query: Box::new(inner_query),
+                    })
+                } else if self.current.kind == TokenKind::LBrace
+                    && name.eq_ignore_ascii_case("value")
+                {
+                    // VALUE { subquery } expression
+                    self.advance(); // consume {
+                    let inner_query = self.parse_exists_inner_query()?;
+                    self.expect(TokenKind::RBrace)?;
+                    Ok(Expression::ValueSubquery {
+                        query: Box::new(inner_query),
                     })
                 } else if self.current.kind == TokenKind::LParen {
                     // Function call
@@ -1641,6 +2425,33 @@ impl<'a> Parser<'a> {
                 // Map literal: {key: value, ...}
                 let entries = self.parse_property_map()?;
                 Ok(Expression::Map(entries))
+            }
+            TokenKind::Cast => {
+                // CAST(expr AS type) -> desugar to toInteger/toFloat/toString
+                self.advance();
+                self.expect(TokenKind::LParen)?;
+                let expr = self.parse_expression()?;
+                self.expect(TokenKind::As)?;
+                let type_name = if self.is_identifier() {
+                    let name = self.get_identifier_name().to_uppercase();
+                    self.advance();
+                    name
+                } else {
+                    return Err(self.error("Expected type name after AS"));
+                };
+                self.expect(TokenKind::RParen)?;
+                let func_name = match type_name.as_str() {
+                    "INTEGER" | "INT" | "INT64" | "BIGINT" => "toInteger",
+                    "FLOAT" | "DOUBLE" | "FLOAT64" | "REAL" => "toFloat",
+                    "STRING" | "VARCHAR" | "TEXT" => "toString",
+                    "BOOLEAN" | "BOOL" => "toBoolean",
+                    _ => return Err(self.error(&format!("Unsupported CAST type: {type_name}"))),
+                };
+                Ok(Expression::FunctionCall {
+                    name: func_name.to_string(),
+                    args: vec![expr],
+                    distinct: false,
+                })
             }
             _ => Err(self.error("Expected expression")),
         }
@@ -1725,9 +2536,11 @@ impl<'a> Parser<'a> {
             return_clause: ReturnClause {
                 distinct: false,
                 items: vec![],
+                group_by: vec![],
                 order_by: None,
                 skip: None,
                 limit: None,
+                is_finish: false,
                 span: None,
             },
             having_clause: None,
@@ -2762,5 +3575,778 @@ mod tests {
         let mut parser = Parser::new("INSERT RETURN n");
         let result = parser.parse();
         assert!(result.is_err(), "INSERT without pattern should fail");
+    }
+
+    // ==================== 0.5.13 Features ====================
+
+    // --- Comments ---
+
+    #[test]
+    fn test_parse_with_line_comment() {
+        let mut parser = Parser::new("MATCH (n) -- find all nodes\nRETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Line comment should be skipped: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_parse_with_block_comment() {
+        let mut parser = Parser::new("MATCH /* nodes */ (n:Person) RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Block comment should be skipped: {:?}",
+            result.err()
+        );
+    }
+
+    // --- XOR operator ---
+
+    #[test]
+    fn test_parse_xor_expression() {
+        let mut parser = Parser::new("MATCH (n) WHERE n.a = 1 XOR n.b = 2 RETURN n");
+        let result = parser.parse();
+        assert!(result.is_ok(), "XOR should parse: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            let where_clause = q.where_clause.expect("Expected WHERE clause");
+            if let Expression::Binary { op, .. } = &where_clause.expression {
+                assert_eq!(*op, BinaryOp::Xor);
+            } else {
+                panic!("Expected binary XOR expression");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- ISO Path Quantifiers {m,n} ---
+
+    #[test]
+    fn test_parse_iso_path_quantifier_range() {
+        let mut parser = Parser::new("MATCH (a)-[:KNOWS{2,5}]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "ISO {{m,n}} quantifier should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges[0].min_hops, Some(2));
+                assert_eq!(path.edges[0].max_hops, Some(5));
+            } else {
+                panic!("Expected path pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_iso_path_quantifier_exact() {
+        let mut parser = Parser::new("MATCH (a)-[:KNOWS{3}]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "ISO {{n}} quantifier should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges[0].min_hops, Some(3));
+                assert_eq!(path.edges[0].max_hops, Some(3));
+            } else {
+                panic!("Expected path pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_iso_path_quantifier_lower_only() {
+        let mut parser = Parser::new("MATCH (a)-[:KNOWS{2,}]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "ISO {{m,}} quantifier should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges[0].min_hops, Some(2));
+                assert_eq!(path.edges[0].max_hops, None);
+            } else {
+                panic!("Expected path pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- List Access list[i] ---
+
+    #[test]
+    fn test_parse_list_index_access() {
+        let mut parser = Parser::new("MATCH (n) RETURN [1, 2, 3][0]");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "List index access should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Expression::IndexAccess { .. } = &q.return_clause.items[0].expression {
+                // IndexAccess parsed
+            } else {
+                panic!(
+                    "Expected IndexAccess expression, got {:?}",
+                    q.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- CAST expressions ---
+
+    #[test]
+    fn test_parse_cast_to_integer() {
+        let mut parser = Parser::new("MATCH (n) RETURN CAST('42' AS INTEGER)");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "CAST AS INTEGER should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Expression::FunctionCall { name, .. } = &q.return_clause.items[0].expression {
+                assert_eq!(name, "toInteger");
+            } else {
+                panic!("Expected function call from CAST");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_cast_to_float() {
+        let mut parser = Parser::new("MATCH (n) RETURN CAST(n.val AS FLOAT)");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "CAST AS FLOAT should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Expression::FunctionCall { name, .. } = &q.return_clause.items[0].expression {
+                assert_eq!(name, "toFloat");
+            } else {
+                panic!("Expected function call from CAST");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_cast_to_string() {
+        let mut parser = Parser::new("MATCH (n) RETURN CAST(42 AS STRING)");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "CAST AS STRING should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Expression::FunctionCall { name, .. } = &q.return_clause.items[0].expression {
+                assert_eq!(name, "toString");
+            } else {
+                panic!("Expected function call from CAST");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_cast_to_boolean() {
+        let mut parser = Parser::new("MATCH (n) RETURN CAST('true' AS BOOLEAN)");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "CAST AS BOOLEAN should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Expression::FunctionCall { name, .. } = &q.return_clause.items[0].expression {
+                assert_eq!(name, "toBoolean");
+            } else {
+                panic!("Expected function call from CAST");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- OFFSET as SKIP alias ---
+
+    #[test]
+    fn test_parse_offset_as_skip_alias() {
+        let mut parser = Parser::new("MATCH (n) RETURN n OFFSET 10 LIMIT 5");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "OFFSET should parse as SKIP alias: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert!(q.return_clause.skip.is_some());
+            assert!(q.return_clause.limit.is_some());
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- Label Expressions (IS syntax) ---
+
+    #[test]
+    fn test_parse_is_label_single() {
+        let mut parser = Parser::new("MATCH (n IS Person) RETURN n");
+        let result = parser.parse();
+        assert!(result.is_ok(), "IS label should parse: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Node(node) = &q.match_clauses[0].patterns[0].pattern {
+                match &node.label_expression {
+                    Some(LabelExpression::Label(name)) => assert_eq!(name, "Person"),
+                    other => panic!("Expected Label(Person), got {:?}", other),
+                }
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_label_disjunction() {
+        let mut parser = Parser::new("MATCH (n IS Person | Company) RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "IS label disjunction should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Node(node) = &q.match_clauses[0].patterns[0].pattern {
+                assert!(matches!(
+                    &node.label_expression,
+                    Some(LabelExpression::Disjunction(_))
+                ));
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_label_conjunction() {
+        let mut parser = Parser::new("MATCH (n IS Person & Employee) RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "IS label conjunction should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Node(node) = &q.match_clauses[0].patterns[0].pattern {
+                assert!(matches!(
+                    &node.label_expression,
+                    Some(LabelExpression::Conjunction(_))
+                ));
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_label_negation() {
+        let mut parser = Parser::new("MATCH (n IS !Inactive) RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "IS label negation should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Node(node) = &q.match_clauses[0].patterns[0].pattern {
+                assert!(matches!(
+                    &node.label_expression,
+                    Some(LabelExpression::Negation(_))
+                ));
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_label_wildcard() {
+        let mut parser = Parser::new("MATCH (n IS %) RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "IS wildcard should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Node(node) = &q.match_clauses[0].patterns[0].pattern {
+                assert!(matches!(
+                    &node.label_expression,
+                    Some(LabelExpression::Wildcard)
+                ));
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_label_complex() {
+        // (Person | Company) & !Inactive
+        let mut parser = Parser::new("MATCH (n IS (Person | Company) & !Inactive) RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Complex label expression should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Node(node) = &q.match_clauses[0].patterns[0].pattern {
+                assert!(node.label_expression.is_some());
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_label_on_edge_colon_syntax() {
+        // IS on edges is not yet wired; use colon syntax instead
+        let mut parser = Parser::new("MATCH (a)-[e:KNOWS]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Edge colon syntax should parse: {:?}",
+            result.err()
+        );
+    }
+
+    // --- Path Modes ---
+
+    #[test]
+    fn test_parse_path_mode_walk() {
+        let mut parser = Parser::new("MATCH WALK (a)-[:KNOWS*]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(result.is_ok(), "WALK mode should parse: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.match_clauses[0].path_mode, Some(PathMode::Walk));
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_path_mode_trail() {
+        let mut parser = Parser::new("MATCH TRAIL (a)-[:KNOWS*]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "TRAIL mode should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.match_clauses[0].path_mode, Some(PathMode::Trail));
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_path_mode_simple() {
+        let mut parser = Parser::new("MATCH SIMPLE (a)-[:KNOWS*]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "SIMPLE mode should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.match_clauses[0].path_mode, Some(PathMode::Simple));
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_path_mode_acyclic() {
+        let mut parser = Parser::new("MATCH ACYCLIC (a)-[:KNOWS*]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "ACYCLIC mode should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.match_clauses[0].path_mode, Some(PathMode::Acyclic));
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_no_path_mode_default() {
+        let mut parser = Parser::new("MATCH (a)-[:KNOWS*]->(b) RETURN a, b");
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.match_clauses[0].path_mode, None);
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- Composite Queries ---
+
+    #[test]
+    fn test_parse_union() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name UNION MATCH (n:Company) RETURN n.name");
+        let result = parser.parse();
+        assert!(result.is_ok(), "UNION should parse: {:?}", result.err());
+
+        if let Statement::CompositeQuery { op, .. } = result.unwrap() {
+            assert_eq!(op, CompositeOp::Union);
+        } else {
+            panic!("Expected CompositeQuery");
+        }
+    }
+
+    #[test]
+    fn test_parse_union_all() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name UNION ALL MATCH (n:Company) RETURN n.name");
+        let result = parser.parse();
+        assert!(result.is_ok(), "UNION ALL should parse: {:?}", result.err());
+
+        if let Statement::CompositeQuery { op, .. } = result.unwrap() {
+            assert_eq!(op, CompositeOp::UnionAll);
+        } else {
+            panic!("Expected CompositeQuery");
+        }
+    }
+
+    #[test]
+    fn test_parse_except() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name EXCEPT MATCH (n:Employee) RETURN n.name");
+        let result = parser.parse();
+        assert!(result.is_ok(), "EXCEPT should parse: {:?}", result.err());
+
+        if let Statement::CompositeQuery { op, .. } = result.unwrap() {
+            assert_eq!(op, CompositeOp::Except);
+        } else {
+            panic!("Expected CompositeQuery");
+        }
+    }
+
+    #[test]
+    fn test_parse_intersect() {
+        let mut parser = Parser::new(
+            "MATCH (n:Person) RETURN n.name INTERSECT MATCH (n:Employee) RETURN n.name",
+        );
+        let result = parser.parse();
+        assert!(result.is_ok(), "INTERSECT should parse: {:?}", result.err());
+
+        if let Statement::CompositeQuery { op, .. } = result.unwrap() {
+            assert_eq!(op, CompositeOp::Intersect);
+        } else {
+            panic!("Expected CompositeQuery");
+        }
+    }
+
+    #[test]
+    fn test_parse_otherwise() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name OTHERWISE MATCH (n:Company) RETURN n.name");
+        let result = parser.parse();
+        assert!(result.is_ok(), "OTHERWISE should parse: {:?}", result.err());
+
+        if let Statement::CompositeQuery { op, .. } = result.unwrap() {
+            assert_eq!(op, CompositeOp::Otherwise);
+        } else {
+            panic!("Expected CompositeQuery");
+        }
+    }
+
+    // --- FILTER statement ---
+
+    #[test]
+    fn test_parse_filter_as_where_synonym() {
+        let mut parser = Parser::new("MATCH (n:Person) FILTER n.age > 25 RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "FILTER should parse as WHERE synonym: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert!(q.where_clause.is_some());
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- GROUP BY ---
+
+    #[test]
+    fn test_parse_group_by() {
+        let mut parser = Parser::new("MATCH (n:Person) RETURN n.city, count(n) GROUP BY n.city");
+        let result = parser.parse();
+        assert!(result.is_ok(), "GROUP BY should parse: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.return_clause.group_by.len(), 1);
+            if let Expression::PropertyAccess { property, .. } = &q.return_clause.group_by[0] {
+                assert_eq!(property, "city");
+            } else {
+                panic!("Expected property access in GROUP BY");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_group_by_multiple() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.city, n.age, count(n) GROUP BY n.city, n.age");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Multiple GROUP BY should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.return_clause.group_by.len(), 2);
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- ELEMENT_ID function ---
+
+    #[test]
+    fn test_parse_element_id_function() {
+        let mut parser = Parser::new("MATCH (n) RETURN element_id(n)");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "element_id should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Expression::FunctionCall { name, args, .. } =
+                &q.return_clause.items[0].expression
+            {
+                assert_eq!(name, "element_id");
+                assert_eq!(args.len(), 1);
+            } else {
+                panic!("Expected function call");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- Error Cases for New Features ---
+
+    #[test]
+    fn test_parse_error_cast_missing_as() {
+        let mut parser = Parser::new("MATCH (n) RETURN CAST(42 INTEGER)");
+        let result = parser.parse();
+        assert!(result.is_err(), "CAST without AS should fail");
+    }
+
+    #[test]
+    fn test_parse_error_cast_invalid_type() {
+        let mut parser = Parser::new("MATCH (n) RETURN CAST(42 AS VECTOR)");
+        let result = parser.parse();
+        assert!(result.is_err(), "CAST to unsupported type should fail");
+    }
+
+    #[test]
+    fn test_parse_error_group_by_without_expressions() {
+        let mut parser = Parser::new("MATCH (n) RETURN n GROUP BY");
+        let result = parser.parse();
+        assert!(result.is_err(), "GROUP BY without expressions should fail");
+    }
+
+    #[test]
+    fn test_parse_hex_integer_literal() {
+        let mut parser = Parser::new("MATCH (n) RETURN 0xFF");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Hex literal should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            let item = &q.return_clause.items[0];
+            if let Expression::Literal(Literal::Integer(val)) = &item.expression {
+                assert_eq!(*val, 255, "0xFF should parse to 255");
+            } else {
+                panic!("Expected integer literal");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_octal_integer_literal() {
+        let mut parser = Parser::new("MATCH (n) RETURN 0o77");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Octal literal should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            let item = &q.return_clause.items[0];
+            if let Expression::Literal(Literal::Integer(val)) = &item.expression {
+                assert_eq!(*val, 63, "0o77 should parse to 63");
+            } else {
+                panic!("Expected integer literal");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_scientific_float_literal() {
+        let mut parser = Parser::new("MATCH (n) RETURN 1.5e10");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Scientific literal should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            let item = &q.return_clause.items[0];
+            if let Expression::Literal(Literal::Float(val)) = &item.expression {
+                assert!((val - 1.5e10).abs() < 1.0, "1.5e10 should parse correctly");
+            } else {
+                panic!("Expected float literal");
+            }
+        }
+    }
+
+    /// Helper to extract edges from the first match pattern.
+    fn get_first_path_edges(stmt: &Statement) -> &[EdgePattern] {
+        if let Statement::Query(q) = stmt
+            && let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern
+        {
+            return &path.edges;
+        }
+        panic!("Expected query with path pattern");
+    }
+
+    #[test]
+    fn test_parse_edge_type_pipe_alternatives() {
+        let mut parser = Parser::new("MATCH (a)-[:KNOWS|LIKES|FOLLOWS]->(b) RETURN a, b");
+        let result = parser.parse().expect("Edge type pipe should parse");
+        let edges = get_first_path_edges(&result);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].types, vec!["KNOWS", "LIKES", "FOLLOWS"]);
+    }
+
+    #[test]
+    fn test_parse_edge_type_pipe_with_variable() {
+        let mut parser = Parser::new("MATCH (a)-[r:KNOWS|LIKES]->(b) RETURN r");
+        let result = parser
+            .parse()
+            .expect("Edge type pipe with var should parse");
+        let edges = get_first_path_edges(&result);
+        assert_eq!(edges[0].variable, Some("r".to_string()));
+        assert_eq!(edges[0].types, vec!["KNOWS", "LIKES"]);
+    }
+
+    #[test]
+    fn test_parse_tilde_undirected_edge() {
+        let mut parser = Parser::new("MATCH (a)~[e:KNOWS]~(b) RETURN a, b");
+        let result = parser.parse().expect("Tilde edge should parse");
+        let edges = get_first_path_edges(&result);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].variable, Some("e".to_string()));
+        assert_eq!(edges[0].types, vec!["KNOWS"]);
+        assert_eq!(edges[0].direction, EdgeDirection::Undirected);
+    }
+
+    #[test]
+    fn test_parse_tilde_simple() {
+        let mut parser = Parser::new("MATCH (a)~(b) RETURN a");
+        let result = parser.parse().expect("Simple tilde should parse");
+        let edges = get_first_path_edges(&result);
+        assert_eq!(edges[0].direction, EdgeDirection::Undirected);
+        assert!(edges[0].variable.is_none());
+        assert!(edges[0].types.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tilde_with_pipe_types() {
+        let mut parser = Parser::new("MATCH (a)~[:KNOWS|LIKES]~(b) RETURN a");
+        let result = parser.parse().expect("Tilde with pipe types should parse");
+        let edges = get_first_path_edges(&result);
+        assert_eq!(edges[0].types, vec!["KNOWS", "LIKES"]);
+        assert_eq!(edges[0].direction, EdgeDirection::Undirected);
     }
 }

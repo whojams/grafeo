@@ -168,21 +168,85 @@ impl super::Planner {
             LogicalExpression::ExistsSubquery(subplan) => {
                 // Extract the pattern from the subplan
                 // For EXISTS { MATCH (n)-[:TYPE]->() }, we extract start_var, direction, edge_type
-                let (start_var, direction, edge_type, end_labels) =
+                let (start_var, direction, edge_types, end_labels) =
                     self.extract_exists_pattern(subplan)?;
 
                 Ok(FilterExpression::ExistsSubquery {
                     start_var,
                     direction,
-                    edge_type,
+                    edge_types,
                     end_labels,
                     min_hops: None,
                     max_hops: None,
                 })
             }
-            LogicalExpression::CountSubquery(_) => Err(Error::Internal(
-                "COUNT subqueries not yet supported".to_string(),
-            )),
+            LogicalExpression::CountSubquery(subplan) => {
+                // Reuse the same pattern extraction as EXISTS (fast path for simple edges)
+                let (start_var, direction, edge_types, _end_labels) =
+                    self.extract_exists_pattern(subplan)?;
+
+                Ok(FilterExpression::CountSubquery {
+                    start_var,
+                    direction,
+                    edge_types,
+                })
+            }
+            LogicalExpression::MapProjection { base, entries } => {
+                let physical_entries: Vec<(String, FilterExpression)> = entries
+                    .iter()
+                    .map(|entry| match entry {
+                        crate::query::plan::MapProjectionEntry::PropertySelector(name) => Ok((
+                            name.clone(),
+                            FilterExpression::Property {
+                                variable: base.clone(),
+                                property: name.clone(),
+                            },
+                        )),
+                        crate::query::plan::MapProjectionEntry::LiteralEntry(key, expr) => {
+                            Ok((key.clone(), self.convert_expression(expr)?))
+                        }
+                        crate::query::plan::MapProjectionEntry::AllProperties => {
+                            // AllProperties is handled at runtime as a special marker
+                            Ok((
+                                "*".to_string(),
+                                FilterExpression::FunctionCall {
+                                    name: "properties".to_string(),
+                                    args: vec![FilterExpression::Variable(base.clone())],
+                                },
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(FilterExpression::Map(physical_entries))
+            }
+            LogicalExpression::Reduce {
+                accumulator,
+                initial,
+                variable,
+                list,
+                expression,
+            } => {
+                let init = self.convert_expression(initial)?;
+                let list_expr = self.convert_expression(list)?;
+                let body = self.convert_expression(expression)?;
+                Ok(FilterExpression::Reduce {
+                    accumulator: accumulator.clone(),
+                    initial: Box::new(init),
+                    variable: variable.clone(),
+                    list: Box::new(list_expr),
+                    expression: Box::new(body),
+                })
+            }
+            LogicalExpression::PatternComprehension { projection, .. } => {
+                // For now, pattern comprehension is translated as a collect of the
+                // projection expression. Full correlated execution requires the Apply
+                // operator wiring at the operator level.
+                let proj = self.convert_expression(projection)?;
+                Ok(FilterExpression::FunctionCall {
+                    name: "collect".to_string(),
+                    args: vec![proj],
+                })
+            }
         }
     }
 
@@ -195,7 +259,7 @@ impl super::Planner {
     pub(super) fn extract_exists_pattern(
         &self,
         subplan: &LogicalOperator,
-    ) -> Result<(String, Direction, Option<String>, Option<Vec<String>>)> {
+    ) -> Result<(String, Direction, Vec<String>, Option<Vec<String>>)> {
         match subplan {
             LogicalOperator::Expand(expand) => {
                 // Only accept single-hop: the Expand's input (source plan) must be
@@ -215,7 +279,7 @@ impl super::Planner {
                 Ok((
                     expand.from_variable.clone(),
                     direction,
-                    expand.edge_type.clone(),
+                    expand.edge_types.clone(),
                     end_labels,
                 ))
             }

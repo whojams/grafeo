@@ -131,4 +131,58 @@ impl super::Planner {
         };
         Ok((operator, columns))
     }
+
+    /// Plans an EXCEPT operator.
+    pub(super) fn plan_except(
+        &self,
+        except: &ExceptOp,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (left_op, columns) = self.plan_operator(&except.left)?;
+        let (right_op, _) = self.plan_operator(&except.right)?;
+        let output_schema = self.derive_schema_from_columns(&columns);
+        let operator = Box::new(ExceptOperator::new(
+            left_op,
+            right_op,
+            except.all,
+            output_schema,
+        ));
+        Ok((operator, columns))
+    }
+
+    /// Plans an INTERSECT operator.
+    pub(super) fn plan_intersect(
+        &self,
+        intersect: &IntersectOp,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (left_op, columns) = self.plan_operator(&intersect.left)?;
+        let (right_op, _) = self.plan_operator(&intersect.right)?;
+        let output_schema = self.derive_schema_from_columns(&columns);
+        let operator = Box::new(IntersectOperator::new(
+            left_op,
+            right_op,
+            intersect.all,
+            output_schema,
+        ));
+        Ok((operator, columns))
+    }
+
+    /// Plans an OTHERWISE operator.
+    pub(super) fn plan_otherwise(
+        &self,
+        otherwise: &OtherwiseOp,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (left_op, columns) = self.plan_operator(&otherwise.left)?;
+        let (right_op, _) = self.plan_operator(&otherwise.right)?;
+        let operator = Box::new(OtherwiseOperator::new(left_op, right_op));
+        Ok((operator, columns))
+    }
+
+    /// Plans an APPLY (lateral join) operator.
+    pub(super) fn plan_apply(&self, apply: &ApplyOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (outer_op, mut columns) = self.plan_operator(&apply.input)?;
+        let (inner_op, inner_columns) = self.plan_operator(&apply.subplan)?;
+        columns.extend(inner_columns);
+        let operator = Box::new(ApplyOperator::new(outer_op, inner_op));
+        Ok((operator, columns))
+    }
 }

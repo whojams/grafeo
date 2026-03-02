@@ -49,15 +49,23 @@ impl super::Planner {
             } else {
                 1
             };
+            let exec_path_mode = match expand.path_mode {
+                PathMode::Walk => ExecutionPathMode::Walk,
+                PathMode::Trail => ExecutionPathMode::Trail,
+                PathMode::Simple => ExecutionPathMode::Simple,
+                PathMode::Acyclic => ExecutionPathMode::Acyclic,
+            };
+
             let mut expand_op = VariableLengthExpandOperator::new(
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
                 input_op,
                 source_column,
                 direction,
-                expand.edge_type.clone(),
+                expand.edge_types.clone(),
                 min_hops,
                 max_hops,
             )
+            .with_path_mode(exec_path_mode)
             .with_tx_context(self.viewing_epoch, self.tx_id);
 
             // If a path alias is set, enable path length and detail output
@@ -75,7 +83,7 @@ impl super::Planner {
                 input_op,
                 source_column,
                 direction,
-                expand.edge_type.clone(),
+                expand.edge_types.clone(),
             )
             .with_tx_context(self.viewing_epoch, self.tx_id);
             Box::new(expand_op)
@@ -172,7 +180,7 @@ impl super::Planner {
             steps.push(ExpandStep {
                 source_column,
                 direction,
-                edge_type: expand.edge_type.clone(),
+                edge_types: expand.edge_types.clone(),
             });
 
             // Add edge and target columns

@@ -1068,3 +1068,366 @@ class TestGqlFunctions:
             )
         )
         assert result[0]["len"] == 2
+
+
+# =============================================================================
+# ISO GQL FEATURES (0.5.13)
+# =============================================================================
+
+
+class TestGqlIsoFeatures:
+    """Tests for ISO GQL features added in 0.5.13."""
+
+    # --- Comments ---
+
+    def test_line_comment(self, db):
+        """Line comments (-- with space) are skipped."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) -- find X nodes\nRETURN n.v"))
+        assert len(result) == 1
+        assert result[0]["n.v"] == 1
+
+    def test_block_comment(self, db):
+        """Block comments /* ... */ are skipped."""
+        db.create_node(["X"], {"v": 42})
+        result = list(db.execute("MATCH /* select */ (n:X) RETURN n.v"))
+        assert len(result) == 1
+        assert result[0]["n.v"] == 42
+
+    # --- XOR operator ---
+
+    def test_xor_true_false(self, db):
+        """XOR: true XOR false = true."""
+        db.create_node(["X"], {"a": True, "b": False})
+        result = list(db.execute("MATCH (n:X) WHERE n.a XOR n.b RETURN n.a"))
+        assert len(result) == 1
+
+    def test_xor_true_true(self, db):
+        """XOR: true XOR true = false."""
+        db.create_node(["X"], {"a": True, "b": True})
+        result = list(db.execute("MATCH (n:X) WHERE n.a XOR n.b RETURN n.a"))
+        assert len(result) == 0
+
+    # --- CAST expressions ---
+
+    def test_cast_to_integer(self, db):
+        """CAST('42' AS INTEGER) returns 42."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN CAST('42' AS INTEGER) AS val"))
+        assert result[0]["val"] == 42
+
+    def test_cast_to_float(self, db):
+        """CAST('3.14' AS FLOAT) returns float."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN CAST('3.14' AS FLOAT) AS val"))
+        assert abs(result[0]["val"] - 3.14) < 0.001
+
+    def test_cast_to_string(self, db):
+        """CAST(42 AS STRING) returns '42'."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN CAST(42 AS STRING) AS val"))
+        assert "42" in str(result[0]["val"])
+
+    def test_cast_to_boolean(self, db):
+        """CAST('true' AS BOOLEAN) returns True."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN CAST('true' AS BOOLEAN) AS val"))
+        assert result[0]["val"] is True
+
+    # --- ISO Path Quantifiers {m,n} ---
+
+    def test_iso_quantifier_range(self, db):
+        """Path quantifier {1,2} limits hop range."""
+        a = db.create_node(["N"], {"name": "a"})
+        b = db.create_node(["N"], {"name": "b"})
+        c = db.create_node(["N"], {"name": "c"})
+        d = db.create_node(["N"], {"name": "d"})
+        db.create_edge(a.id, b.id, "NEXT")
+        db.create_edge(b.id, c.id, "NEXT")
+        db.create_edge(c.id, d.id, "NEXT")
+        result = list(
+            db.execute(
+                "MATCH (start:N {name: 'a'})-[:NEXT{1,2}]->(end:N) RETURN end.name"
+            )
+        )
+        names = {r["end.name"] for r in result}
+        assert "b" in names
+        assert "c" in names
+        assert "d" not in names  # 3 hops, outside {1,2}
+
+    def test_iso_quantifier_exact(self, db):
+        """Path quantifier {2} matches exactly 2 hops."""
+        a = db.create_node(["N"], {"name": "a"})
+        b = db.create_node(["N"], {"name": "b"})
+        c = db.create_node(["N"], {"name": "c"})
+        db.create_edge(a.id, b.id, "NEXT")
+        db.create_edge(b.id, c.id, "NEXT")
+        result = list(
+            db.execute(
+                "MATCH (start:N {name: 'a'})-[:NEXT{2}]->(end:N) RETURN end.name"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["end.name"] == "c"
+
+    # --- List Access ---
+
+    def test_list_index_access(self, db):
+        """list[i] returns element at index i."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN [10, 20, 30][1] AS val"))
+        assert result[0]["val"] == 20
+
+    # --- OFFSET as SKIP alias ---
+
+    def test_offset_as_skip(self, db):
+        """OFFSET N works like SKIP N."""
+        for i in range(5):
+            db.create_node(["Item"], {"idx": i})
+        result = list(
+            db.execute("MATCH (n:Item) RETURN n.idx ORDER BY n.idx OFFSET 2 LIMIT 2")
+        )
+        assert len(result) == 2
+        assert result[0]["n.idx"] == 2
+        assert result[1]["n.idx"] == 3
+
+    # --- Label Expressions (IS syntax) ---
+
+    def test_is_single_label(self, db):
+        """IS Label matches nodes with that label."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Company"], {"name": "Acme"})
+        result = list(db.execute("MATCH (n IS Person) RETURN n.name"))
+        assert len(result) == 1
+        assert result[0]["n.name"] == "Alice"
+
+    def test_is_label_disjunction(self, db):
+        """IS Person | Company matches nodes with either label."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Company"], {"name": "Acme"})
+        db.create_node(["Animal"], {"name": "Rex"})
+        result = list(db.execute("MATCH (n IS Person | Company) RETURN n.name"))
+        names = {r["n.name"] for r in result}
+        assert names == {"Alice", "Acme"}
+
+    def test_is_label_conjunction(self, db):
+        """IS Person & Employee matches nodes with both labels."""
+        db.create_node(["Person", "Employee"], {"name": "Alice"})
+        db.create_node(["Person"], {"name": "Bob"})
+        result = list(db.execute("MATCH (n IS Person & Employee) RETURN n.name"))
+        assert len(result) == 1
+        assert result[0]["n.name"] == "Alice"
+
+    def test_is_label_negation(self, db):
+        """IS !Company matches nodes without Company label."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Company"], {"name": "Acme"})
+        result = list(db.execute("MATCH (n IS !Company) RETURN n.name"))
+        names = {r["n.name"] for r in result}
+        assert "Alice" in names
+        assert "Acme" not in names
+
+    def test_is_label_wildcard(self, db):
+        """IS % matches any labeled node."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Company"], {"name": "Acme"})
+        result = list(db.execute("MATCH (n IS %) RETURN n.name"))
+        assert len(result) >= 2
+
+    def test_is_label_complex(self, db):
+        """IS (Person | Company) & !Inactive matches complex label expression."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Person", "Inactive"], {"name": "Bob"})
+        db.create_node(["Company"], {"name": "Acme"})
+        db.create_node(["Company", "Inactive"], {"name": "Defunct"})
+        result = list(
+            db.execute("MATCH (n IS (Person | Company) & !Inactive) RETURN n.name")
+        )
+        names = {r["n.name"] for r in result}
+        assert names == {"Alice", "Acme"}
+
+    # --- Composite Queries ---
+
+    def test_union(self, db):
+        """UNION returns distinct results from both queries."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Company"], {"name": "Acme"})
+        result = list(
+            db.execute(
+                "MATCH (n:Person) RETURN n.name UNION MATCH (n:Company) RETURN n.name"
+            )
+        )
+        names = {r["n.name"] for r in result}
+        assert names == {"Alice", "Acme"}
+
+    def test_union_all(self, db):
+        """UNION ALL keeps duplicates."""
+        db.create_node(["Person"], {"name": "Alice"})
+        db.create_node(["Company"], {"name": "Alice"})  # same name
+        result = list(
+            db.execute(
+                "MATCH (n:Person) RETURN n.name "
+                "UNION ALL "
+                "MATCH (n:Company) RETURN n.name"
+            )
+        )
+        assert len(result) == 2  # both kept
+
+    # --- FILTER statement ---
+
+    def test_filter_as_where(self, db):
+        """FILTER works as WHERE synonym."""
+        db.create_node(["Person"], {"name": "Alice", "age": 30})
+        db.create_node(["Person"], {"name": "Bob", "age": 25})
+        result = list(db.execute("MATCH (n:Person) FILTER n.age > 27 RETURN n.name"))
+        assert len(result) == 1
+        assert result[0]["n.name"] == "Alice"
+
+    # --- GROUP BY ---
+
+    def test_group_by_explicit(self, db):
+        """GROUP BY groups results explicitly."""
+        db.create_node(["Person"], {"name": "Alice", "city": "NYC"})
+        db.create_node(["Person"], {"name": "Bob", "city": "LA"})
+        db.create_node(["Person"], {"name": "Charlie", "city": "NYC"})
+        result = list(
+            db.execute(
+                "MATCH (n:Person) RETURN n.city, count(n) AS cnt GROUP BY n.city"
+            )
+        )
+        assert len(result) == 2
+        la_row = next(r for r in result if r["n.city"] == "LA")
+        nyc_row = next(r for r in result if r["n.city"] == "NYC")
+        assert la_row["cnt"] == 1
+        assert nyc_row["cnt"] == 2
+
+    # --- ELEMENT_ID function ---
+
+    def test_element_id_returns_string(self, db):
+        """element_id(n) returns a string identifier."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN element_id(n) AS eid"))
+        assert len(result) == 1
+        eid = result[0]["eid"]
+        assert isinstance(eid, str)
+        assert "n:" in eid  # format is "n:{id}"
+
+    # --- Numeric functions ---
+
+    def test_abs_function(self, db):
+        """abs(-5) returns 5."""
+        db.create_node(["X"], {"v": -5})
+        result = list(db.execute("MATCH (n:X) RETURN abs(n.v) AS val"))
+        assert result[0]["val"] == 5
+
+    def test_ceil_function(self, db):
+        """ceil(2.3) returns 3."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN ceil(2.3) AS val"))
+        assert result[0]["val"] == 3
+
+    def test_floor_function(self, db):
+        """floor(2.7) returns 2."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN floor(2.7) AS val"))
+        assert result[0]["val"] == 2
+
+    def test_round_function(self, db):
+        """round(2.5) returns 3."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN round(2.5) AS val"))
+        assert result[0]["val"] == 3
+
+    def test_sign_function(self, db):
+        """sign(-42) returns -1."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN sign(-42) AS val"))
+        assert result[0]["val"] == -1
+
+    # --- String functions ---
+
+    def test_char_length(self, db):
+        """char_length('hello') returns 5."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN char_length('hello') AS val"))
+        assert result[0]["val"] == 5
+
+    def test_upper_function(self, db):
+        """upper('hello') returns 'HELLO'."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN upper('hello') AS val"))
+        assert result[0]["val"] == "HELLO"
+
+    def test_lower_function(self, db):
+        """lower('HELLO') returns 'hello'."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN lower('HELLO') AS val"))
+        assert result[0]["val"] == "hello"
+
+    def test_trim_function(self, db):
+        """trim('  hi  ') returns 'hi'."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN trim('  hi  ') AS val"))
+        assert result[0]["val"] == "hi"
+
+    # --- Trigonometric functions ---
+
+    def test_sin_function(self, db):
+        """sin(0) returns 0."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN sin(0) AS val"))
+        assert abs(result[0]["val"]) < 0.001
+
+    def test_cos_function(self, db):
+        """cos(0) returns 1."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN cos(0) AS val"))
+        assert abs(result[0]["val"] - 1.0) < 0.001
+
+    # --- Logarithmic functions ---
+
+    def test_log10_function(self, db):
+        """log10(100) returns 2."""
+        db.create_node(["X"], {"v": 1})
+        result = list(db.execute("MATCH (n:X) RETURN log10(100) AS val"))
+        assert abs(result[0]["val"] - 2.0) < 0.001
+
+    # --- Path Modes ---
+
+    def test_path_mode_trail(self, db):
+        """TRAIL mode prevents repeated edges."""
+        # Create a cycle: a->b->c->a
+        a = db.create_node(["N"], {"name": "a"})
+        b = db.create_node(["N"], {"name": "b"})
+        c = db.create_node(["N"], {"name": "c"})
+        db.create_edge(a.id, b.id, "NEXT")
+        db.create_edge(b.id, c.id, "NEXT")
+        db.create_edge(c.id, a.id, "NEXT")
+        result = list(
+            db.execute(
+                "MATCH TRAIL (start:N {name: 'a'})-[:NEXT*1..6]->(end:N) RETURN end.name"
+            )
+        )
+        # With TRAIL, no edge can be repeated, so max 3 edges in a cycle of 3
+        assert len(result) <= 3
+
+    def test_path_mode_acyclic(self, db):
+        """ACYCLIC mode prevents repeated nodes."""
+        # Create a cycle: a->b->c->a
+        a = db.create_node(["N"], {"name": "a"})
+        b = db.create_node(["N"], {"name": "b"})
+        c = db.create_node(["N"], {"name": "c"})
+        db.create_edge(a.id, b.id, "NEXT")
+        db.create_edge(b.id, c.id, "NEXT")
+        db.create_edge(c.id, a.id, "NEXT")
+        result = list(
+            db.execute(
+                "MATCH ACYCLIC (start:N {name: 'a'})-[:NEXT*1..6]->(end:N) "
+                "RETURN end.name"
+            )
+        )
+        # ACYCLIC prevents visiting 'a' again, so only b and c reachable
+        names = {r["end.name"] for r in result}
+        assert "a" not in names
+        assert "b" in names
+        assert "c" in names

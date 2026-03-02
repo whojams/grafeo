@@ -739,6 +739,59 @@ mod cypher_tests {
         assert_eq!(result.rows[1][0], Value::String("Bob".into()));
         assert_eq!(result.rows[2][0], Value::String("Carol".into()));
     }
+
+    #[test]
+    fn test_anon_nodes_with_edge_variable() {
+        let db = create_social_network();
+        let session = db.session();
+
+        // Issue 4: anonymous nodes with edge variable should work
+        // Test type(r) function
+        let result =
+            session.execute_cypher("MATCH (:Person)-[r:KNOWS]->(:Person) RETURN type(r) AS t");
+        assert!(
+            result.is_ok(),
+            "type(r) with anon nodes failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().row_count(), 3);
+
+        // Test RETURN r directly (resolving edge as entity)
+        let result = session.execute_cypher("MATCH (:Person)-[r:KNOWS]->(:Person) RETURN r");
+        assert!(
+            result.is_ok(),
+            "RETURN r with anon nodes failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().row_count(), 3);
+
+        // Test edge property access
+        let result = session.execute_cypher("MATCH (:Person)-[r:KNOWS]->(:Person) RETURN r.since");
+        assert!(
+            result.is_ok(),
+            "r.since with anon nodes failed: {:?}",
+            result.err()
+        );
+
+        // Exact pattern from the bug report (no edge type filter)
+        let result = session.execute_cypher("MATCH (:Person)-[r]->(:Person) RETURN r");
+        assert!(
+            result.is_ok(),
+            "RETURN r (no type) with anon nodes failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().row_count(), 3);
+
+        // WHERE clause referencing edge variable
+        let result = session
+            .execute_cypher("MATCH (:Person)-[r:KNOWS]->(:Person) WHERE r.since = 2020 RETURN r");
+        // Note: since property only exists on some edges
+        assert!(
+            result.is_ok(),
+            "WHERE r.since with anon nodes failed: {:?}",
+            result.err()
+        );
+    }
 }
 
 // ============================================================================

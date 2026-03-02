@@ -56,8 +56,8 @@ pub struct FactorizedExpandOperator {
     source_column: usize,
     /// Direction of edge traversal.
     direction: Direction,
-    /// Optional edge type filter.
-    edge_type: Option<String>,
+    /// Edge type filter (empty = match all types, multiple = match any).
+    edge_types: Vec<String>,
     /// Transaction ID for MVCC visibility (None = use current epoch).
     tx_id: Option<TxId>,
     /// Epoch for version visibility.
@@ -75,14 +75,14 @@ impl FactorizedExpandOperator {
         input: Box<dyn Operator>,
         source_column: usize,
         direction: Direction,
-        edge_type: Option<String>,
+        edge_types: Vec<String>,
     ) -> Self {
         Self {
             store,
             input,
             source_column,
             direction,
-            edge_type,
+            edge_types,
             tx_id: None,
             viewing_epoch: None,
             exhausted: false,
@@ -113,16 +113,14 @@ impl FactorizedExpandOperator {
             .into_iter()
             .filter(|(target_id, edge_id)| {
                 // Filter by edge type if specified
-                let type_matches = if let Some(ref filter_type) = self.edge_type {
-                    if let Some(edge_type) = self.store.edge_type(*edge_id) {
-                        edge_type
-                            .as_str()
-                            .eq_ignore_ascii_case(filter_type.as_str())
-                    } else {
-                        false
-                    }
-                } else {
+                let type_matches = if self.edge_types.is_empty() {
                     true
+                } else if let Some(actual_type) = self.store.edge_type(*edge_id) {
+                    self.edge_types
+                        .iter()
+                        .any(|t| actual_type.as_str().eq_ignore_ascii_case(t.as_str()))
+                } else {
+                    false
                 };
 
                 if !type_matches {
@@ -291,7 +289,7 @@ impl FactorizedExpandChain {
         mut self,
         source_column: usize,
         direction: Direction,
-        edge_type: Option<String>,
+        edge_types: Vec<String>,
     ) -> Result<Self, OperatorError> {
         // Get or create the initial factorized chunk
         if self.current_result.is_none() {
@@ -306,7 +304,7 @@ impl FactorizedExpandChain {
                         Box::new(SingleChunkOperator::new(input)),
                         source_column,
                         direction,
-                        edge_type,
+                        edge_types,
                     );
 
                     if let Some(epoch) = self.viewing_epoch {
@@ -322,7 +320,7 @@ impl FactorizedExpandChain {
             // Expand the deepest level of the factorized result
             // This adds a new level without flattening - the key to memory savings
             if let Some(mut factorized) = self.current_result.take() {
-                self.expand_deepest_level(&mut factorized, source_column, direction, edge_type)?;
+                self.expand_deepest_level(&mut factorized, source_column, direction, edge_types)?;
                 self.current_result = Some(factorized);
             }
         }
@@ -400,7 +398,7 @@ impl FactorizedExpandChain {
         chunk: &mut FactorizedChunk,
         source_column: usize,
         direction: Direction,
-        edge_type: Option<String>,
+        edge_types: Vec<String>,
     ) -> Result<(), OperatorError> {
         let epoch = self.viewing_epoch;
         let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
@@ -440,14 +438,14 @@ impl FactorizedExpandChain {
                 .into_iter()
                 .filter(|(target_id, edge_id)| {
                     // Filter by edge type if specified
-                    let type_matches = if let Some(ref filter_type) = edge_type {
-                        if let Some(et) = self.store.edge_type(*edge_id) {
-                            et.as_str() == filter_type.as_str()
-                        } else {
-                            false
-                        }
-                    } else {
+                    let type_matches = if edge_types.is_empty() {
                         true
+                    } else if let Some(actual_type) = self.store.edge_type(*edge_id) {
+                        edge_types
+                            .iter()
+                            .any(|t| actual_type.as_str().eq_ignore_ascii_case(t.as_str()))
+                    } else {
+                        false
                     };
 
                     if !type_matches {
@@ -529,8 +527,8 @@ pub struct ExpandStep {
     pub source_column: usize,
     /// Direction of edge traversal.
     pub direction: Direction,
-    /// Optional edge type filter.
-    pub edge_type: Option<String>,
+    /// Edge type filter (empty = match all types, multiple = match any).
+    pub edge_types: Vec<String>,
 }
 
 /// A lazy operator that executes a factorized expand chain when next() is called.
@@ -609,7 +607,7 @@ impl LazyFactorizedChainOperator {
         // Execute each expand step
         for step in &self.steps {
             chain = chain
-                .expand(step.source_column, step.direction, step.edge_type.clone())
+                .expand(step.source_column, step.direction, step.edge_types.clone())
                 .map_err(|e| {
                     OperatorError::Execution(format!("Factorized expand failed: {}", e))
                 })?;
@@ -695,7 +693,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            Some("KNOWS".to_string()),
+            vec!["KNOWS".to_string()],
         );
 
         // Get factorized result
@@ -731,7 +729,7 @@ mod tests {
         // Run factorized expand
         let scan1 = Box::new(ScanOperator::with_label(store.clone(), "Person"));
         let mut factorized_expand =
-            FactorizedExpandOperator::new(store.clone(), scan1, 0, Direction::Outgoing, None);
+            FactorizedExpandOperator::new(store.clone(), scan1, 0, Direction::Outgoing, vec![]);
 
         let factorized_result = factorized_expand.next_factorized().unwrap().unwrap();
         let flat_from_factorized = factorized_result.flatten();
@@ -739,7 +737,7 @@ mod tests {
         // Run regular expand (using the factorized operator's flat interface)
         let scan2 = Box::new(ScanOperator::with_label(store.clone(), "Person"));
         let mut regular_expand =
-            FactorizedExpandOperator::new(store.clone(), scan2, 0, Direction::Outgoing, None);
+            FactorizedExpandOperator::new(store.clone(), scan2, 0, Direction::Outgoing, vec![]);
 
         let flat_result = regular_expand.next().unwrap().unwrap();
 
@@ -762,7 +760,7 @@ mod tests {
         let scan = Box::new(ScanOperator::with_label(store.clone(), "Person"));
 
         let mut expand =
-            FactorizedExpandOperator::new(store.clone(), scan, 0, Direction::Outgoing, None);
+            FactorizedExpandOperator::new(store.clone(), scan, 0, Direction::Outgoing, vec![]);
 
         let result = expand.next_factorized().unwrap();
         assert!(result.is_some());
@@ -806,9 +804,9 @@ mod tests {
 
         // Build 2-hop chain
         let chain = FactorizedExpandChain::new(store.clone(), source)
-            .expand(0, Direction::Outgoing, Some("KNOWS".to_string()))
+            .expand(0, Direction::Outgoing, vec!["KNOWS".to_string()])
             .unwrap()
-            .expand(1, Direction::Outgoing, Some("KNOWS".to_string())) // column 1 is target from first expand
+            .expand(1, Direction::Outgoing, vec!["KNOWS".to_string()]) // column 1 is target from first expand
             .unwrap();
 
         let result = chain.finish().expect("Should have result");
@@ -849,7 +847,7 @@ mod tests {
         let single = Box::new(SingleChunkOperator::new(source_chunk));
 
         let mut expand =
-            FactorizedExpandOperator::new(store.clone(), single, 0, Direction::Outgoing, None);
+            FactorizedExpandOperator::new(store.clone(), single, 0, Direction::Outgoing, vec![]);
 
         let factorized = expand.next_factorized().unwrap().unwrap();
 

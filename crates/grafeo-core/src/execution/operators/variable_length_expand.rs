@@ -9,6 +9,20 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// Path traversal mode controlling which paths are allowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PathMode {
+    /// Allows repeated nodes and edges (default).
+    #[default]
+    Walk,
+    /// No repeated edges in a path.
+    Trail,
+    /// No repeated nodes except the start and end may be equal.
+    Simple,
+    /// No repeated nodes at all.
+    Acyclic,
+}
+
 /// An expand operator that handles variable-length path patterns like `*1..3`.
 ///
 /// For each input row containing a source node, this operator produces
@@ -22,8 +36,8 @@ pub struct VariableLengthExpandOperator {
     source_column: usize,
     /// Direction of edge traversal.
     direction: Direction,
-    /// Optional edge type filter.
-    edge_type: Option<String>,
+    /// Edge type filter (empty = match all types, multiple = match any).
+    edge_types: Vec<String>,
     /// Minimum number of hops.
     min_hops: u32,
     /// Maximum number of hops.
@@ -46,6 +60,8 @@ pub struct VariableLengthExpandOperator {
     output_path_length: bool,
     /// Whether to output full path detail (node list and edge list).
     output_path_detail: bool,
+    /// Path traversal mode (WALK, TRAIL, SIMPLE, ACYCLIC).
+    path_mode: PathMode,
 }
 
 /// A materialized input row.
@@ -125,6 +141,28 @@ impl PathSegment {
             edges.push(edge);
         }
     }
+
+    /// Checks whether a node already appears in this path segment chain.
+    fn contains_node(&self, target: NodeId) -> bool {
+        if self.node == target {
+            return true;
+        }
+        if let Some(parent) = &self.parent {
+            return parent.contains_node(target);
+        }
+        false
+    }
+
+    /// Checks whether an edge already appears in this path segment chain.
+    fn contains_edge(&self, target: EdgeId) -> bool {
+        if self.edge == Some(target) {
+            return true;
+        }
+        if let Some(parent) = &self.parent {
+            return parent.contains_edge(target);
+        }
+        false
+    }
 }
 
 impl VariableLengthExpandOperator {
@@ -134,7 +172,7 @@ impl VariableLengthExpandOperator {
         input: Box<dyn Operator>,
         source_column: usize,
         direction: Direction,
-        edge_type: Option<String>,
+        edge_types: Vec<String>,
         min_hops: u32,
         max_hops: u32,
     ) -> Self {
@@ -143,7 +181,7 @@ impl VariableLengthExpandOperator {
             input,
             source_column,
             direction,
-            edge_type,
+            edge_types,
             min_hops,
             max_hops: max_hops.max(min_hops), // Ensure max >= min
             chunk_capacity: 2048,
@@ -155,7 +193,14 @@ impl VariableLengthExpandOperator {
             exhausted: false,
             output_path_length: false,
             output_path_detail: false,
+            path_mode: PathMode::Walk,
         }
+    }
+
+    /// Sets the path traversal mode.
+    pub fn with_path_mode(mut self, mode: PathMode) -> Self {
+        self.path_mode = mode;
+        self
     }
 
     /// Enables path length output as an additional column.
@@ -243,16 +288,14 @@ impl VariableLengthExpandOperator {
             .into_iter()
             .filter(|(target_id, edge_id)| {
                 // Filter by edge type if specified
-                let type_matches = if let Some(ref filter_type) = self.edge_type {
-                    if let Some(edge_type) = self.store.edge_type(*edge_id) {
-                        edge_type
-                            .as_str()
-                            .eq_ignore_ascii_case(filter_type.as_str())
-                    } else {
-                        false
-                    }
-                } else {
+                let type_matches = if self.edge_types.is_empty() {
                     true
+                } else if let Some(actual_type) = self.store.edge_type(*edge_id) {
+                    self.edge_types
+                        .iter()
+                        .any(|t| actual_type.as_str().eq_ignore_ascii_case(t.as_str()))
+                } else {
+                    false
                 };
 
                 if !type_matches {
@@ -274,13 +317,33 @@ impl VariableLengthExpandOperator {
             .collect()
     }
 
+    /// Checks whether a candidate expansion is allowed under the current path mode.
+    fn is_expansion_allowed(
+        &self,
+        segment: &PathSegment,
+        target: NodeId,
+        edge_id: EdgeId,
+        source_node: NodeId,
+    ) -> bool {
+        match self.path_mode {
+            PathMode::Walk => true,
+            PathMode::Trail => !segment.contains_edge(edge_id),
+            PathMode::Simple => {
+                // No repeated nodes except the start may equal the end
+                target == source_node || !segment.contains_node(target)
+            }
+            PathMode::Acyclic => !segment.contains_node(target),
+        }
+    }
+
     /// Process one input row, generating all reachable outputs.
     fn process_input_row(&self, input_idx: usize, source_node: NodeId) -> Vec<OutputRow> {
         let mut results = Vec::new();
+        let needs_tracking = self.output_path_detail || self.path_mode != PathMode::Walk;
 
-        if self.output_path_detail {
+        if needs_tracking {
             // BFS with shared-prefix path tracking via Rc<PathSegment>.
-            // Frontier: (current_node, depth, last_edge, path_segment)
+            // Required for path detail output or non-Walk path modes.
             let mut frontier: VecDeque<(NodeId, u32, EdgeId, Rc<PathSegment>)> = VecDeque::new();
 
             let root = Rc::new(PathSegment {
@@ -290,6 +353,9 @@ impl VariableLengthExpandOperator {
             });
 
             for (target, edge_id) in self.get_edges(source_node) {
+                if !self.is_expansion_allowed(&root, target, edge_id, source_node) {
+                    continue;
+                }
                 let segment = Rc::new(PathSegment {
                     node: target,
                     edge: Some(edge_id),
@@ -305,13 +371,24 @@ impl VariableLengthExpandOperator {
                         edge_id,
                         target_id: current_node,
                         path_length: depth,
-                        path_nodes: Some(segment.collect_nodes(depth)),
-                        path_edges: Some(segment.collect_edges(depth)),
+                        path_nodes: if self.output_path_detail {
+                            Some(segment.collect_nodes(depth))
+                        } else {
+                            None
+                        },
+                        path_edges: if self.output_path_detail {
+                            Some(segment.collect_edges(depth))
+                        } else {
+                            None
+                        },
                     });
                 }
 
                 if depth < self.max_hops {
                     for (target, next_edge_id) in self.get_edges(current_node) {
+                        if !self.is_expansion_allowed(&segment, target, next_edge_id, source_node) {
+                            continue;
+                        }
                         let new_segment = Rc::new(PathSegment {
                             node: target,
                             edge: Some(next_edge_id),
@@ -322,7 +399,7 @@ impl VariableLengthExpandOperator {
                 }
             }
         } else {
-            // BFS without path tracking (lightweight)
+            // BFS without path tracking (lightweight, Walk mode only)
             let mut frontier: VecDeque<(NodeId, u32, EdgeId)> = VecDeque::new();
 
             for (target, edge_id) in self.get_edges(source_node) {
@@ -545,7 +622,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            Some("NEXT".to_string()),
+            vec!["NEXT".to_string()],
             1,
             3,
         );
@@ -594,7 +671,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            Some("NEXT".to_string()),
+            vec!["NEXT".to_string()],
             2, // min 2 hops
             3, // max 3 hops
         );
@@ -649,7 +726,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             2,
         );
@@ -694,7 +771,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            Some("LIKES".to_string()),
+            vec!["LIKES".to_string()],
             1,
             3,
         );
@@ -721,7 +798,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             1,
         );
@@ -760,7 +837,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             2,
         )
@@ -792,7 +869,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             1,
         );
@@ -826,7 +903,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             3,
         );
@@ -845,7 +922,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             3,
         );
@@ -874,7 +951,7 @@ mod tests {
             scan,
             0,
             Direction::Outgoing,
-            None,
+            vec![],
             1,
             1,
         )

@@ -39,7 +39,7 @@ use grafeo_core::execution::operators::{
     SortDirection, SortKey as PhysicalSortKey, SortOperator, UnaryFilterOp, UnionOperator,
     UnwindOperator, VariableLengthExpandOperator,
 };
-use grafeo_core::graph::{Direction, lpg::LpgStore};
+use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -55,8 +55,8 @@ struct RangeBounds<'a> {
 
 /// Converts a logical plan to a physical operator tree.
 pub struct Planner {
-    /// The graph store to scan from.
-    pub(super) store: Arc<LpgStore>,
+    /// The graph store (supports both read and write operations).
+    pub(super) store: Arc<dyn GraphStoreMut>,
     /// Transaction manager for MVCC operations.
     pub(super) tx_manager: Option<Arc<TransactionManager>>,
     /// Current transaction ID (if in a transaction).
@@ -81,7 +81,7 @@ impl Planner {
     /// This creates a planner without transaction context, using the current
     /// epoch from the store for visibility.
     #[must_use]
-    pub fn new(store: Arc<LpgStore>) -> Self {
+    pub fn new(store: Arc<dyn GraphStoreMut>) -> Self {
         let epoch = store.current_epoch();
         Self {
             store,
@@ -105,7 +105,7 @@ impl Planner {
     /// * `viewing_epoch` - Epoch to use for version visibility
     #[must_use]
     pub fn with_context(
-        store: Arc<LpgStore>,
+        store: Arc<dyn GraphStoreMut>,
         tx_manager: Arc<TransactionManager>,
         tx_id: Option<TxId>,
         viewing_epoch: EpochId,
@@ -490,6 +490,9 @@ impl Planner {
                 ))
             })?;
         let operator = Box::new(MapCollectOperator::new(child_op, key_idx, value_idx));
+        // Register the output alias as a scalar column so that the Return
+        // planner emits a plain Column pass-through instead of NodeResolve.
+        self.scalar_columns.borrow_mut().insert(mc.alias.clone());
         Ok((operator, vec![mc.alias.clone()]))
     }
 }
@@ -838,8 +841,10 @@ mod tests {
         SortKey, SortOp,
     };
     use grafeo_common::types::Value;
+    use grafeo_core::graph::GraphStoreMut;
+    use grafeo_core::graph::lpg::LpgStore;
 
-    fn create_test_store() -> Arc<LpgStore> {
+    fn create_test_store() -> Arc<dyn GraphStoreMut> {
         let store = Arc::new(LpgStore::new());
         store.create_node(&["Person"]);
         store.create_node(&["Person"]);

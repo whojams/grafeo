@@ -542,7 +542,10 @@ class TestGremlinMap:
             "g.V().hasLabel('Person').groupCount().by('city')",
         )
         assert len(rows) >= 1
-        counts = rows[0]
+        raw = rows[0]
+        assert isinstance(raw, dict)
+        # The engine returns a single-column row; unwrap the inner map.
+        counts = next(iter(raw.values())) if len(raw) == 1 else raw
         assert isinstance(counts, dict)
         # NYC has Alice and Charlie
         assert counts.get("NYC", 0) == 2

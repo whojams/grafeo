@@ -109,6 +109,40 @@ impl Optimizer {
         }
     }
 
+    /// Creates an optimizer from any GraphStore implementation.
+    ///
+    /// Unlike [`from_store`](Self::from_store), this does not call
+    /// `ensure_statistics_fresh()` since external stores manage their own
+    /// statistics. The store's [`statistics()`](grafeo_core::graph::GraphStore::statistics) method
+    /// is called directly.
+    #[must_use]
+    pub fn from_graph_store(store: &dyn grafeo_core::graph::GraphStore) -> Self {
+        let stats = store.statistics();
+        let estimator = CardinalityEstimator::from_statistics(&stats);
+
+        let avg_fanout = if stats.total_nodes > 0 {
+            (stats.total_edges as f64 / stats.total_nodes as f64).max(1.0)
+        } else {
+            10.0
+        };
+
+        let edge_type_degrees: std::collections::HashMap<String, (f64, f64)> = stats
+            .edge_types
+            .iter()
+            .map(|(name, et)| (name.clone(), (et.avg_out_degree, et.avg_in_degree)))
+            .collect();
+
+        Self {
+            enable_filter_pushdown: true,
+            enable_join_reorder: true,
+            enable_projection_pushdown: true,
+            cost_model: CostModel::new()
+                .with_avg_fanout(avg_fanout)
+                .with_edge_type_degrees(edge_type_degrees),
+            card_estimator: estimator,
+        }
+    }
+
     /// Enables or disables filter pushdown.
     pub fn with_filter_pushdown(mut self, enabled: bool) -> Self {
         self.enable_filter_pushdown = enabled;

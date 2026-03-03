@@ -4,46 +4,11 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.13] - 2026-03-03
 
-Full spec compliance for GQL (ISO 39075:2024), Cypher (openCypher), and SPARQL (W3C 1.1).
-
 ### Added
 
-#### SPARQL
-
-- **Inverse property paths**: `^foaf:knows` swaps subject/object for reverse traversal
-- **ZeroOrOne property paths**: `foaf:knows?` matches zero or one hops via union of reflexive and inner path
-
-#### Cypher
-
-- **Pattern comprehension**: `[(a)-->(b) | b.prop]` via Apply + Collect aggregate
-- **COUNT subquery**: `COUNT { MATCH ... }` expression with full subplan execution
-- **Map projections**: `node { .prop1, .prop2, .* }` for selective property extraction
-- **CALL { subquery }**: inline subqueries via Apply operator for correlated execution
-- **FOREACH loop**: `FOREACH (var IN list | SET ...)` desugared to Unwind + inner mutation
-- **reduce() function**: `reduce(acc = init, x IN list | expr)` for list folding
-
-#### GQL
-
-- **Set operations** (ISO sec 14.2): EXCEPT (hash-based set difference), INTERSECT (hash-based set intersection), OTHERWISE (fallback if left is empty) with full execution
-- **COUNT { pattern } subquery**: inline count expression with subplan execution
-- **VALUE { subquery }**: scalar subquery expression via Apply operator
-- **Element pattern WHERE**: `(n WHERE n.age > 30)` and `-[e WHERE e.weight > 5]->` inline predicates
-- **ISO path search prefixes**: ANY, ANY k, ALL SHORTEST, ANY SHORTEST, SHORTEST k, SHORTEST k GROUPS
-- **Questioned paths**: `(a)-[e]->?(b)` optional edges via LeftJoin
-- **Match modes** (ISO sec 16.5): DIFFERENT EDGES (Trail) and REPEATABLE ELEMENTS (Walk)
-- **IS predicates** (ISO sec 20.15): IS TYPED, IS DIRECTED, IS LABELED, IS SOURCE OF, IS DESTINATION OF
-- **Predicate functions**: ALL_DIFFERENT, SAME, PROPERTY_EXISTS
-- **NULLIF function**: desugars to CASE WHEN a = b THEN NULL ELSE a END
-- **nodes(path), edges(path) functions**: extract node/edge sequences from path values
-- **LET statement**: variable bindings as query clause
-- **LET ... IN ... END expression**: scoped bindings in expression context
-- **FINISH statement** (ISO sec 14.10): consume input, return empty result
-- **SELECT statement**: SQL-style projection (same semantics as RETURN)
-- **NEXT statement** (ISO sec 14.3): linear composition, output of left feeds into right via Apply
-- **Path INSERT**: path patterns in CREATE decomposed into CreateNode + CreateEdge chain
-- **DDL**: CREATE [PROPERTY] GRAPH, DROP [PROPERTY] GRAPH with IF [NOT] EXISTS
-- **Session commands**: USE GRAPH, SESSION SET GRAPH/TIME ZONE/PARAMETER, SESSION RESET, SESSION CLOSE
-- **Transaction commands**: START TRANSACTION, COMMIT, ROLLBACK (routed to session API)
+- **GQL**: near-complete compliance with ISO/IEC 39075:2024 (Graph Query Language), covering all features practical for a graph database
+- **Cypher**: full openCypher v9 specification, plus common additions (e.g., pattern comprehension, CALL subqueries, FOREACH)
+- **SPARQL**: full W3C SPARQL 1.1 implementation, no 1.2 features (e.g., SPARQL Star)
 
 #### Infrastructure
 
@@ -51,32 +16,7 @@ Full spec compliance for GQL (ISO 39075:2024), Cypher (openCypher), and SPARQL (
 - **Session state management**: current graph, time zone, and session parameters with interior mutability
 - **Database-level graph management**: `create_graph()`, `drop_graph()`, `list_graphs()` public API
 - **Apply operator**: correlated subquery execution (per-row subplan evaluation) for CALL, VALUE, NEXT, and pattern comprehensions
-
-#### Previous (pre-spec-compliance)
-
-- **GQL label expressions** (ISO sec 16.8): `IS` syntax with conjunction (`&`), disjunction (`|`), negation (`!`), and wildcard (`%`) operators for pattern matching, e.g. `MATCH (n IS Person | Company)`
-- **GQL path modes** (ISO sec 16.6): WALK, TRAIL (no repeated edges), SIMPLE (no repeated nodes except endpoints), ACYCLIC (no repeated nodes) for variable-length traversals
-- **GQL ISO path quantifiers**: `{m,n}` curly-brace syntax alongside existing `*m..n` star syntax
-- **GQL CAST expressions** (ISO sec 20.8): `CAST(expr AS INTEGER/FLOAT/STRING/BOOLEAN)` desugars to existing type conversion functions
-- **GQL FILTER statement**: accepted as synonym for WHERE clause
-- **GQL GROUP BY clause** (ISO sec 16.15): explicit grouping in RETURN
-- **GQL OFFSET clause**: accepted as synonym for SKIP
-- **GQL ELEMENT_ID function** (ISO G100): returns string element identity `"n:{id}"` or `"e:{id}"`
-- **GQL comments**: line comments (double-dash with space) and block comments (`/* */`)
-- **GQL XOR operator**: full pipeline support for logical exclusive-or
-- **GQL list index access**: `list[i]` for element indexing
-- **Cypher list comprehensions**: `[x IN list WHERE cond | expr]` syntax wired in parser
-- **Cypher list slicing**: `list[start..end]` syntax wired in parser
-- **Cypher multi-label WHERE check**: `WHERE n:Person` recognized as label-check expression
-- **Cypher runtime functions**: `left()`, `right()`, `sign()`, `log()`, `log10()`, `exp()`, `e()`, `pi()`, trig functions (sin, cos, tan, asin, acos, atan, atan2, degrees, radians)
-- **SPARQL RDF collections**: `(item1 item2)` list syntax desugars to `rdf:first`/`rdf:rest` blank node chains
-- **SPARQL negated inverse paths**: `!^iri` in negated property sets
-- **SPARQL blank node scoping**: per-query ID prefix prevents cross-query blank node collisions
-- **Temporal types**: `Date`, `Time`, and `Duration` value types with ISO 8601 parsing, arithmetic, comparison, and component extraction
-- **GQL temporal literals**: `DATE '2024-01-15'`, `TIME '14:30:00'`, `DURATION 'P1Y2M'`, `DATETIME '2024-03-15T14:30:00Z'` typed literal syntax
-- **Cypher temporal functions**: `date()`, `time()`, `duration()`, `datetime()` constructors; `year()`, `month()`, `day()`, `hour()`, `minute()`, `second()` extraction; `current_date`, `current_time`, `now`
-- **Temporal arithmetic**: date +/- duration, date - date, duration +/- duration, duration * integer across GQL and Cypher
-- **SPARQL XSD temporal types**: `xsd:date`, `xsd:time`, `xsd:duration`, `xsd:dateTime` typed literal translation
+- **Temporal types**: `Date`, `Time`, `Duration` with ISO 8601 parsing, arithmetic, comparison, and component extraction across GQL, Cypher, and SPARQL
 - **Temporal JSON encoding**: `{"$date": "..."}`, `{"$time": "..."}`, `{"$duration": "..."}` for parameter passing and result serialization
 - **Python temporal bindings**: `datetime.date` and `datetime.time` round-trip; Duration as dict `{"months", "days", "nanos"}`
 

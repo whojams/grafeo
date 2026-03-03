@@ -234,13 +234,78 @@ cargo build --release --no-default-features --features "gql,cypher,storage,auth"
 
 See the [grafeo-server README](https://github.com/GrafeoDB/grafeo-server#feature-flags) for the complete feature flag reference.
 
+## Wire Protocols
+
+grafeo-server supports two binary wire protocols for high-performance client-server communication. Both are standalone Rust crates that any database can adopt via backend traits.
+
+### GWP (GQL Wire Protocol)
+
+[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/gql-wire-protocol){ .md-button }
+[:material-package-variant: crates.io](https://crates.io/crates/gwp){ .md-button }
+
+A pure Rust gRPC wire protocol for [GQL (ISO/IEC 39075)](https://www.iso.org/standard/76120.html), the international standard query language for property graphs. GWP is the primary wire protocol for grafeo-server, available on port 7687 by default.
+
+**Key features:**
+
+- Full GQL type system including extended numerics (BigInteger, BigFloat, Decimal)
+- Six gRPC services: Session, GQL, Catalog, Admin, Search, Health
+- Server-side streaming for large result sets
+- GQLSTATUS codes for structured error reporting per the ISO standard
+- Pluggable backend via `GqlBackend` trait
+- Optional TLS via rustls
+- Idle session reaping and graceful shutdown
+
+**Client bindings:**
+
+| Language | Package | Install |
+|----------|---------|---------|
+| Rust | [gwp](https://crates.io/crates/gwp) | `cargo add gwp` |
+| Python | [gwp-py](https://pypi.org/project/gwp-py/) | `uv add gwp-py` |
+| JavaScript | [gwp-js](https://www.npmjs.com/package/gwp-js) | `npm install gwp-js` |
+| Go | [gwp/go](https://github.com/GrafeoDB/gql-wire-protocol) | `go get github.com/GrafeoDB/gwp/go` |
+| Java | [dev.grafeo:gwp](https://central.sonatype.com/) | Maven Central |
+
+**Status:** v0.1.6, active development. The type system and service architecture are stable. Recent work has focused on aligning the catalog hierarchy (catalog > schema > graph) with the GQL specification.
+
+### BOLTR (Bolt Wire Protocol)
+
+[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/boltr){ .md-button }
+[:material-package-variant: crates.io](https://crates.io/crates/boltr){ .md-button }
+
+A pure Rust implementation of the [Bolt v5.x wire protocol](https://neo4j.com/docs/bolt/current/), the binary protocol used by Neo4j for client-server communication. BOLTR enables compatibility with existing Neo4j drivers and tooling.
+
+**Key features:**
+
+- Full Bolt v5.1-5.4 protocol support with PackStream binary encoding
+- Complete Bolt type system: scalars, graph elements, temporal and spatial types
+- TCP chunked message framing
+- Both server (`BoltBackend` trait) and client (`BoltConnection`, `BoltSession`) APIs
+- Pluggable authentication via `AuthValidator` trait
+- Optional TLS via tokio-rustls
+- ROUTE message support for cluster-aware drivers
+- Graceful connection draining on shutdown
+
+**Status:** v0.1.1, active development. Spec-complete for Bolt 5.1-5.4 including ROUTE and TELEMETRY messages. Rust-only at this time (existing Neo4j drivers in other languages work out of the box).
+
+### Protocol Comparison
+
+| Aspect | GWP | BOLTR |
+|--------|-----|-------|
+| **Standard** | GQL (ISO/IEC 39075) | Bolt v5.x (Neo4j) |
+| **Transport** | gRPC + Protocol Buffers | TCP + PackStream |
+| **Streaming** | Server-side gRPC streaming | Pull-based (PULL/DISCARD) |
+| **Error model** | GQLSTATUS codes (ISO) | Neo4j error codes |
+| **Client bindings** | Rust, Python, JS, Go, Java | Rust (Neo4j drivers compatible) |
+| **Default port** | 7687 | Configurable |
+| **Use case** | Standards-based GQL clients | Neo4j driver compatibility |
+
 ## When to Use
 
 | Use Case | Recommendation |
 |----------|----------------|
 | Multi-client access over HTTP | grafeo-server |
 | Embedded in an application | [grafeo](https://github.com/GrafeoDB/grafeo) (library) |
-| Browser-only, no backend | [grafeo-web](https://github.com/GrafeoDB/grafeo-web) (WASM) |
+| Browser-only, no backend | [grafeo-web](grafeo-web.md) (WASM) |
 | Lightweight sidecar / CI | grafeo-server **lite** variant |
 | Production with security | grafeo-server **full** variant |
 

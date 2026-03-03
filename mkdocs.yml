@@ -353,13 +353,13 @@ nav:
     - Ecosystem:
       - ecosystem/index.md
       - grafeo-server: ecosystem/grafeo-server.md
+      - grafeo-web: ecosystem/grafeo-web.md
       - grafeo-langchain: ecosystem/grafeo-langchain.md
       - grafeo-llamaindex: ecosystem/grafeo-llamaindex.md
       - grafeo-mcp: ecosystem/grafeo-mcp.md
       - grafeo-memory: ecosystem/grafeo-memory.md
-      - Interactive Demo: ecosystem/interactive-demo.md
-      - Performance Baselines: ecosystem/performance.md
       - graph-bench: ecosystem/graph-bench.md
       - anywidget-vector: ecosystem/anywidget-vector.md
       - anywidget-graph: ecosystem/anywidget-graph.md
+      - Performance Baselines: ecosystem/performance.md
     - Roadmap: roadmap.md

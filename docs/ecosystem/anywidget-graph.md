@@ -1,42 +1,18 @@
 # anywidget-graph
 
-Interactive graph visualization widget for Python notebooks.
+Interactive graph visualization for Python notebooks.
 
 [:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/anywidget-graph){ .md-button }
 [:simple-pypi: PyPI](https://pypi.org/project/anywidget-graph/){ .md-button }
 
 ## Overview
 
-anywidget-graph provides interactive graph visualization powered by Sigma.js. Built on the anywidget framework, it works universally across Jupyter, Marimo, VS Code, Colab and Databricks with support for multiple graph database backends.
+anywidget-graph provides interactive graph visualization powered by **Sigma.js**. Built on the [anywidget](https://anywidget.dev/) framework, it works universally across Jupyter, Marimo, VS Code, Colab and Databricks.
 
-## Features
-
-### Multi-Backend Support
-
-| Backend | Query Languages |
-|---------|-----------------|
-| **Grafeo** | GQL, Cypher, SPARQL, Gremlin, GraphQL |
-| **Neo4j** | Cypher |
-| **ArangoDB** | AQL |
-| **LadybugDB** | Cypher |
-| **NetworkX** | Python API |
-
-### Query Language Converters
-Automatically converts query results from:
-
-- Cypher (Neo4j, Grafeo)
-- GQL (ISO standard)
-- SPARQL (RDF/semantic web)
-- Gremlin (TinkerPop)
-- GraphQL (JSON responses)
-- AQL (ArangoDB)
-
-### Interactivity
-- Pan, zoom and navigate
-- Click nodes/edges to select
-- Expand/collapse neighbors
-- Multi-select paths
-- Export to PNG, SVG, JSON
+- **Backend-agnostic**: Grafeo, Neo4j, NetworkX, pandas, or raw dicts
+- **Interactive**: Pan, zoom, click, drag, pin, expand neighbors, box select
+- **Customizable**: Colors, sizes, layouts, dark mode
+- **Exportable**: HTML, JSON
 
 ## Installation
 
@@ -44,169 +20,267 @@ Automatically converts query results from:
 uv add anywidget-graph
 ```
 
-With optional backends:
+Optional extras:
 
 ```bash
-uv add "anywidget-graph[networkx,neo4j]"
+uv add "anywidget-graph[networkx]"   # NetworkX support
+uv add "anywidget-graph[pandas]"     # pandas support
+uv add "anywidget-graph[grafeo]"     # Grafeo backend
+uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
 ```
 
 ## Quick Start
 
-### From Grafeo
-
 ```python
 from anywidget_graph import Graph
-from grafeo import GrafeoDB
 
-db = GrafeoDB()
-db.execute("""
-    INSERT (:Person {name: 'Alice'})-[:KNOWS]->(:Person {name: 'Bob'}),
-           (:Person {name: 'Bob'})-[:KNOWS]->(:Person {name: 'Carol'})
-""")
+graph = Graph.from_dict({
+    "nodes": [
+        {"id": "alice", "label": "Alice", "group": "person"},
+        {"id": "bob", "label": "Bob", "group": "person"},
+        {"id": "paper", "label": "Graph Theory", "group": "document"},
+    ],
+    "edges": [
+        {"source": "alice", "target": "bob", "label": "knows"},
+        {"source": "alice", "target": "paper", "label": "authored"},
+    ]
+})
 
-result = db.execute("MATCH (n)-[r]->(m) RETURN n, r, m")
-graph = Graph.from_grafeo(result)
 graph
 ```
 
-### From NetworkX
+## Data Sources
+
+### Dictionary
+
+```python
+graph = Graph.from_dict({
+    "nodes": [{"id": "a"}, {"id": "b"}],
+    "edges": [{"source": "a", "target": "b"}]
+})
+```
+
+### Direct initialization
+
+```python
+graph = Graph(
+    nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+    edges=[{"source": "a", "target": "b", "label": "KNOWS"}],
+)
+```
+
+### Cypher results (Neo4j)
+
+```python
+from neo4j import GraphDatabase
+
+driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
+
+with driver.session() as session:
+    result = session.run("MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 100")
+    graph = Graph.from_cypher(result)
+```
+
+### GQL results
+
+```python
+graph = Graph.from_gql(result)
+```
+
+### SPARQL results
+
+```python
+from rdflib import Graph as RDFGraph
+
+g = RDFGraph()
+g.parse("data.ttl")
+result = g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")
+graph = Graph.from_sparql(result)
+```
+
+### Gremlin results (CosmosDB, TinkerPop)
+
+```python
+graph = Graph.from_gremlin(result)
+```
+
+### GraphQL results
+
+```python
+graph = Graph.from_graphql(
+    response.json(),
+    nodes_path="data.characters.results",
+    id_field="id",
+    label_field="name",
+)
+```
+
+### NetworkX
 
 ```python
 import networkx as nx
-from anywidget_graph import Graph
 
 G = nx.karate_club_graph()
-widget = Graph.from_networkx(G)
-widget
+graph = Graph.from_networkx(G)
 ```
 
-### From Edge List
+### pandas DataFrames
 
 ```python
-from anywidget_graph import Graph
+import pandas as pd
 
-nodes = [
-    {"id": "1", "label": "Alice", "group": "person"},
-    {"id": "2", "label": "Bob", "group": "person"},
-    {"id": "3", "label": "Acme", "group": "company"},
-]
+nodes_df = pd.DataFrame({"id": ["alice", "bob"], "group": ["person", "person"]})
+edges_df = pd.DataFrame({"source": ["alice"], "target": ["bob"], "weight": [1.0]})
 
-edges = [
-    {"source": "1", "target": "2", "label": "knows"},
-    {"source": "2", "target": "3", "label": "works_at"},
-]
+graph = Graph.from_dataframe(nodes_df, edges_df)
+```
 
-widget = Graph(nodes=nodes, edges=edges)
-widget
+## Interactivity
+
+### Events
+
+```python
+graph = Graph.from_dict(data)
+
+@graph.on_node_click
+def handle_node(node_id, node_data):
+    print(f"Clicked: {node_id}")
+
+@graph.on_edge_click
+def handle_edge(edge_data):
+    print(f"Edge: {edge_data['label']}")
+
+@graph.on_selection
+def handle_selection(node_ids):
+    print(f"Selected: {node_ids}")
+```
+
+### Selection
+
+```python
+graph.selected_nodes            # Current selection (list of IDs)
+graph.selection_mode = "box"    # Switch to box-select mode
+```
+
+### Node expansion
+
+```python
+graph.expand_node("alice")      # Fetch and merge neighbors (requires backend)
+```
+
+### Node pinning
+
+```python
+graph.pin_nodes(["alice", "bob"])   # Pin at current positions
+graph.unpin_nodes(["alice"])        # Release back to layout
+graph.toggle_pin("bob")            # Toggle pin state
+graph.unpin_all()                   # Unpin everything
+```
+
+### Clear
+
+```python
+graph.clear()                   # Remove all nodes, edges, pins, and selection
 ```
 
 ## Styling
 
-### Node Styling
+### Property-based coloring
 
 ```python
-widget = Graph(
+graph = Graph.from_dict(
+    data,
+    color_field="group",               # Color nodes by field
+    color_scale="viridis",             # Scale: viridis, plasma, inferno, magma, cividis, turbo
+    size_field="score",                # Size nodes by field
+    size_range=[5, 30],                # Min/max node size
+)
+```
+
+### Edge styling
+
+```python
+graph.edge_color_field = "type"
+graph.edge_color_scale = "plasma"
+graph.edge_size_field = "weight"
+graph.edge_size_range = [1, 8]
+```
+
+### Layouts
+
+```python
+Graph.from_dict(data, layout="force")      # ForceAtlas2 (default)
+Graph.from_dict(data, layout="circular")
+Graph.from_dict(data, layout="random")
+```
+
+## Options
+
+```python
+graph = Graph(
     nodes=nodes,
     edges=edges,
-    node_color_by="group",
-    node_size_by="degree",
-    node_colors={
-        "person": "#6366f1",
-        "company": "#22c55e"
-    }
+    width=800,                  # Widget width (px)
+    height=600,                 # Widget height (px)
+    background="#fafafa",       # Background color
+    show_labels=True,           # Node labels
+    show_edge_labels=False,     # Edge labels
+    show_toolbar=True,          # Toolbar visibility
+    show_settings=True,         # Settings panel
+    show_query_input=True,      # Query input box
+    dark_mode=True,             # Dark theme
+    show_tooltip=True,          # Hover tooltips
+    tooltip_fields=["label", "id"],
+    max_nodes=300,              # Limit for node expansion
 )
 ```
 
-### Layout Algorithms
+## Database Backends
+
+### Grafeo (default)
 
 ```python
-widget = Graph(
-    nodes=nodes,
-    edges=edges,
-    layout="force",  # force, hierarchical, circular, grid
-)
+import grafeo
+db = grafeo.GrafeoDB()
+graph = Graph(database_backend="grafeo", grafeo_db=db)
 ```
 
-## Event Handling
+### Neo4j (browser-side)
 
 ```python
-@widget.on_node_click
-def handle_node_click(node_id, node_data):
-    print(f"Clicked: {node_data['label']}")
-
-@widget.on_edge_click
-def handle_edge_click(edge_id, edge_data):
-    print(f"Edge: {edge_data['label']}")
+graph = Graph(
+    database_backend="neo4j",
+    connection_uri="neo4j+s://demo.neo4jlabs.com",
+    connection_username="neo4j",
+    connection_password="password",
+)
 ```
 
-## Configuration
+### Generic backend
 
 ```python
-widget = Graph(
-    nodes=nodes,
-    edges=edges,
-
-    # Display
-    show_labels=True,
-    show_edge_labels=False,
-    show_toolbar=True,
-    dark_mode=True,
-
-    # Layout
-    layout="force",
-
-    # Performance
-    virtualize=True,  # For 1000+ nodes
-)
+graph = Graph(backend=my_backend)  # Any object implementing DatabaseBackend protocol
 ```
 
-## Database Connections
-
-### Neo4j
+## Export
 
 ```python
-from anywidget_graph import Graph
-from anywidget_graph.backends import Neo4jBackend
-
-backend = Neo4jBackend(
-    uri="bolt://localhost:7687",
-    user="neo4j",
-    password="password"
-)
-
-widget = Graph(
-    backend=backend,
-    query="MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100"
-)
+graph.to_json()                         # JSON string with nodes and edges
+graph.to_html()                         # Self-contained HTML string
+graph.to_html(title="My Graph")         # Custom title
+graph.save_html("graph.html")           # Write HTML to file
 ```
 
-### ArangoDB
+## Environment Support
 
-```python
-from anywidget_graph.backends import ArangoDBBackend
-
-backend = ArangoDBBackend(
-    host="localhost",
-    database="mydb",
-    username="root",
-    password="password"
-)
-
-widget = Graph(
-    backend=backend,
-    query="FOR v, e IN 1..2 OUTBOUND 'nodes/1' edges RETURN {v, e}"
-)
-```
-
-## Notebook Compatibility
-
-Works in any environment supporting anywidget:
-
-- JupyterLab / Jupyter Notebook
-- Marimo
-- VS Code Notebooks
-- Google Colab
-- Databricks
+| Environment | Supported |
+| ----------- | --------- |
+| Marimo | Yes |
+| JupyterLab | Yes |
+| Jupyter Notebook | Yes |
+| VS Code | Yes |
+| Google Colab | Yes |
+| Databricks | Yes |
 
 ## Requirements
 

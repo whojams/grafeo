@@ -42,7 +42,7 @@ The GrafeoDB ecosystem extends beyond the core database with AI/LLM integrations
 
     Browser-based Grafeo via WebAssembly with IndexedDB persistence.
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/GrafeoDB/grafeo-web)
+    [:octicons-arrow-right-24: Learn more](grafeo-web.md)
 
 -   :material-link-variant:{ .lg .middle } **grafeo-langchain**
 

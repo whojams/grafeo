@@ -92,13 +92,17 @@ These companion projects live in separate repositories under the [GrafeoDB](http
 | Project | Description |
 | ------- | ----------- |
 | [grafeo-server](https://github.com/GrafeoDB/grafeo-server) | HTTP server & web UI |
+| [grafeo-web](https://github.com/GrafeoDB/grafeo-web) | Browser-based Grafeo (WASM) |
+| [gwp](https://github.com/GrafeoDB/gql-wire-protocol) | GQL Wire Protocol (gRPC) |
+| [boltr](https://github.com/GrafeoDB/boltr) | Bolt v5.x Wire Protocol |
+| [grafeo-memory](https://github.com/GrafeoDB/grafeo-memory) | AI memory layer for LLM applications |
 | [grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain) | LangChain graph + vector store |
 | [grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex) | LlamaIndex PropertyGraphStore |
 | [grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp) | MCP server for LLM agents |
-| [grafeo-web](https://github.com/GrafeoDB/grafeo-web) | Browser-based Grafeo (WASM) |
 | [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) | Graph visualization widget |
 | [anywidget-vector](https://github.com/GrafeoDB/anywidget-vector) | Vector visualization widget |
 | [graph-bench](https://github.com/GrafeoDB/graph-bench) | Benchmark suite |
+| [ann-benchmarks](https://github.com/GrafeoDB/ann-benchmarks) | Vector search benchmarking |
 
 ## Pre-commit Hooks (Optional)
 

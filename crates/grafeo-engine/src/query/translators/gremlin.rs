@@ -2,14 +2,12 @@
 //!
 //! Translates Gremlin AST to the common logical plan representation.
 
+use super::common::{VarGen, wrap_filter, wrap_limit, wrap_return, wrap_skip, wrap_sort};
 use crate::query::plan::{
     AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CreateEdgeOp, CreateNodeOp,
     DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, JoinOp, JoinType, LeftJoinOp,
     LogicalExpression, LogicalOperator, LogicalPlan, MapCollectOp, NodeScanOp, PathMode, ProjectOp,
     Projection, ReturnItem, SetPropertyOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
-};
-use crate::query::translator_common::{
-    VarGen, wrap_filter, wrap_limit, wrap_return, wrap_skip, wrap_sort,
 };
 use grafeo_adapters::query::gremlin::{self, ast};
 use grafeo_common::types::Value;
@@ -123,8 +121,11 @@ impl GremlinTranslator {
                             let edge_var = self.var_gen.next();
                             plan = LogicalOperator::CreateEdge(CreateEdgeOp {
                                 variable: Some(edge_var.clone()),
-                                from_variable: edge.from_var.take().unwrap(),
-                                to_variable: edge.to_var.take().unwrap(),
+                                from_variable: edge
+                                    .from_var
+                                    .take()
+                                    .expect("from_var checked above"),
+                                to_variable: edge.to_var.take().expect("to_var checked above"),
                                 edge_type: edge.edge_type.clone(),
                                 properties: std::mem::take(&mut edge.properties),
                                 input: Box::new(plan),
@@ -681,7 +682,9 @@ impl GremlinTranslator {
                         })
                         .collect();
                     // OR all conditions together
-                    let mut result = conditions.pop().unwrap();
+                    let mut result = conditions
+                        .pop()
+                        .expect("conditions non-empty for multi-label");
                     for cond in conditions {
                         result = LogicalExpression::Binary {
                             left: Box::new(cond),
@@ -813,6 +816,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Count,
                         expression: None,
+                        expression2: None,
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
@@ -830,6 +834,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Sum,
                         expression: Some(LogicalExpression::Variable(current_var.to_string())),
+                        expression2: None,
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
@@ -846,6 +851,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Avg,
                         expression: Some(LogicalExpression::Variable(current_var.to_string())),
+                        expression2: None,
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
@@ -862,6 +868,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Min,
                         expression: Some(LogicalExpression::Variable(current_var.to_string())),
+                        expression2: None,
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
@@ -878,6 +885,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Max,
                         expression: Some(LogicalExpression::Variable(current_var.to_string())),
+                        expression2: None,
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
@@ -894,6 +902,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Collect,
                         expression: Some(LogicalExpression::Variable(current_var.to_string())),
+                        expression2: None,
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
@@ -908,6 +917,7 @@ impl GremlinTranslator {
                     vec![SortKey {
                         expression: LogicalExpression::Variable(current_var.to_string()),
                         order: SortOrder::Ascending,
+                        nulls: None,
                     }]
                 } else {
                     modifiers
@@ -919,6 +929,7 @@ impl GremlinTranslator {
                                 ast::SortOrder::Desc => SortOrder::Descending,
                                 ast::SortOrder::Shuffle => SortOrder::Ascending, // Not supported
                             },
+                            nulls: None,
                         })
                         .collect()
                 };
@@ -1003,6 +1014,7 @@ impl GremlinTranslator {
                         sort_op.keys = vec![SortKey {
                             expression: by_expr,
                             order,
+                            nulls: None,
                         }];
                         Ok((LogicalOperator::Sort(sort_op), None))
                     }
@@ -1115,6 +1127,7 @@ impl GremlinTranslator {
                     aggregates: vec![AggregateExpr {
                         function: AggregateFunction::Count,
                         expression: None,
+                        expression2: None,
                         distinct: false,
                         alias: Some("count".to_string()),
                         percentile: None,
@@ -1173,7 +1186,9 @@ impl GremlinTranslator {
                 if predicates.is_empty() {
                     return Ok((input, None));
                 }
-                let mut combined = predicates.pop().unwrap();
+                let mut combined = predicates
+                    .pop()
+                    .expect("predicates non-empty after is_empty check");
                 for pred in predicates {
                     combined = LogicalExpression::Binary {
                         left: Box::new(pred),
@@ -1196,7 +1211,9 @@ impl GremlinTranslator {
                 if predicates.is_empty() {
                     return Ok((input, None));
                 }
-                let mut combined = predicates.pop().unwrap();
+                let mut combined = predicates
+                    .pop()
+                    .expect("predicates non-empty after is_empty check");
                 for pred in predicates {
                     combined = LogicalExpression::Binary {
                         left: Box::new(pred),
@@ -1656,7 +1673,9 @@ impl GremlinTranslator {
                                 right: Box::new(LogicalExpression::Labels(current_var.to_string())),
                             })
                             .collect();
-                        let mut result = conditions.pop().unwrap();
+                        let mut result = conditions
+                            .pop()
+                            .expect("conditions non-empty for multi-label");
                         for cond in conditions {
                             result = LogicalExpression::Binary {
                                 left: Box::new(cond),
@@ -1715,7 +1734,9 @@ impl GremlinTranslator {
         if predicates.is_empty() {
             return Ok(None);
         }
-        let mut result = predicates.pop().unwrap();
+        let mut result = predicates
+            .pop()
+            .expect("predicates non-empty after is_empty check");
         for pred in predicates {
             result = LogicalExpression::Binary {
                 left: Box::new(pred),
@@ -1876,7 +1897,7 @@ mod tests {
 
     #[test]
     fn test_translate_has_key_value() {
-        let result = translate("g.V().has('name', 'Alice')");
+        let result = translate("g.V().has('name', 'Alix')");
         assert!(result.is_ok());
         let plan = result.unwrap();
 
@@ -2138,7 +2159,7 @@ mod tests {
 
     #[test]
     fn test_translate_add_v_with_property() {
-        let result = translate("g.addV('Person').property('name', 'Alice')");
+        let result = translate("g.addV('Person').property('name', 'Alix')");
         assert!(result.is_ok());
         let plan = result.unwrap();
 
@@ -2158,7 +2179,7 @@ mod tests {
 
     #[test]
     fn test_translate_add_v_with_multiple_properties() {
-        let result = translate("g.addV('Person').property('name', 'Alice').property('age', 30)");
+        let result = translate("g.addV('Person').property('name', 'Alix').property('age', 30)");
         assert!(result.is_ok());
         let plan = result.unwrap();
 
@@ -2178,7 +2199,7 @@ mod tests {
     #[test]
     fn test_translate_property_on_existing_node() {
         // property() on an existing node should create SetPropertyOp
-        let result = translate("g.V().has('name', 'Alice').property('updated', true)");
+        let result = translate("g.V().has('name', 'Alix').property('updated', true)");
         assert!(result.is_ok());
         let plan = result.unwrap();
 
@@ -2490,7 +2511,7 @@ mod tests {
 
     #[test]
     fn test_add_vertex_with_properties() {
-        let result = translate("g.addV('Person').property('name', 'Alice').property('age', 30)");
+        let result = translate("g.addV('Person').property('name', 'Alix').property('age', 30)");
         assert!(result.is_ok());
         let plan = result.unwrap();
 
@@ -2798,7 +2819,7 @@ mod tests {
 
     #[test]
     fn test_as_select_produces_project() {
-        let result = translate("g.V().has('name','Alice').as('a').out('knows').select('a')");
+        let result = translate("g.V().has('name','Alix').as('a').out('knows').select('a')");
         assert!(result.is_ok(), "as/select should parse: {:?}", result.err());
         let plan = result.unwrap();
 
@@ -2988,7 +3009,7 @@ mod tests {
     #[test]
     fn test_select_multiple_keys_produces_multi_column() {
         let result =
-            translate("g.V().has('name','Alice').as('a').out('knows').as('b').select('a','b')");
+            translate("g.V().has('name','Alix').as('a').out('knows').as('b').select('a','b')");
         assert!(
             result.is_ok(),
             "select('a','b') should parse: {:?}",

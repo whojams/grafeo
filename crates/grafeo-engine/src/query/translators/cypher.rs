@@ -3,17 +3,17 @@
 //! Translates parsed Cypher queries into the common logical plan representation
 //! that can be optimized and executed.
 
+use super::common::{
+    combine_with_and, is_aggregate_function, to_aggregate_function, wrap_distinct, wrap_filter,
+    wrap_limit, wrap_return, wrap_skip, wrap_sort,
+};
 use crate::query::plan::{
     AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp, CallProcedureOp,
     CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LeftJoinOp,
     ListPredicateKind, LogicalExpression, LogicalOperator, LogicalPlan, MapProjectionEntry,
-    MergeOp, MergeRelationshipOp, NodeScanOp, PathMode, ProcedureYield, ProjectOp, Projection,
-    RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp,
-    UnwindOp,
-};
-use crate::query::translator_common::{
-    combine_with_and, is_aggregate_function, to_aggregate_function, wrap_distinct, wrap_filter,
-    wrap_limit, wrap_return, wrap_skip, wrap_sort,
+    MergeOp, MergeRelationshipOp, NodeScanOp, ParameterScanOp, PathMode, ProcedureYield, ProjectOp,
+    Projection, RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder,
+    UnaryOp, UnionOp, UnwindOp,
 };
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
@@ -183,14 +183,43 @@ impl CypherTranslator {
     }
 
     /// Translates `CALL { subquery }` to an Apply operator.
+    ///
+    /// When the inner subquery starts with `WITH <vars>` and there is an outer
+    /// input, the WITH items are treated as variable imports from the outer scope.
+    /// The imported variable names are recorded in `ApplyOp.shared_variables` so
+    /// the planner can wire them through `ParameterState`.
     fn translate_call_subquery(
         &self,
         inner: &ast::Query,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        // Translate the inner subquery
+        // Detect importing WITH: if the first clause is WITH and we have outer input,
+        // extract the imported variable names and start the inner plan from a
+        // ParameterScan instead of Empty.
+        let mut shared_variables = Vec::new();
         let mut inner_plan: Option<LogicalOperator> = None;
-        for clause in &inner.clauses {
+        let mut clauses_iter = inner.clauses.iter();
+
+        if input.is_some()
+            && let Some(ast::Clause::With(with_clause)) = inner.clauses.first()
+        {
+            for item in &with_clause.items {
+                if let ast::Expression::Variable(name) = &item.expression {
+                    let var_name = item.alias.as_deref().unwrap_or(name);
+                    shared_variables.push(var_name.to_string());
+                }
+            }
+            if !shared_variables.is_empty() {
+                // Skip the importing WITH and start from a ParameterScan
+                clauses_iter.next();
+                inner_plan = Some(LogicalOperator::ParameterScan(ParameterScanOp {
+                    columns: shared_variables.clone(),
+                }));
+            }
+        }
+
+        // Translate the remaining inner subquery clauses
+        for clause in clauses_iter {
             inner_plan = Some(self.translate_clause(clause, inner_plan)?);
         }
         let inner_plan = inner_plan.ok_or_else(|| {
@@ -204,6 +233,7 @@ impl CypherTranslator {
             Some(outer) => Ok(LogicalOperator::Apply(ApplyOp {
                 input: Box::new(outer),
                 subplan: Box::new(inner_plan),
+                shared_variables,
             })),
             None => Ok(inner_plan),
         }
@@ -344,7 +374,7 @@ impl CypherTranslator {
         Ok(plan)
     }
 
-    /// Builds a predicate expression for property filters like {name: 'Alice', city: 'NYC'}.
+    /// Builds a predicate expression for property filters like {name: 'Alix', city: 'NYC'}.
     fn build_property_predicate(
         &self,
         variable: &str,
@@ -615,21 +645,84 @@ impl CypherTranslator {
         // If there's no input, use Empty which produces a single row for projection evaluation
         let input = input.unwrap_or(LogicalOperator::Empty);
 
-        let projections: Vec<Projection> = with_clause
+        // Check if WITH contains aggregate functions (e.g. WITH collect(n) AS people)
+        let has_aggregates = with_clause
             .items
             .iter()
-            .map(|item| {
-                Ok(Projection {
-                    expression: self.translate_expression(&item.expression)?,
-                    alias: item.alias.clone(),
-                })
-            })
-            .collect::<Result<_>>()?;
+            .any(|item| contains_aggregate(&item.expression));
 
-        let mut plan = LogicalOperator::Project(ProjectOp {
-            projections,
-            input: Box::new(input),
-        });
+        let mut plan = if has_aggregates {
+            let (aggregates, group_by, post_return) =
+                self.extract_aggregates_and_groups_from_items(&with_clause.items)?;
+
+            let agg_op = LogicalOperator::Aggregate(AggregateOp {
+                group_by,
+                aggregates,
+                input: Box::new(input),
+                having: None,
+            });
+
+            if let Some(return_items) = post_return {
+                let projections = return_items
+                    .into_iter()
+                    .map(|item| Projection {
+                        expression: item.expression,
+                        alias: item.alias,
+                    })
+                    .collect();
+                LogicalOperator::Project(ProjectOp {
+                    projections,
+                    input: Box::new(agg_op),
+                })
+            } else {
+                agg_op
+            }
+        } else {
+            let projections: Vec<Projection> = with_clause
+                .items
+                .iter()
+                .map(|item| {
+                    Ok(Projection {
+                        expression: self.translate_expression(&item.expression)?,
+                        alias: item.alias.clone(),
+                    })
+                })
+                .collect::<Result<_>>()?;
+
+            // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
+            let has_pattern_comp = projections.iter().any(|p| {
+                matches!(
+                    &p.expression,
+                    LogicalExpression::PatternComprehension { .. }
+                )
+            });
+            let (input, projections) = if has_pattern_comp {
+                let items: Vec<ReturnItem> = projections
+                    .into_iter()
+                    .map(|p| ReturnItem {
+                        expression: p.expression,
+                        alias: p.alias,
+                    })
+                    .collect();
+                let (rewritten_input, rewritten_items) =
+                    self.rewrite_pattern_comprehensions(input, items)?;
+                let projections = rewritten_items
+                    .into_iter()
+                    .map(|item| Projection {
+                        expression: item.expression,
+                        alias: item.alias,
+                    })
+                    .collect();
+                (rewritten_input, projections)
+            } else {
+                (input, projections)
+            };
+
+            LogicalOperator::Project(ProjectOp {
+                projections,
+                input: Box::new(input),
+            })
+        };
 
         if let Some(where_clause) = &with_clause.where_clause {
             let predicate = self.translate_expression(&where_clause.predicate)?;
@@ -887,8 +980,17 @@ impl CypherTranslator {
             // (e.g. `count(n) > 0 AS exists`), we decompose it into:
             //   1. An aggregate (`count(n)` with synthetic alias)
             //   2. A post-aggregate projection (`_agg_0 > 0 AS exists`)
+            let items = match &return_clause.items {
+                ast::ReturnItems::All => {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Cannot use RETURN * with aggregates",
+                    )));
+                }
+                ast::ReturnItems::Explicit(items) => items,
+            };
             let (aggregates, group_by, post_return) =
-                self.extract_aggregates_and_groups(return_clause)?;
+                self.extract_aggregates_and_groups_from_items(items)?;
 
             let agg_op = LogicalOperator::Aggregate(AggregateOp {
                 group_by,
@@ -923,7 +1025,24 @@ impl CypherTranslator {
                     .collect::<Result<_>>()?,
             };
 
-            Ok(wrap_return(input, items, return_clause.distinct))
+            // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
+            let has_pattern_comp = items.iter().any(|item| {
+                matches!(
+                    &item.expression,
+                    LogicalExpression::PatternComprehension { .. }
+                )
+            });
+            if has_pattern_comp {
+                let (rewritten_input, rewritten_items) =
+                    self.rewrite_pattern_comprehensions(input, items)?;
+                Ok(wrap_return(
+                    rewritten_input,
+                    rewritten_items,
+                    return_clause.distinct,
+                ))
+            } else {
+                Ok(wrap_return(input, items, return_clause.distinct))
+            }
         }
     }
 
@@ -933,9 +1052,9 @@ impl CypherTranslator {
     /// `Some(...)` when any return item wraps an aggregate in a binary/unary
     /// expression (e.g. `count(n) > 0 AS exists`). In that case a post-aggregate
     /// `ReturnOp` must be chained to evaluate the outer expression.
-    fn extract_aggregates_and_groups(
+    fn extract_aggregates_and_groups_from_items(
         &self,
-        return_clause: &ast::ReturnClause,
+        items: &[ast::ProjectionItem],
     ) -> Result<(
         Vec<AggregateExpr>,
         Vec<LogicalExpression>,
@@ -946,16 +1065,6 @@ impl CypherTranslator {
         let mut needs_post_return = false;
         let mut post_return_items = Vec::new();
         let mut agg_counter: u32 = 0;
-
-        let items = match &return_clause.items {
-            ast::ReturnItems::All => {
-                return Err(Error::Query(QueryError::new(
-                    QueryErrorKind::Semantic,
-                    "Cannot use RETURN * with aggregates",
-                )));
-            }
-            ast::ReturnItems::Explicit(items) => items,
-        };
 
         for item in items {
             if let Some(agg_expr) = self.try_extract_aggregate(&item.expression, &item.alias)? {
@@ -1086,7 +1195,11 @@ impl CypherTranslator {
                 distinct,
             } => {
                 if let Some(function) = to_aggregate_function(name) {
-                    let expression = if args.is_empty() {
+                    // count(*) is represented as FunctionCall with Variable("*") arg
+                    let is_count_star = function == AggregateFunction::Count
+                        && args.len() == 1
+                        && matches!(&args[0], ast::Expression::Variable(v) if v == "*");
+                    let expression = if args.is_empty() || is_count_star {
                         None
                     } else {
                         Some(self.translate_expression(&args[0])?)
@@ -1113,6 +1226,7 @@ impl CypherTranslator {
                     Ok(Some(AggregateExpr {
                         function,
                         expression,
+                        expression2: None,
                         distinct: *distinct,
                         alias: alias.clone(),
                         percentile,
@@ -1147,6 +1261,7 @@ impl CypherTranslator {
                         ast::SortDirection::Asc => SortOrder::Ascending,
                         ast::SortDirection::Desc => SortOrder::Descending,
                     },
+                    nulls: None,
                 })
             })
             .collect::<Result<_>>()?;
@@ -1837,6 +1952,120 @@ impl CypherTranslator {
             _ => None,
         }
     }
+
+    // ========================================================================
+    // Pattern comprehension rewrite helpers
+    // ========================================================================
+
+    /// Extracts the anchor (start) variable from a pattern subplan.
+    ///
+    /// Walks down the operator tree following the input chain to find
+    /// the leaf `NodeScan`, returning its variable name. This is the
+    /// variable that needs to be imported from the outer scope.
+    fn extract_anchor_variable(op: &LogicalOperator) -> Option<String> {
+        match op {
+            LogicalOperator::NodeScan(scan) if scan.input.is_none() => Some(scan.variable.clone()),
+            LogicalOperator::NodeScan(scan) => Self::extract_anchor_variable(scan.input.as_ref()?),
+            LogicalOperator::Expand(expand) => Self::extract_anchor_variable(&expand.input),
+            LogicalOperator::Filter(filter) => Self::extract_anchor_variable(&filter.input),
+            _ => None,
+        }
+    }
+
+    /// Replaces the leaf `NodeScan(variable)` in a pattern subplan with
+    /// `ParameterScan(columns: [variable])`, for correlated execution.
+    fn replace_anchor_with_parameter_scan(op: LogicalOperator, anchor: &str) -> LogicalOperator {
+        match op {
+            LogicalOperator::NodeScan(scan) if scan.variable == anchor && scan.input.is_none() => {
+                LogicalOperator::ParameterScan(ParameterScanOp {
+                    columns: vec![anchor.to_string()],
+                })
+            }
+            LogicalOperator::Expand(mut expand) => {
+                let new_input = Self::replace_anchor_with_parameter_scan(*expand.input, anchor);
+                expand.input = Box::new(new_input);
+                LogicalOperator::Expand(expand)
+            }
+            LogicalOperator::Filter(mut filter) => {
+                let new_input = Self::replace_anchor_with_parameter_scan(*filter.input, anchor);
+                filter.input = Box::new(new_input);
+                LogicalOperator::Filter(filter)
+            }
+            other => other,
+        }
+    }
+
+    /// Rewrites pattern comprehensions in return items into Apply + Aggregate.
+    ///
+    /// For each `PatternComprehension` found in the items:
+    /// 1. Extracts the anchor variable from the subplan
+    /// 2. Replaces the leaf NodeScan with ParameterScan
+    /// 3. Wraps the subplan in `Aggregate(collect(projection) AS alias)`
+    /// 4. Wraps the current input in `Apply(shared_variables: [anchor])`
+    /// 5. Replaces the expression with `Variable(alias)`
+    fn rewrite_pattern_comprehensions(
+        &self,
+        input: LogicalOperator,
+        items: Vec<ReturnItem>,
+    ) -> Result<(LogicalOperator, Vec<ReturnItem>)> {
+        let mut current_input = input;
+        let mut rewritten_items = Vec::with_capacity(items.len());
+
+        for item in items {
+            if let LogicalExpression::PatternComprehension {
+                ref subplan,
+                ref projection,
+            } = item.expression
+            {
+                // 1. Extract anchor variable
+                let anchor = Self::extract_anchor_variable(subplan).ok_or_else(|| {
+                    Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Pattern comprehension must start with a node pattern",
+                    ))
+                })?;
+
+                // 2. Generate alias for the collected list
+                let alias = item.alias.clone().unwrap_or_else(|| self.next_anon_var());
+
+                // 3. Replace anchor NodeScan with ParameterScan
+                let rewritten_subplan =
+                    Self::replace_anchor_with_parameter_scan(*subplan.clone(), &anchor);
+
+                // 4. Wrap in Aggregate(collect(projection) AS alias)
+                let inner_plan = LogicalOperator::Aggregate(AggregateOp {
+                    group_by: vec![],
+                    aggregates: vec![AggregateExpr {
+                        function: AggregateFunction::Collect,
+                        expression: Some(*projection.clone()),
+                        expression2: None,
+                        distinct: false,
+                        alias: Some(alias.clone()),
+                        percentile: None,
+                    }],
+                    input: Box::new(rewritten_subplan),
+                    having: None,
+                });
+
+                // 5. Wrap outer input in Apply
+                current_input = LogicalOperator::Apply(ApplyOp {
+                    input: Box::new(current_input),
+                    subplan: Box::new(inner_plan),
+                    shared_variables: vec![anchor],
+                });
+
+                // 6. Replace expression with Variable reference
+                rewritten_items.push(ReturnItem {
+                    expression: LogicalExpression::Variable(alias.clone()),
+                    alias: Some(alias),
+                });
+            } else {
+                rewritten_items.push(item);
+            }
+        }
+
+        Ok((current_input, rewritten_items))
+    }
 }
 
 /// Checks if an AST expression contains an aggregate function call.
@@ -1977,7 +2206,7 @@ mod tests {
 
     #[test]
     fn test_translate_create_node() {
-        let plan = translate("CREATE (n:Person {name: 'Alice'})").unwrap();
+        let plan = translate("CREATE (n:Person {name: 'Alix'})").unwrap();
 
         if let LogicalOperator::CreateNode(create) = &plan.root {
             assert_eq!(create.variable, "n");
@@ -2024,7 +2253,7 @@ mod tests {
 
     #[test]
     fn test_translate_set_property() {
-        let plan = translate("MATCH (n:Person) SET n.name = 'Bob' RETURN n").unwrap();
+        let plan = translate("MATCH (n:Person) SET n.name = 'Gus' RETURN n").unwrap();
 
         if let LogicalOperator::Return(ret) = &plan.root {
             if let LogicalOperator::SetProperty(set) = ret.input.as_ref() {
@@ -2042,7 +2271,7 @@ mod tests {
 
     #[test]
     fn test_translate_set_multiple_properties() {
-        let plan = translate("MATCH (n:Person) SET n.name = 'Alice', n.age = 30 RETURN n").unwrap();
+        let plan = translate("MATCH (n:Person) SET n.name = 'Alix', n.age = 30 RETURN n").unwrap();
 
         if let LogicalOperator::Return(ret) = &plan.root {
             // SET creates chained SetProperty operators
@@ -2228,7 +2457,7 @@ mod tests {
 
     #[test]
     fn test_translate_merge() {
-        let plan = translate("MERGE (n:Person {name: 'Alice'})").unwrap();
+        let plan = translate("MERGE (n:Person {name: 'Alix'})").unwrap();
 
         if let LogicalOperator::Merge(merge) = &plan.root {
             assert_eq!(merge.variable, "n");
@@ -2243,7 +2472,7 @@ mod tests {
     #[test]
     fn test_translate_merge_on_create() {
         let plan =
-            translate("MERGE (n:Person {name: 'Alice'}) ON CREATE SET n.created = true").unwrap();
+            translate("MERGE (n:Person {name: 'Alix'}) ON CREATE SET n.created = true").unwrap();
 
         if let LogicalOperator::Merge(merge) = &plan.root {
             assert_eq!(merge.on_create.len(), 1);
@@ -2279,7 +2508,7 @@ mod tests {
     #[test]
     fn test_translate_map_expression() {
         // Test map in CREATE with properties
-        let plan = translate("CREATE (n:Person {name: 'Alice', age: 30})").unwrap();
+        let plan = translate("CREATE (n:Person {name: 'Alix', age: 30})").unwrap();
 
         if let LogicalOperator::CreateNode(create) = &plan.root {
             assert_eq!(create.properties.len(), 2);
@@ -2477,7 +2706,7 @@ mod tests {
     fn test_translate_multiple_match_clauses() {
         // Two independent MATCH clauses should produce a valid plan
         let plan = translate(
-            "MATCH (a:Person) WHERE a.name = 'Alice' MATCH (b:Person) WHERE b.name = 'Bob' RETURN a.name, b.name",
+            "MATCH (a:Person) WHERE a.name = 'Alix' MATCH (b:Person) WHERE b.name = 'Gus' RETURN a.name, b.name",
         )
         .unwrap();
 
@@ -2768,40 +2997,45 @@ mod tests {
     fn test_translate_pattern_comprehension() {
         let plan = translate("MATCH (p:Person) RETURN [(p)-[:KNOWS]->(f) | f.name]").unwrap();
 
+        // After rewrite: Return -> Apply -> NodeScan
+        // The PatternComprehension is rewritten to Apply + Aggregate(Collect) + ParameterScan
         if let LogicalOperator::Return(ret) = &plan.root {
             assert_eq!(ret.items.len(), 1);
-            if let LogicalExpression::PatternComprehension {
-                subplan,
-                projection,
-            } = &ret.items[0].expression
-            {
-                // The subplan should contain an Expand (for the pattern)
-                fn has_expand(op: &LogicalOperator) -> bool {
-                    match op {
-                        LogicalOperator::Expand(_) => true,
-                        LogicalOperator::Filter(f) => has_expand(&f.input),
-                        _ => false,
+            // Expression should now be a Variable reference (not PatternComprehension)
+            assert!(
+                matches!(&ret.items[0].expression, LogicalExpression::Variable(_)),
+                "Expected Variable after rewrite, got {:?}",
+                ret.items[0].expression
+            );
+            // The input should be an Apply operator
+            if let LogicalOperator::Apply(apply) = ret.input.as_ref() {
+                assert_eq!(apply.shared_variables, vec!["p".to_string()]);
+                // Inner plan should be Aggregate(Collect)
+                if let LogicalOperator::Aggregate(agg) = apply.subplan.as_ref() {
+                    assert_eq!(agg.aggregates.len(), 1);
+                    assert_eq!(agg.aggregates[0].function, AggregateFunction::Collect);
+                    // Aggregate input should contain an Expand over ParameterScan
+                    fn has_parameter_scan(op: &LogicalOperator) -> bool {
+                        match op {
+                            LogicalOperator::ParameterScan(_) => true,
+                            LogicalOperator::Expand(e) => has_parameter_scan(&e.input),
+                            LogicalOperator::Filter(f) => has_parameter_scan(&f.input),
+                            _ => false,
+                        }
                     }
+                    assert!(
+                        has_parameter_scan(&agg.input),
+                        "Expected ParameterScan in inner plan, got {:?}",
+                        agg.input
+                    );
+                } else {
+                    panic!(
+                        "Expected Aggregate in Apply subplan, got {:?}",
+                        apply.subplan
+                    );
                 }
-                assert!(
-                    has_expand(subplan),
-                    "Expected pattern comprehension subplan to contain Expand"
-                );
-                // The projection should be f.name (Property access)
-                assert!(
-                    matches!(
-                        projection.as_ref(),
-                        LogicalExpression::Property { variable, property }
-                        if variable == "f" && property == "name"
-                    ),
-                    "Expected projection to be f.name, got {:?}",
-                    projection
-                );
             } else {
-                panic!(
-                    "Expected PatternComprehension, got {:?}",
-                    ret.items[0].expression
-                );
+                panic!("Expected Apply as Return input, got {:?}", ret.input);
             }
         } else {
             panic!("Expected Return");

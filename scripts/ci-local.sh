@@ -83,7 +83,7 @@ if [[ -d ".venv" ]]; then
         uv pip install solvor 2>/dev/null || pip install solvor
     }
 
-    run_check "Python Tests" "$PYTHON_CMD -m pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py --ignore=tests/python/benchmark_phases.py"
+    run_check "Python Tests" "$PYTHON_CMD -m pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py"
 else
     echo -e "${YELLOW}[Python Tests] Skipped (no .venv found)${NC}"
 fi

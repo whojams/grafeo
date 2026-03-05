@@ -691,16 +691,16 @@ mod tests {
 
     #[test]
     fn test_factorized_expand_basic() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes
-        let alice = store.create_node(&["Person"]);
-        let bob = store.create_node(&["Person"]);
+        let alix = store.create_node(&["Person"]);
+        let gus = store.create_node(&["Person"]);
         let charlie = store.create_node(&["Person"]);
 
-        // Alice knows Bob and Charlie
-        store.create_edge(alice, bob, "KNOWS");
-        store.create_edge(alice, charlie, "KNOWS");
+        // Alix knows Gus and Charlie
+        store.create_edge(alix, gus, "KNOWS");
+        store.create_edge(alix, charlie, "KNOWS");
 
         let scan = Box::new(ScanOperator::with_label(store.clone(), "Person"));
 
@@ -721,26 +721,26 @@ mod tests {
         // Should have 2 levels: sources and neighbors
         assert_eq!(chunk.level_count(), 2);
 
-        // Level 0 has 3 sources (Alice, Bob, Charlie)
+        // Level 0 has 3 sources (Alix, Gus, Charlie)
         assert_eq!(chunk.level(0).unwrap().column_count(), 1);
 
         // Level 1 has edges and targets
-        // Only Alice has outgoing KNOWS edges (to Bob and Charlie)
+        // Only Alix has outgoing KNOWS edges (to Gus and Charlie)
         // So we should have 2 edges total
         assert_eq!(chunk.level(1).unwrap().column_count(), 2);
     }
 
     #[test]
     fn test_factorized_vs_flat_equivalence() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
-        let alice = store.create_node(&["Person"]);
-        let bob = store.create_node(&["Person"]);
+        let alix = store.create_node(&["Person"]);
+        let gus = store.create_node(&["Person"]);
         let charlie = store.create_node(&["Person"]);
 
-        store.create_edge(alice, bob, "KNOWS");
-        store.create_edge(alice, charlie, "KNOWS");
-        store.create_edge(bob, charlie, "KNOWS");
+        store.create_edge(alix, gus, "KNOWS");
+        store.create_edge(alix, charlie, "KNOWS");
+        store.create_edge(gus, charlie, "KNOWS");
 
         // Run factorized expand
         let scan1 = Box::new(ScanOperator::with_label(store.clone(), "Person"));
@@ -767,7 +767,7 @@ mod tests {
 
     #[test]
     fn test_factorized_expand_no_edges() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes with no edges
         store.create_node(&["Person"]);
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_factorized_chain_two_hop() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create a 2-hop graph: a -> b1, b2 -> c1, c2, c3, c4
         let a = store.create_node(&["Person"]);
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_factorized_memory_savings() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create a star graph: center connected to 10 leaves
         let center = store.create_node(&["Center"]);

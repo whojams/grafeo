@@ -120,13 +120,13 @@ impl EntityId for EdgeId {
 /// use grafeo_common::types::{NodeId, PropertyKey};
 ///
 /// let storage = PropertyStorage::new();
-/// let alice = NodeId::new(1);
+/// let alix = NodeId::new(1);
 ///
-/// storage.set(alice, PropertyKey::new("name"), "Alice".into());
-/// storage.set(alice, PropertyKey::new("age"), 30i64.into());
+/// storage.set(alix, PropertyKey::new("name"), "Alix".into());
+/// storage.set(alix, PropertyKey::new("age"), 30i64.into());
 ///
 /// // Fetch all properties at once
-/// let props = storage.get_all(alice);
+/// let props = storage.get_all(alix);
 /// assert_eq!(props.len(), 2);
 /// ```
 pub struct PropertyStorage<Id: EntityId = NodeId> {
@@ -1108,18 +1108,18 @@ mod tests {
         let name_key = PropertyKey::new("name");
         let age_key = PropertyKey::new("age");
 
-        storage.set(node1, name_key.clone(), "Alice".into());
+        storage.set(node1, name_key.clone(), "Alix".into());
         storage.set(node1, age_key.clone(), 30i64.into());
-        storage.set(node2, name_key.clone(), "Bob".into());
+        storage.set(node2, name_key.clone(), "Gus".into());
 
         assert_eq!(
             storage.get(node1, &name_key),
-            Some(Value::String("Alice".into()))
+            Some(Value::String("Alix".into()))
         );
         assert_eq!(storage.get(node1, &age_key), Some(Value::Int64(30)));
         assert_eq!(
             storage.get(node2, &name_key),
-            Some(Value::String("Bob".into()))
+            Some(Value::String("Gus".into()))
         );
         assert!(storage.get(node2, &age_key).is_none());
     }
@@ -1131,7 +1131,7 @@ mod tests {
         let node = NodeId::new(1);
         let key = PropertyKey::new("name");
 
-        storage.set(node, key.clone(), "Alice".into());
+        storage.set(node, key.clone(), "Alix".into());
         assert!(storage.get(node, &key).is_some());
 
         let removed = storage.remove(node, &key);
@@ -1144,7 +1144,7 @@ mod tests {
         let storage = PropertyStorage::new();
 
         let node = NodeId::new(1);
-        storage.set(node, PropertyKey::new("name"), "Alice".into());
+        storage.set(node, PropertyKey::new("name"), "Alix".into());
         storage.set(node, PropertyKey::new("age"), 30i64.into());
         storage.set(node, PropertyKey::new("active"), true.into());
 
@@ -1157,7 +1157,7 @@ mod tests {
         let storage = PropertyStorage::new();
 
         let node = NodeId::new(1);
-        storage.set(node, PropertyKey::new("name"), "Alice".into());
+        storage.set(node, PropertyKey::new("name"), "Alix".into());
         storage.set(node, PropertyKey::new("age"), 30i64.into());
 
         storage.remove_all(node);
@@ -1170,13 +1170,13 @@ mod tests {
     fn test_property_column() {
         let mut col = PropertyColumn::new();
 
-        col.set(NodeId::new(1), "Alice".into());
-        col.set(NodeId::new(2), "Bob".into());
+        col.set(NodeId::new(1), "Alix".into());
+        col.set(NodeId::new(2), "Gus".into());
 
         assert_eq!(col.len(), 2);
         assert!(!col.is_empty());
 
-        assert_eq!(col.get(NodeId::new(1)), Some(Value::String("Alice".into())));
+        assert_eq!(col.get(NodeId::new(1)), Some(Value::String("Alix".into())));
 
         col.remove(NodeId::new(1));
         assert!(col.get(NodeId::new(1)).is_none());
@@ -1317,7 +1317,7 @@ mod tests {
             storage.set(
                 NodeId::new(i),
                 PropertyKey::new("name"),
-                Value::String(ArcStr::from("Alice")),
+                Value::String(ArcStr::from("Alix")),
             );
         }
 
@@ -1398,9 +1398,9 @@ mod tests {
         let node2 = NodeId::new(2);
         let node3 = NodeId::new(3);
 
-        storage.set(node1, PropertyKey::new("name"), "Alice".into());
+        storage.set(node1, PropertyKey::new("name"), "Alix".into());
         storage.set(node1, PropertyKey::new("age"), 25i64.into());
-        storage.set(node2, PropertyKey::new("name"), "Bob".into());
+        storage.set(node2, PropertyKey::new("name"), "Gus".into());
         // node3 has no properties
 
         let ids = vec![node1, node2, node3];
@@ -1413,11 +1413,11 @@ mod tests {
 
         assert_eq!(
             all_props[0].get(&PropertyKey::new("name")),
-            Some(&Value::String("Alice".into()))
+            Some(&Value::String("Alix".into()))
         );
         assert_eq!(
             all_props[1].get(&PropertyKey::new("name")),
-            Some(&Value::String("Bob".into()))
+            Some(&Value::String("Gus".into()))
         );
     }
 

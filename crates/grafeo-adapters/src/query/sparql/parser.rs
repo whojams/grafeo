@@ -634,7 +634,10 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RightBrace)?;
 
         if patterns.len() == 1 {
-            Ok(patterns.into_iter().next().unwrap())
+            Ok(patterns
+                .into_iter()
+                .next()
+                .expect("len == 1 guarantees at least one element"))
         } else {
             Ok(GraphPattern::Group(patterns))
         }
@@ -739,7 +742,10 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::RightBrace)?;
 
             if patterns.len() == 1 {
-                Ok(patterns.into_iter().next().unwrap())
+                Ok(patterns
+                    .into_iter()
+                    .next()
+                    .expect("len == 1 guarantees at least one element"))
             } else {
                 Ok(GraphPattern::Group(patterns))
             }
@@ -1994,13 +2000,19 @@ impl<'a> Parser<'a> {
         let value = if self.current.kind == TokenKind::LongString {
             self.advance();
             // Remove triple quotes
-            let quote = text.chars().next().unwrap();
+            let quote = text
+                .chars()
+                .next()
+                .ok_or_else(|| self.error("empty string literal token"))?;
             let inner = &text[3..text.len() - 3];
             self.unescape_string(inner, quote)
         } else if self.current.kind == TokenKind::String {
             self.advance();
             // Remove single quotes
-            let quote = text.chars().next().unwrap();
+            let quote = text
+                .chars()
+                .next()
+                .ok_or_else(|| self.error("empty string literal token"))?;
             let inner = &text[1..text.len() - 1];
             self.unescape_string(inner, quote)
         } else {

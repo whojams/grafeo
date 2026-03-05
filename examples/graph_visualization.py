@@ -41,8 +41,8 @@ def __():
     db = GrafeoDB()
 
     # Create some people
-    alice = db.create_node(["Person"], {"name": "Alice", "age": 30, "city": "Seattle"})
-    bob = db.create_node(["Person"], {"name": "Bob", "age": 35, "city": "Portland"})
+    alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "Seattle"})
+    gus = db.create_node(["Person"], {"name": "Gus", "age": 35, "city": "Portland"})
     carol = db.create_node(["Person"], {"name": "Carol", "age": 28, "city": "Seattle"})
     dave = db.create_node(
         ["Person"], {"name": "Dave", "age": 40, "city": "San Francisco"}
@@ -54,22 +54,22 @@ def __():
     globex = db.create_node(["Company"], {"name": "Globex Inc", "industry": "Finance"})
 
     # Create relationships
-    db.create_edge(alice.id, bob.id, "KNOWS", {"since": 2020})
-    db.create_edge(alice.id, carol.id, "KNOWS", {"since": 2019})
-    db.create_edge(bob.id, carol.id, "KNOWS", {"since": 2021})
-    db.create_edge(bob.id, dave.id, "KNOWS", {"since": 2018})
+    db.create_edge(alix.id, gus.id, "KNOWS", {"since": 2020})
+    db.create_edge(alix.id, carol.id, "KNOWS", {"since": 2019})
+    db.create_edge(gus.id, carol.id, "KNOWS", {"since": 2021})
+    db.create_edge(gus.id, dave.id, "KNOWS", {"since": 2018})
     db.create_edge(carol.id, eve.id, "KNOWS", {"since": 2022})
     db.create_edge(dave.id, eve.id, "KNOWS", {"since": 2020})
 
     # Employment relationships
-    db.create_edge(alice.id, acme.id, "WORKS_AT", {"role": "Engineer"})
-    db.create_edge(bob.id, acme.id, "WORKS_AT", {"role": "Manager"})
+    db.create_edge(alix.id, acme.id, "WORKS_AT", {"role": "Engineer"})
+    db.create_edge(gus.id, acme.id, "WORKS_AT", {"role": "Manager"})
     db.create_edge(carol.id, globex.id, "WORKS_AT", {"role": "Analyst"})
     db.create_edge(dave.id, globex.id, "WORKS_AT", {"role": "Director"})
     db.create_edge(eve.id, acme.id, "WORKS_AT", {"role": "Designer"})
 
     print(f"Created {db.node_count} nodes and {db.edge_count} edges")
-    return acme, alice, bob, carol, dave, db, eve, globex
+    return acme, alix, gus, carol, dave, db, eve, globex
 
 
 @app.cell
@@ -77,14 +77,14 @@ def __(db, mo):
     # Query to find friends of friends
     result = db.execute("""
         MATCH (p:Person)-[:KNOWS]->(friend)-[:KNOWS]->(fof:Person)
-        WHERE p.name = 'Alice' AND p <> fof
+        WHERE p.name = 'Alix' AND p <> fof
         RETURN DISTINCT p.name as person, fof.name as friend_of_friend
     """)
 
     mo.md(f"""
     ## Friends of Friends Query
 
-    Finding Alice's friends-of-friends:
+    Finding Alix's friends-of-friends:
 
     | Person | Friend of Friend |
     |--------|-----------------|

@@ -608,7 +608,7 @@ impl super::Planner {
                 &call.name[0]
             } else {
                 // For dotted names, try the last segment as procedure name
-                call.name.last().unwrap()
+                call.name.last().expect("name has at least one segment")
             };
             if let Some(proc_def) = catalog.get_procedure(proc_name) {
                 return self.plan_user_procedure(call, &proc_def);

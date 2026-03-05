@@ -31,10 +31,10 @@ use std::hash::Hash;
 /// use grafeo_common::types::NodeId;
 ///
 /// let index: HashIndex<String, NodeId> = HashIndex::new();
-/// index.insert("alice".to_string(), NodeId::new(1));
-/// index.insert("bob".to_string(), NodeId::new(2));
+/// index.insert("alix".to_string(), NodeId::new(1));
+/// index.insert("gus".to_string(), NodeId::new(2));
 ///
-/// assert_eq!(index.get(&"alice".to_string()), Some(NodeId::new(1)));
+/// assert_eq!(index.get(&"alix".to_string()), Some(NodeId::new(1)));
 /// ```
 pub struct HashIndex<K: Hash + Eq, V: Copy> {
     /// The underlying sharded hash map for lock-free reads.
@@ -183,10 +183,10 @@ mod tests {
     fn test_string_key_index() {
         let index: StringKeyIndex = HashIndex::new();
 
-        index.insert("alice".to_string(), NodeId::new(1));
-        index.insert("bob".to_string(), NodeId::new(2));
+        index.insert("alix".to_string(), NodeId::new(1));
+        index.insert("gus".to_string(), NodeId::new(2));
 
-        assert_eq!(index.get(&"alice".to_string()), Some(NodeId::new(1)));
-        assert_eq!(index.get(&"bob".to_string()), Some(NodeId::new(2)));
+        assert_eq!(index.get(&"alix".to_string()), Some(NodeId::new(1)));
+        assert_eq!(index.get(&"gus".to_string()), Some(NodeId::new(2)));
     }
 }

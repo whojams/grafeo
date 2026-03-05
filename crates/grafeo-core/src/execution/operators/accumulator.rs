@@ -30,10 +30,42 @@ pub enum AggregateFunction {
     StdDev,
     /// Population standard deviation (STDEVP).
     StdDevPop,
+    /// Sample variance (VAR_SAMP / VARIANCE).
+    Variance,
+    /// Population variance (VAR_POP).
+    VariancePop,
     /// Discrete percentile (PERCENTILE_DISC).
     PercentileDisc,
     /// Continuous percentile (PERCENTILE_CONT).
     PercentileCont,
+    /// Concatenate values with separator (GROUP_CONCAT).
+    GroupConcat,
+    /// Return an arbitrary value from the group (SAMPLE).
+    Sample,
+    /// Sample covariance (COVAR_SAMP(y, x)).
+    CovarSamp,
+    /// Population covariance (COVAR_POP(y, x)).
+    CovarPop,
+    /// Pearson correlation coefficient (CORR(y, x)).
+    Corr,
+    /// Regression slope (REGR_SLOPE(y, x)).
+    RegrSlope,
+    /// Regression intercept (REGR_INTERCEPT(y, x)).
+    RegrIntercept,
+    /// Coefficient of determination (REGR_R2(y, x)).
+    RegrR2,
+    /// Regression count of non-null pairs (REGR_COUNT(y, x)).
+    RegrCount,
+    /// Regression sum of squares for x (REGR_SXX(y, x)).
+    RegrSxx,
+    /// Regression sum of squares for y (REGR_SYY(y, x)).
+    RegrSyy,
+    /// Regression sum of cross-products (REGR_SXY(y, x)).
+    RegrSxy,
+    /// Regression average of x (REGR_AVGX(y, x)).
+    RegrAvgx,
+    /// Regression average of y (REGR_AVGY(y, x)).
+    RegrAvgy,
 }
 
 /// An aggregation expression.
@@ -41,8 +73,10 @@ pub enum AggregateFunction {
 pub struct AggregateExpr {
     /// The aggregation function.
     pub function: AggregateFunction,
-    /// Column index to aggregate (None for COUNT(*)).
+    /// Column index to aggregate (None for COUNT(*), y column for binary set functions).
     pub column: Option<usize>,
+    /// Second column index for binary set functions (x column for COVAR, CORR, REGR_*).
+    pub column2: Option<usize>,
     /// Whether to aggregate distinct values only.
     pub distinct: bool,
     /// Output alias (for naming the result column).
@@ -57,6 +91,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Count,
             column: None,
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -68,6 +103,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::CountNonNull,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -79,6 +115,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Sum,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -90,6 +127,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Avg,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -101,6 +139,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Min,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -112,6 +151,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Max,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -123,6 +163,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::First,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -134,6 +175,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Last,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -145,6 +187,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::Collect,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -156,6 +199,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::StdDev,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -167,6 +211,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::StdDevPop,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: None,
@@ -182,6 +227,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::PercentileDisc,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: Some(percentile.clamp(0.0, 1.0)),
@@ -197,6 +243,7 @@ impl AggregateExpr {
         Self {
             function: AggregateFunction::PercentileCont,
             column: Some(column),
+            column2: None,
             distinct: false,
             alias: None,
             percentile: Some(percentile.clamp(0.0, 1.0)),

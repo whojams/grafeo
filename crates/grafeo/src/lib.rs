@@ -30,7 +30,7 @@
 //! let mut session = db.session();
 //!
 //! // Add a person
-//! session.execute("INSERT (:Person {name: 'Alice', age: 30})")?;
+//! session.execute("INSERT (:Person {name: 'Alix', age: 30})")?;
 //!
 //! // Find them
 //! let result = session.execute("MATCH (p:Person) RETURN p.name")?;

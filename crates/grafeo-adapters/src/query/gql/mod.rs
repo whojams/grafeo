@@ -24,13 +24,11 @@ pub fn parse(query: &str) -> Result<Statement> {
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
     use super::*;
 
     #[test]
-    fn test_parse_simple_match() {
-        // This is a placeholder - actual parsing will be implemented
-        // let result = parse("MATCH (n) RETURN n");
-        // assert!(result.is_ok());
+    fn parse_simple_match() {
+        let result = parse("MATCH (n) RETURN n");
+        assert!(result.is_ok());
     }
 }

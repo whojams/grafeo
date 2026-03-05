@@ -140,6 +140,22 @@ impl JoinGraph {
         conditions
     }
 
+    /// Returns the edges in the graph.
+    pub fn edges(&self) -> &[JoinEdge] {
+        &self.edges
+    }
+
+    /// Returns true if the join graph contains a cycle.
+    ///
+    /// A connected graph with N nodes and E edges is cyclic when E >= N.
+    #[must_use]
+    pub fn is_cyclic(&self) -> bool {
+        if self.nodes.is_empty() {
+            return false;
+        }
+        self.edges.len() >= self.nodes.len()
+    }
+
     /// Checks if two node sets are connected by at least one edge.
     pub fn are_connected(&self, left: &BitSet, right: &BitSet) -> bool {
         for edge in &self.edges {
@@ -1233,5 +1249,84 @@ mod tests {
         assert!(plan.is_some());
         let plan = plan.unwrap();
         assert_eq!(plan.nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_join_graph_cyclic_triangle() {
+        // Triangle: a-b, b-c, c-a (3 nodes, 3 edges -> cyclic)
+        let mut builder = JoinGraphBuilder::new();
+        builder.add_relation("a", create_node_scan("a", "A"));
+        builder.add_relation("b", create_node_scan("b", "B"));
+        builder.add_relation("c", create_node_scan("c", "C"));
+
+        builder.add_join_condition(
+            "a",
+            "b",
+            LogicalExpression::Variable("a".to_string()),
+            LogicalExpression::Variable("b".to_string()),
+        );
+        builder.add_join_condition(
+            "b",
+            "c",
+            LogicalExpression::Variable("b".to_string()),
+            LogicalExpression::Variable("c".to_string()),
+        );
+        builder.add_join_condition(
+            "c",
+            "a",
+            LogicalExpression::Variable("c".to_string()),
+            LogicalExpression::Variable("a".to_string()),
+        );
+
+        let graph = builder.build();
+        assert!(graph.is_cyclic());
+    }
+
+    #[test]
+    fn test_join_graph_acyclic_chain() {
+        // Chain: a-b, b-c (3 nodes, 2 edges -> acyclic)
+        let mut builder = JoinGraphBuilder::new();
+        builder.add_relation("a", create_node_scan("a", "A"));
+        builder.add_relation("b", create_node_scan("b", "B"));
+        builder.add_relation("c", create_node_scan("c", "C"));
+
+        builder.add_join_condition(
+            "a",
+            "b",
+            LogicalExpression::Variable("a".to_string()),
+            LogicalExpression::Variable("b".to_string()),
+        );
+        builder.add_join_condition(
+            "b",
+            "c",
+            LogicalExpression::Variable("b".to_string()),
+            LogicalExpression::Variable("c".to_string()),
+        );
+
+        let graph = builder.build();
+        assert!(!graph.is_cyclic());
+    }
+
+    #[test]
+    fn test_join_graph_empty_not_cyclic() {
+        let graph = JoinGraph::new();
+        assert!(!graph.is_cyclic());
+    }
+
+    #[test]
+    fn test_join_graph_edges_accessor() {
+        let mut builder = JoinGraphBuilder::new();
+        builder.add_relation("a", create_node_scan("a", "A"));
+        builder.add_relation("b", create_node_scan("b", "B"));
+
+        builder.add_join_condition(
+            "a",
+            "b",
+            LogicalExpression::Variable("a".to_string()),
+            LogicalExpression::Variable("b".to_string()),
+        );
+
+        let graph = builder.build();
+        assert_eq!(graph.edges().len(), 1);
     }
 }

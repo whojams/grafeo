@@ -16,7 +16,7 @@ use crate::query::QueryResult;
 /// In Node.js 22+, use with `using` for automatic cleanup:
 /// ```js
 /// using tx = db.beginTransaction();
-/// await tx.execute("INSERT (:Person {name: 'Alice'})");
+/// await tx.execute("INSERT (:Person {name: 'Alix'})");
 /// tx.commit();
 /// // auto-rollback if commit not called
 /// ```

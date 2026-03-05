@@ -134,7 +134,7 @@ for PY_VER in "${PYTHON_VERSIONS[@]}"; do
     fi
 
     echo -e "${GRAY}  Running tests...${NC}"
-    if ! "$PYTHON_CMD" -m pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py --ignore=tests/python/benchmark_phases.py; then
+    if ! "$PYTHON_CMD" -m pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py; then
         echo -e "${RED}  Python $PY_VER FAILED: Tests failed${NC}"
         FAILED+=("Python $PY_VER")
         continue

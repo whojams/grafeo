@@ -562,7 +562,7 @@ impl super::Planner {
         let node_list_op: Box<dyn Operator> = Box::new(NodeListOperator::new(matching_nodes, 2048));
 
         // Check for remaining predicate parts that weren't pushed down
-        // (e.g., range conditions in a compound predicate like `n.name = 'Alice' AND n.age > 30`)
+        // (e.g., range conditions in a compound predicate like `n.name = 'Alix' AND n.age > 30`)
         if let Some(remaining) =
             self.extract_remaining_predicate(&filter.predicate, &scan_variable, &conditions)
         {
@@ -586,7 +586,7 @@ impl super::Planner {
 
     /// Extracts the remaining predicate after removing pushed-down equality conditions.
     ///
-    /// Given `n.name = 'Alice' AND n.age > 30` with pushed conditions `[("name", "Alice")]`,
+    /// Given `n.name = 'Alix' AND n.age > 30` with pushed conditions `[("name", "Alix")]`,
     /// returns `Some(n.age > 30)`. Returns `None` when all conditions were pushed down.
     pub(super) fn extract_remaining_predicate(
         &self,
@@ -640,8 +640,8 @@ impl super::Planner {
     /// Extracts equality conditions (property = literal) from a predicate.
     ///
     /// Handles both simple predicates and AND chains:
-    /// - `n.name = "Alice"` → `[("name", "Alice")]`
-    /// - `n.name = "Alice" AND n.age = 30` → `[("name", "Alice"), ("age", 30)]`
+    /// - `n.name = "Alix"` → `[("name", "Alix")]`
+    /// - `n.name = "Alix" AND n.age = 30` → `[("name", "Alix"), ("age", 30)]`
     pub(super) fn extract_equality_conditions(
         &self,
         predicate: &LogicalExpression,

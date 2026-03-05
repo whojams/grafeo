@@ -19,17 +19,17 @@ fn social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let alice = session.create_node_with_props(
+    let alix = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
         ],
     );
-    let bob = session.create_node_with_props(
+    let gus = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
         ],
     );
@@ -55,14 +55,14 @@ fn social_network() -> GrafeoDB {
         ],
     );
 
-    let e1 = session.create_edge(alice, bob, "KNOWS");
+    let e1 = session.create_edge(alix, gus, "KNOWS");
     db.set_edge_property(e1, "since", Value::Int64(2020));
-    let e2 = session.create_edge(alice, carol, "KNOWS");
+    let e2 = session.create_edge(alix, carol, "KNOWS");
     db.set_edge_property(e2, "since", Value::Int64(2019));
-    let e3 = session.create_edge(bob, carol, "KNOWS");
+    let e3 = session.create_edge(gus, carol, "KNOWS");
     db.set_edge_property(e3, "since", Value::Int64(2021));
-    session.create_edge(alice, techcorp, "WORKS_AT");
-    session.create_edge(bob, techcorp, "WORKS_AT");
+    session.create_edge(alix, techcorp, "WORKS_AT");
+    session.create_edge(gus, techcorp, "WORKS_AT");
     session.create_edge(dave, techcorp, "WORKS_AT");
 
     db
@@ -79,16 +79,6 @@ fn extract_strings(db: &GrafeoDB, query: &str) -> Vec<String> {
             other => format!("{other:?}"),
         })
         .collect()
-}
-
-#[allow(dead_code)]
-fn extract_single_int(db: &GrafeoDB, query: &str) -> i64 {
-    let session = db.session();
-    let result = session.execute(query).unwrap();
-    match &result.rows[0][0] {
-        Value::Int64(n) => *n,
-        other => panic!("Expected Int64, got {other:?}"),
-    }
 }
 
 // ============================================================================
@@ -110,7 +100,7 @@ mod gql_set_ops {
                  MATCH (n:Person) WHERE n.age > 24 RETURN n.name",
             )
             .unwrap();
-        // Bob (25) and Dave (28) match both sides
+        // Gus (25) and Dave (28) match both sides
         assert!(result.row_count() >= 4);
     }
 
@@ -167,7 +157,7 @@ mod gql_set_ops {
                  MATCH (n:Person) WHERE n.age <= 30 RETURN n.name",
             )
             .unwrap();
-        // Intersection: age 25-30 (Bob, Alice, Dave)
+        // Intersection: age 25-30 (Gus, Alix, Dave)
         assert!(result.row_count() >= 2);
     }
 
@@ -177,12 +167,12 @@ mod gql_set_ops {
         let session = db.session();
         let result = session
             .execute(
-                "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name \
+                "MATCH (n:Person) WHERE n.name = 'Alix' RETURN n.name \
                  OTHERWISE \
                  MATCH (n:Person) RETURN n.name",
             )
             .unwrap();
-        // Left side matches Alice, so right side is ignored
+        // Left side matches Alix, so right side is ignored
         assert_eq!(result.row_count(), 1);
     }
 
@@ -225,7 +215,7 @@ mod gql_predicates {
         let db = social_network();
         let session = db.session();
         let result = session
-            .execute("MATCH (n:Person) WHERE n.name = 'Alice' RETURN NULLIF(n.age, 30) AS val")
+            .execute("MATCH (n:Person) WHERE n.name = 'Alix' RETURN NULLIF(n.age, 30) AS val")
             .unwrap();
         assert_eq!(result.rows[0][0], Value::Null);
     }
@@ -235,7 +225,7 @@ mod gql_predicates {
         let db = social_network();
         let session = db.session();
         let result = session
-            .execute("MATCH (n:Person) WHERE n.name = 'Bob' RETURN NULLIF(n.age, 30) AS val")
+            .execute("MATCH (n:Person) WHERE n.name = 'Gus' RETURN NULLIF(n.age, 30) AS val")
             .unwrap();
         assert_eq!(result.rows[0][0], Value::Int64(25));
     }
@@ -245,7 +235,7 @@ mod gql_predicates {
         let db = social_network();
         let session = db.session();
         let result = session
-            .execute("MATCH (n:Person) WHERE n.name = 'Alice' RETURN element_id(n)")
+            .execute("MATCH (n:Person) WHERE n.name = 'Alix' RETURN element_id(n)")
             .unwrap();
         let id_str = match &result.rows[0][0] {
             Value::String(s) => s.to_string(),
@@ -263,7 +253,7 @@ mod gql_predicates {
         let session = db.session();
         let result = session
             .execute(
-                "MATCH (n:Person) WHERE n.name = 'Alice' RETURN CAST(n.age AS STRING) AS age_str",
+                "MATCH (n:Person) WHERE n.name = 'Alix' RETURN CAST(n.age AS STRING) AS age_str",
             )
             .unwrap();
         assert_eq!(result.rows[0][0], Value::String("30".into()));
@@ -308,14 +298,14 @@ mod gql_predicates {
     #[test]
     fn xor_operator() {
         let db = social_network();
-        // XOR: (age>30)=Carol XOR (name=Bob)=Bob, but not both => Bob, Carol
+        // XOR: (age>30)=Carol XOR (name=Gus)=Gus, but not both => Gus, Carol
         let names = extract_strings(
             &db,
-            "MATCH (n:Person) WHERE (n.age > 30) XOR (n.name = 'Bob') RETURN n.name ORDER BY n.name",
+            "MATCH (n:Person) WHERE (n.age > 30) XOR (n.name = 'Gus') RETURN n.name ORDER BY n.name",
         );
-        assert!(names.contains(&"Bob".to_string()));
+        assert!(names.contains(&"Gus".to_string()));
         assert!(names.contains(&"Carol".to_string()));
-        assert!(!names.contains(&"Alice".to_string())); // age=30, not >30, not Bob
+        assert!(!names.contains(&"Alix".to_string())); // age=30, not >30, not Gus
     }
 }
 
@@ -360,9 +350,9 @@ mod gql_statements {
                 _ => None,
             })
             .collect();
-        assert!(names.contains(&"Alice".to_string())); // age 30
+        assert!(names.contains(&"Alix".to_string())); // age 30
         assert!(names.contains(&"Carol".to_string())); // age 35
-        assert!(!names.contains(&"Bob".to_string())); // age 25
+        assert!(!names.contains(&"Gus".to_string())); // age 25
     }
 
     #[test]
@@ -375,7 +365,7 @@ mod gql_statements {
                  RETURN a.name, b.name ORDER BY a.name",
             )
             .unwrap();
-        // since>=2020: Alice->Bob (2020), Bob->Carol (2021)
+        // since>=2020: Alix->Gus (2020), Gus->Carol (2021)
         assert!(result.row_count() >= 2);
     }
 
@@ -397,10 +387,10 @@ mod gql_statements {
         // {1,2} means 1 to 2 hops
         let result = session
             .execute(
-                "MATCH (a:Person)-[:KNOWS{1,2}]->(b:Person) WHERE a.name = 'Alice' RETURN b.name",
+                "MATCH (a:Person)-[:KNOWS{1,2}]->(b:Person) WHERE a.name = 'Alix' RETURN b.name",
             )
             .unwrap();
-        // Alice->Bob (1), Alice->Carol (1), Alice->Bob->Carol (2)
+        // Alix->Gus (1), Alix->Carol (1), Alix->Gus->Carol (2)
         assert!(result.row_count() >= 2);
     }
 
@@ -468,7 +458,7 @@ mod gql_statements {
         let result = session
             .execute("MATCH (n IS Person & !Engineer) RETURN n.name ORDER BY n.name")
             .unwrap();
-        // Alice, Bob, Carol have Person but not Engineer
+        // Alix, Gus, Carol have Person but not Engineer
         assert_eq!(result.row_count(), 3);
     }
 
@@ -493,7 +483,7 @@ mod gql_statements {
         let result = session
             .execute("MATCH (n:Person) FILTER n.age > 28 RETURN n.name ORDER BY n.name")
             .unwrap();
-        assert!(result.row_count() >= 2); // Alice (30), Carol (35)
+        assert!(result.row_count() >= 2); // Alix (30), Carol (35)
     }
 
     #[test]
@@ -727,11 +717,11 @@ mod gql_path_features {
         let result = session
             .execute(
                 "MATCH ANY SHORTEST (a:Person)-[:KNOWS*]->(b:Person) \
-                 WHERE a.name = 'Alice' AND b.name = 'Carol' \
+                 WHERE a.name = 'Alix' AND b.name = 'Carol' \
                  RETURN a.name, b.name",
             )
             .unwrap();
-        // Alice->Carol is 1 hop (direct), should find it
+        // Alix->Carol is 1 hop (direct), should find it
         assert!(result.row_count() >= 1);
     }
 
@@ -742,7 +732,7 @@ mod gql_path_features {
         let result = session
             .execute(
                 "MATCH ALL SHORTEST (a:Person)-[:KNOWS*]->(b:Person) \
-                 WHERE a.name = 'Alice' AND b.name = 'Carol' \
+                 WHERE a.name = 'Alix' AND b.name = 'Carol' \
                  RETURN a.name, b.name",
             )
             .unwrap();
@@ -849,7 +839,7 @@ mod cypher_features {
         let db = social_network();
         let session = db.session();
         let result = session
-            .execute_cypher("MATCH (p:Person) WHERE p.name = 'Alice' RETURN p { .name, .age }")
+            .execute_cypher("MATCH (p:Person) WHERE p.name = 'Alix' RETURN p { .name, .age }")
             .unwrap();
         assert_eq!(result.row_count(), 1);
         // Should return a map value
@@ -884,7 +874,7 @@ mod cypher_features {
         let session = db.session();
         let result = session
             .execute_cypher(
-                "MATCH (n:Person) WHERE n.name = 'Alice' \
+                "MATCH (n:Person) WHERE n.name = 'Alix' \
                  RETURN sign(n.age) AS s, abs(-5) AS a",
             )
             .unwrap();
@@ -898,12 +888,12 @@ mod cypher_features {
         let session = db.session();
         let result = session
             .execute_cypher(
-                "MATCH (n:Person) WHERE n.name = 'Alice' \
+                "MATCH (n:Person) WHERE n.name = 'Alix' \
                  RETURN left(n.name, 3) AS l, right(n.name, 3) AS r",
             )
             .unwrap();
         assert_eq!(result.rows[0][0], Value::String("Ali".into()));
-        assert_eq!(result.rows[0][1], Value::String("ice".into()));
+        assert_eq!(result.rows[0][1], Value::String("lix".into()));
     }
 
     #[test]
@@ -973,11 +963,10 @@ mod cypher_features {
                  RETURN p.name ORDER BY p.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 3); // Alice, Bob, Dave work at TechCorp
+        assert!(result.row_count() >= 3); // Alix, Gus, Dave work at TechCorp
     }
 
     #[test]
-    #[ignore = "Cypher count(*) parser: generic function path shadows TokenKind::Count arm"]
     fn cypher_foreach_set() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
@@ -1001,7 +990,6 @@ mod cypher_features {
     }
 
     #[test]
-    #[ignore = "CALL subquery: outer scope variables not propagated into Apply subplan"]
     fn cypher_call_inline_subquery() {
         let db = social_network();
         let session = db.session();
@@ -1016,19 +1004,18 @@ mod cypher_features {
     }
 
     #[test]
-    #[ignore = "pattern comprehension: binder does not scope inner variables, planner Apply wiring incomplete"]
     fn cypher_pattern_comprehension() {
         let db = social_network();
         let session = db.session();
         let result = session
             .execute_cypher(
-                "MATCH (p:Person) WHERE p.name = 'Alice' \
+                "MATCH (p:Person) WHERE p.name = 'Alix' \
                  RETURN p.name, [(p)-[:KNOWS]->(f) | f.name] AS friends",
             )
             .unwrap();
         assert_eq!(result.row_count(), 1);
         match &result.rows[0][1] {
-            Value::List(items) => assert!(items.len() >= 2, "Alice knows Bob and Carol"),
+            Value::List(items) => assert!(items.len() >= 2, "Alix knows Gus and Carol"),
             other => panic!("Expected list of friends, got {other:?}"),
         }
     }
@@ -1053,31 +1040,30 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/knows> <http://ex.org/bob> .
-                    <http://ex.org/bob> <http://ex.org/knows> <http://ex.org/carol> .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+                    <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/carol> .
                 }"#,
             )
             .unwrap();
-        // ^knows means inverse: find who knows bob
+        // ^knows means inverse: find who knows gus
         let result = session
             .execute_sparql(
                 r#"SELECT ?who WHERE {
-                    <http://ex.org/bob> ^<http://ex.org/knows> ?who
+                    <http://ex.org/gus> ^<http://ex.org/knows> ?who
                 }"#,
             )
             .unwrap();
-        assert_eq!(result.row_count(), 1, "Alice knows Bob (inverse)");
+        assert_eq!(result.row_count(), 1, "Alix knows Gus (inverse)");
     }
 
     #[test]
-    #[ignore = "SPARQL path?: reflexive projection does not handle IRI subjects (needs Values operator)"]
     fn zero_or_one_property_path() {
         let db = rdf_db();
         let session = db.session();
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/knows> <http://ex.org/bob> .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
                 }"#,
             )
             .unwrap();
@@ -1085,11 +1071,11 @@ mod sparql_features {
         let result = session
             .execute_sparql(
                 r#"SELECT ?who WHERE {
-                    <http://ex.org/alice> <http://ex.org/knows>? ?who
+                    <http://ex.org/alix> <http://ex.org/knows>? ?who
                 }"#,
             )
             .unwrap();
-        // Should find alice herself (0 hops) and bob (1 hop)
+        // Should find alix herself (0 hops) and gus (1 hop)
         assert!(
             result.row_count() >= 1,
             "ZeroOrOne should find at least one match"
@@ -1103,9 +1089,9 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/name> "Alice" .
-                    <http://ex.org/alice> <http://ex.org/age> "30" .
-                    <http://ex.org/bob> <http://ex.org/name> "Bob" .
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/age> "30" .
+                    <http://ex.org/gus> <http://ex.org/name> "Gus" .
                 }"#,
             )
             .unwrap();
@@ -1117,7 +1103,7 @@ mod sparql_features {
                 }"#,
             )
             .unwrap();
-        // Both Alice and Bob, but only Alice has age
+        // Both Alix and Gus, but only Alix has age
         assert_eq!(result.row_count(), 2);
     }
 
@@ -1128,8 +1114,8 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/name> "Alice" .
-                    <http://ex.org/bob> <http://ex.org/label> "Bob" .
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/gus> <http://ex.org/label> "Gus" .
                 }"#,
             )
             .unwrap();
@@ -1152,8 +1138,8 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/name> "Alice" .
-                    <http://ex.org/alice> <http://ex.org/knows> <http://ex.org/bob> .
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
                     <http://ex.org/carol> <http://ex.org/name> "Carol" .
                 }"#,
             )
@@ -1166,7 +1152,7 @@ mod sparql_features {
                 }"#,
             )
             .unwrap();
-        assert_eq!(result.row_count(), 1, "Only Alice has knows relation");
+        assert_eq!(result.row_count(), 1, "Only Alix has knows relation");
     }
 
     #[test]
@@ -1176,8 +1162,8 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/name> "Alice" .
-                    <http://ex.org/alice> <http://ex.org/knows> <http://ex.org/bob> .
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
                     <http://ex.org/carol> <http://ex.org/name> "Carol" .
                 }"#,
             )
@@ -1200,8 +1186,8 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/knows> <http://ex.org/bob> .
-                    <http://ex.org/bob> <http://ex.org/likes> <http://ex.org/carol> .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+                    <http://ex.org/gus> <http://ex.org/likes> <http://ex.org/carol> .
                 }"#,
             )
             .unwrap();
@@ -1209,7 +1195,7 @@ mod sparql_features {
         let result = session
             .execute_sparql(
                 r#"SELECT ?who WHERE {
-                    <http://ex.org/alice> <http://ex.org/knows>/<http://ex.org/likes> ?who
+                    <http://ex.org/alix> <http://ex.org/knows>/<http://ex.org/likes> ?who
                 }"#,
             )
             .unwrap();
@@ -1223,15 +1209,15 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/knows> <http://ex.org/bob> .
-                    <http://ex.org/alice> <http://ex.org/likes> <http://ex.org/carol> .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+                    <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/carol> .
                 }"#,
             )
             .unwrap();
         let result = session
             .execute_sparql(
                 r#"SELECT ?who WHERE {
-                    <http://ex.org/alice> (<http://ex.org/knows>|<http://ex.org/likes>) ?who
+                    <http://ex.org/alix> (<http://ex.org/knows>|<http://ex.org/likes>) ?who
                 }"#,
             )
             .unwrap();
@@ -1263,7 +1249,6 @@ mod sparql_features {
     }
 
     #[test]
-    #[ignore = "SPARQL path*: reflexive projection does not handle IRI subjects (needs Values operator)"]
     fn sparql_zero_or_more_path() {
         let db = rdf_db();
         let session = db.session();
@@ -1287,11 +1272,10 @@ mod sparql_features {
     }
 
     #[test]
-    #[ignore = "SPARQL sequence paths: nested complex paths inside Sequence not recursively translated"]
     fn sparql_rdf_collections() {
         let db = rdf_db();
         let session = db.session();
-        // Use collection syntax: (item1 item2 item3)
+        // RDF collection: linked list with rdf:first/rdf:rest
         session
             .execute_sparql(
                 r#"INSERT DATA {
@@ -1303,15 +1287,21 @@ mod sparql_features {
                 }"#,
             )
             .unwrap();
+        // rest*/first: follow rest links zero or more times, then get rdf:first
         let result = session
             .execute_sparql(
                 r#"SELECT ?item WHERE {
                     <http://ex.org/list> <http://ex.org/items> ?head .
-                    ?head <http://www.w3.org/1999/02/22-rdf-syntax-ns#first>/<http://www.w3.org/1999/02/22-rdf-syntax-ns#rest>* ?item
+                    ?head <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest>*/<http://www.w3.org/1999/02/22-rdf-syntax-ns#first> ?item
                 }"#,
             )
             .unwrap();
-        assert!(result.row_count() >= 1);
+        // Should find "one" (0 rest hops + first) and "two" (1 rest hop + first)
+        assert!(
+            result.row_count() >= 2,
+            "RDF collection traversal should find at least 2 items, got {}",
+            result.row_count()
+        );
     }
 
     #[test]
@@ -1321,8 +1311,8 @@ mod sparql_features {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/type> "person" .
-                    <http://ex.org/bob> <http://ex.org/type> "person" .
+                    <http://ex.org/alix> <http://ex.org/type> "person" .
+                    <http://ex.org/gus> <http://ex.org/type> "person" .
                     <http://ex.org/techcorp> <http://ex.org/type> "company" .
                 }"#,
             )
@@ -1610,17 +1600,17 @@ mod gql_parser_unit {
 
 #[cfg(feature = "gql")]
 mod gql_translator_unit {
-    use grafeo_engine::query::gql_translator;
+    use grafeo_engine::query::translators::gql;
 
     #[test]
     fn translate_returns_plan_for_query() {
-        let result = gql_translator::translate("MATCH (n) RETURN n");
+        let result = gql::translate("MATCH (n) RETURN n");
         assert!(result.is_ok());
     }
 
     #[test]
     fn translate_returns_error_for_session_command() {
-        let result = gql_translator::translate("CREATE GRAPH test");
+        let result = gql::translate("CREATE GRAPH test");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Session commands"));
@@ -1628,25 +1618,22 @@ mod gql_translator_unit {
 
     #[test]
     fn translate_full_returns_session_command() {
-        let result = gql_translator::translate_full("CREATE GRAPH test").unwrap();
+        let result = gql::translate_full("CREATE GRAPH test").unwrap();
         assert!(matches!(
             result,
-            gql_translator::GqlTranslationResult::SessionCommand(_)
+            gql::GqlTranslationResult::SessionCommand(_)
         ));
     }
 
     #[test]
     fn translate_full_returns_plan_for_query() {
-        let result = gql_translator::translate_full("MATCH (n) RETURN n").unwrap();
-        assert!(matches!(
-            result,
-            gql_translator::GqlTranslationResult::Plan(_)
-        ));
+        let result = gql::translate_full("MATCH (n) RETURN n").unwrap();
+        assert!(matches!(result, gql::GqlTranslationResult::Plan(_)));
     }
 
     #[test]
     fn translate_except_produces_plan() {
-        let result = gql_translator::translate(
+        let result = gql::translate(
             "MATCH (n:Person) RETURN n.name EXCEPT MATCH (m:Person) WHERE m.age > 30 RETURN m.name",
         );
         assert!(result.is_ok());
@@ -1654,7 +1641,7 @@ mod gql_translator_unit {
 
     #[test]
     fn translate_intersect_produces_plan() {
-        let result = gql_translator::translate(
+        let result = gql::translate(
             "MATCH (n:Person) RETURN n.name INTERSECT MATCH (m:Person) RETURN m.name",
         );
         assert!(result.is_ok());
@@ -1662,7 +1649,7 @@ mod gql_translator_unit {
 
     #[test]
     fn translate_otherwise_produces_plan() {
-        let result = gql_translator::translate(
+        let result = gql::translate(
             "MATCH (n:Person) RETURN n.name OTHERWISE MATCH (m:Person) RETURN m.name",
         );
         assert!(result.is_ok());
@@ -1670,19 +1657,19 @@ mod gql_translator_unit {
 
     #[test]
     fn translate_finish_produces_plan() {
-        let result = gql_translator::translate("MATCH (n) FINISH");
+        let result = gql::translate("MATCH (n) FINISH");
         assert!(result.is_ok());
     }
 
     #[test]
     fn translate_element_where_produces_plan() {
-        let result = gql_translator::translate("MATCH (n:Person WHERE n.age > 25) RETURN n.name");
+        let result = gql::translate("MATCH (n:Person WHERE n.age > 25) RETURN n.name");
         assert!(result.is_ok());
     }
 
     #[test]
     fn translate_count_subquery() {
-        let result = gql_translator::translate(
+        let result = gql::translate(
             "MATCH (n:Person) RETURN n.name, COUNT { MATCH (n)-[:KNOWS]->() } AS cnt",
         );
         assert!(result.is_ok());
@@ -1690,7 +1677,7 @@ mod gql_translator_unit {
 
     #[test]
     fn translate_schema_errors() {
-        let result = gql_translator::translate("CREATE NODE TYPE Foo");
+        let result = gql::translate("CREATE NODE TYPE Foo");
         assert!(result.is_err());
     }
 }

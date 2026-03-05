@@ -97,7 +97,7 @@ impl super::GrafeoDB {
             label_count: self.store.label_count(),
             edge_type_count: self.store.edge_type_count(),
             property_key_count: self.store.property_key_count(),
-            index_count: 0, // TODO: implement index tracking
+            index_count: self.catalog.index_count(),
             memory_bytes: self.buffer_manager.allocated(),
             disk_bytes,
         }
@@ -183,6 +183,33 @@ impl super::GrafeoDB {
             subject_count: stats.subject_count,
             object_count: stats.object_count,
         })
+    }
+
+    /// Returns detailed information about all indexes.
+    #[must_use]
+    pub fn list_indexes(&self) -> Vec<crate::admin::IndexInfo> {
+        self.catalog
+            .all_indexes()
+            .into_iter()
+            .map(|def| {
+                let label_name = self
+                    .catalog
+                    .get_label_name(def.label)
+                    .unwrap_or_else(|| "?".into());
+                let prop_name = self
+                    .catalog
+                    .get_property_key_name(def.property_key)
+                    .unwrap_or_else(|| "?".into());
+                crate::admin::IndexInfo {
+                    name: format!("idx_{}_{}", label_name, prop_name),
+                    index_type: format!("{:?}", def.index_type),
+                    target: format!("{}:{}", label_name, prop_name),
+                    unique: false,
+                    cardinality: None,
+                    size_bytes: None,
+                }
+            })
+            .collect()
     }
 
     /// Validates database integrity.

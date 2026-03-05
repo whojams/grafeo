@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 ///
 /// let mut person = Node::new(NodeId::new(1));
 /// person.add_label("Person");
-/// person.set_property("name", "Alice");
+/// person.set_property("name", "Alix");
 /// person.set_property("age", 30i64);
 ///
 /// assert!(person.has_label("Person"));
@@ -123,13 +123,13 @@ pub struct NodeRecord {
     /// Number of labels on this node (labels stored externally).
     pub label_count: u16,
     /// Reserved for future use / alignment.
-    pub _reserved: u16,
+    pub(crate) _reserved: u16,
     /// Number of properties.
     pub props_count: u16,
     /// Flags (deleted, has_version, etc.).
     pub flags: NodeFlags,
     /// Padding to maintain 32-byte size.
-    pub _padding: u32,
+    pub(crate) _padding: u32,
 }
 
 impl NodeRecord {
@@ -240,12 +240,12 @@ mod tests {
     fn test_node_properties() {
         let mut node = Node::new(NodeId::new(1));
 
-        node.set_property("name", "Alice");
+        node.set_property("name", "Alix");
         node.set_property("age", 30i64);
 
         assert_eq!(
             node.get_property("name").and_then(|v| v.as_str()),
-            Some("Alice")
+            Some("Alix")
         );
         assert_eq!(
             node.get_property("age").and_then(|v| v.as_int64()),

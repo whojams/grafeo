@@ -61,7 +61,7 @@ impl SpillFile {
         let writer = self
             .writer
             .as_mut()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Write phase ended"))?;
+            .ok_or_else(|| std::io::Error::other("Write phase ended"))?;
 
         writer.write_all(data)?;
         self.bytes_written += data.len() as u64;

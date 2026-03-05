@@ -53,18 +53,20 @@ impl super::Planner {
             }
         }
 
-        // Check aggregate expressions for properties
+        // Check aggregate expressions for properties (both first and second arguments)
         for agg_expr in &agg.aggregates {
-            if let Some(LogicalExpression::Property { variable, property }) = &agg_expr.expression {
-                let col_name = format!("{}_{}", variable, property);
-                if !variable_columns.contains_key(&col_name) {
-                    property_projections.push((
-                        variable.clone(),
-                        property.clone(),
-                        col_name.clone(),
-                    ));
-                    variable_columns.insert(col_name, next_col_idx);
-                    next_col_idx += 1;
+            for expr_opt in [&agg_expr.expression, &agg_expr.expression2] {
+                if let Some(LogicalExpression::Property { variable, property }) = expr_opt {
+                    let col_name = format!("{}_{}", variable, property);
+                    if !variable_columns.contains_key(&col_name) {
+                        property_projections.push((
+                            variable.clone(),
+                            property.clone(),
+                            col_name.clone(),
+                        ));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
                 }
             }
         }
@@ -124,9 +126,18 @@ impl super::Planner {
                     })
                     .transpose()?;
 
+                let column2 = agg_expr
+                    .expression2
+                    .as_ref()
+                    .map(|e| {
+                        self.resolve_expression_to_column_with_properties(e, &variable_columns)
+                    })
+                    .transpose()?;
+
                 Ok(PhysicalAggregateExpr {
                     function: convert_aggregate_function(agg_expr.function),
                     column,
+                    column2,
                     distinct: agg_expr.distinct,
                     alias: agg_expr.alias.clone(),
                     percentile: agg_expr.percentile,
@@ -159,11 +170,28 @@ impl super::Planner {
                     LogicalType::Int64
                 }
                 LogicalAggregateFunction::Collect => LogicalType::Any, // List type (using Any since List is a complex type)
+                LogicalAggregateFunction::GroupConcat => LogicalType::String,
+                LogicalAggregateFunction::Sample => LogicalType::Any,
                 // Statistical functions return Float64
                 LogicalAggregateFunction::StdDev
                 | LogicalAggregateFunction::StdDevPop
+                | LogicalAggregateFunction::Variance
+                | LogicalAggregateFunction::VariancePop
                 | LogicalAggregateFunction::PercentileDisc
-                | LogicalAggregateFunction::PercentileCont => LogicalType::Float64,
+                | LogicalAggregateFunction::PercentileCont
+                | LogicalAggregateFunction::CovarSamp
+                | LogicalAggregateFunction::CovarPop
+                | LogicalAggregateFunction::Corr
+                | LogicalAggregateFunction::RegrSlope
+                | LogicalAggregateFunction::RegrIntercept
+                | LogicalAggregateFunction::RegrR2
+                | LogicalAggregateFunction::RegrSxx
+                | LogicalAggregateFunction::RegrSyy
+                | LogicalAggregateFunction::RegrSxy
+                | LogicalAggregateFunction::RegrAvgx
+                | LogicalAggregateFunction::RegrAvgy => LogicalType::Float64,
+                // REGR_COUNT returns Int64
+                LogicalAggregateFunction::RegrCount => LogicalType::Int64,
             };
             output_schema.push(result_type);
             output_columns.push(

@@ -410,7 +410,7 @@ mod tests {
         // 0-1: weight 1
         // 1-2: weight 2
         // 0-2: weight 3
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -428,7 +428,7 @@ mod tests {
 
     fn create_simple_chain() -> LpgStore {
         // Chain: 0 - 1 - 2 - 3
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_kruskal_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = kruskal(&store, None);
 
         assert!(result.edges.is_empty());
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn test_kruskal_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         store.create_node(&["Node"]);
 
         let result = kruskal(&store, None);
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_prim_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = prim(&store, None, None);
 
         assert!(result.edges.is_empty());

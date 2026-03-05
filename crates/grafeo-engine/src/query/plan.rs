@@ -160,6 +160,9 @@ pub enum LogicalOperator {
     /// Add (merge) triples from one graph to another.
     AddGraph(AddGraphOp),
 
+    /// Per-row aggregation over a list-valued column (horizontal aggregation, GE09).
+    HorizontalAggregate(HorizontalAggregateOp),
+
     // ==================== Vector Search Operators ====================
     /// Scan using vector similarity search.
     VectorScan(VectorScanOp),
@@ -187,9 +190,18 @@ pub enum LogicalOperator {
     /// Apply (lateral join): evaluate a subplan per input row.
     Apply(ApplyOp),
 
+    /// Parameter scan: leaf of a correlated inner plan that receives values
+    /// from the outer Apply operator. The column names match `ApplyOp.shared_variables`.
+    ParameterScan(ParameterScanOp),
+
     // ==================== DDL Operators ====================
     /// Define a property graph schema (SQL/PGQ DDL).
     CreatePropertyGraph(CreatePropertyGraphOp),
+
+    // ==================== Multi-Way Join ====================
+    /// Multi-way join using worst-case optimal join (leapfrog).
+    /// Used for cyclic patterns (triangles, cliques) with 3+ relations.
+    MultiWayJoin(MultiWayJoinOp),
 
     // ==================== Procedure Call Operators ====================
     /// Invoke a stored procedure (CALL ... YIELD).
@@ -235,6 +247,7 @@ impl LogicalOperator {
             Self::Bind(op) => op.input.has_mutations(),
             Self::MapCollect(op) => op.input.has_mutations(),
             Self::Return(op) => op.input.has_mutations(),
+            Self::HorizontalAggregate(op) => op.input.has_mutations(),
             Self::VectorScan(_) | Self::VectorJoin(_) => false,
 
             // Operators with two children
@@ -245,6 +258,7 @@ impl LogicalOperator {
             Self::Intersect(op) => op.left.has_mutations() || op.right.has_mutations(),
             Self::Otherwise(op) => op.left.has_mutations() || op.right.has_mutations(),
             Self::Union(op) => op.inputs.iter().any(|i| i.has_mutations()),
+            Self::MultiWayJoin(op) => op.inputs.iter().any(|i| i.has_mutations()),
             Self::Apply(op) => op.input.has_mutations() || op.subplan.has_mutations(),
 
             // Leaf operators (read-only)
@@ -254,6 +268,7 @@ impl LogicalOperator {
             | Self::TripleScan(_)
             | Self::ShortestPath(_)
             | Self::Empty
+            | Self::ParameterScan(_)
             | Self::CallProcedure(_) => false,
         }
     }
@@ -420,6 +435,17 @@ impl LogicalOperator {
             }
             Self::Union(op) => {
                 let _ = writeln!(out, "{indent}Union ({n} branches)", n = op.inputs.len());
+                for input in &op.inputs {
+                    input.fmt_tree(out, depth + 1);
+                }
+            }
+            Self::MultiWayJoin(op) => {
+                let vars = op.shared_variables.join(", ");
+                let _ = writeln!(
+                    out,
+                    "{indent}MultiWayJoin ({n} inputs, shared: [{vars}])",
+                    n = op.inputs.len()
+                );
                 for input in &op.inputs {
                     input.fmt_tree(out, depth + 1);
                 }
@@ -721,6 +747,21 @@ pub struct JoinCondition {
     pub right: LogicalExpression,
 }
 
+/// Multi-way join for worst-case optimal joins (leapfrog).
+///
+/// Unlike binary `JoinOp`, this joins 3+ relations simultaneously
+/// using the leapfrog trie join algorithm. Preferred for cyclic patterns
+/// (triangles, cliques) where cascading binary joins hit O(N^2).
+#[derive(Debug, Clone)]
+pub struct MultiWayJoinOp {
+    /// Input relations (one per relation in the join).
+    pub inputs: Vec<LogicalOperator>,
+    /// All pairwise join conditions.
+    pub conditions: Vec<JoinCondition>,
+    /// Variables shared across multiple inputs (intersection keys).
+    pub shared_variables: Vec<String>,
+}
+
 /// Aggregate with grouping.
 #[derive(Debug, Clone)]
 pub struct AggregateOp {
@@ -734,13 +775,44 @@ pub struct AggregateOp {
     pub having: Option<LogicalExpression>,
 }
 
+/// Whether a horizontal aggregate operates on edges or nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityKind {
+    /// Aggregate over edges in a path.
+    Edge,
+    /// Aggregate over nodes in a path.
+    Node,
+}
+
+/// Per-row aggregation over a list-valued column (horizontal aggregation, GE09).
+///
+/// For each input row, reads a list of entity IDs from `list_column`, accesses
+/// `property` on each entity, computes the aggregate, and emits the scalar result.
+#[derive(Debug, Clone)]
+pub struct HorizontalAggregateOp {
+    /// The list column name (e.g., `_path_edges_p`).
+    pub list_column: String,
+    /// Whether the list contains edge IDs or node IDs.
+    pub entity_kind: EntityKind,
+    /// The aggregate function to apply.
+    pub function: AggregateFunction,
+    /// The property to access on each entity.
+    pub property: String,
+    /// Output alias for the result column.
+    pub alias: String,
+    /// Input operator.
+    pub input: Box<LogicalOperator>,
+}
+
 /// An aggregate expression.
 #[derive(Debug, Clone)]
 pub struct AggregateExpr {
     /// Aggregate function.
     pub function: AggregateFunction,
-    /// Expression to aggregate.
+    /// Expression to aggregate (first/only argument, y for binary set functions).
     pub expression: Option<LogicalExpression>,
+    /// Second expression for binary set functions (x for COVAR, CORR, REGR_*).
+    pub expression2: Option<LogicalExpression>,
     /// Whether to use DISTINCT.
     pub distinct: bool,
     /// Alias for the result.
@@ -770,10 +842,42 @@ pub enum AggregateFunction {
     StdDev,
     /// Population standard deviation (STDEVP).
     StdDevPop,
+    /// Sample variance (VAR_SAMP / VARIANCE).
+    Variance,
+    /// Population variance (VAR_POP).
+    VariancePop,
     /// Discrete percentile (PERCENTILE_DISC).
     PercentileDisc,
     /// Continuous percentile (PERCENTILE_CONT).
     PercentileCont,
+    /// Concatenate values with separator (GROUP_CONCAT).
+    GroupConcat,
+    /// Return an arbitrary value from the group (SAMPLE).
+    Sample,
+    /// Sample covariance (COVAR_SAMP(y, x)).
+    CovarSamp,
+    /// Population covariance (COVAR_POP(y, x)).
+    CovarPop,
+    /// Pearson correlation coefficient (CORR(y, x)).
+    Corr,
+    /// Regression slope (REGR_SLOPE(y, x)).
+    RegrSlope,
+    /// Regression intercept (REGR_INTERCEPT(y, x)).
+    RegrIntercept,
+    /// Coefficient of determination (REGR_R2(y, x)).
+    RegrR2,
+    /// Regression count of non-null pairs (REGR_COUNT(y, x)).
+    RegrCount,
+    /// Regression sum of squares for x (REGR_SXX(y, x)).
+    RegrSxx,
+    /// Regression sum of squares for y (REGR_SYY(y, x)).
+    RegrSyy,
+    /// Regression sum of cross-products (REGR_SXY(y, x)).
+    RegrSxy,
+    /// Regression average of x (REGR_AVGX(y, x)).
+    RegrAvgx,
+    /// Regression average of y (REGR_AVGY(y, x)).
+    RegrAvgy,
 }
 
 /// Hint about how a filter will be executed at the physical level.
@@ -858,6 +962,8 @@ pub struct SortKey {
     pub expression: LogicalExpression,
     /// Sort order.
     pub order: SortOrder,
+    /// Optional null ordering (NULLS FIRST / NULLS LAST).
+    pub nulls: Option<NullsOrdering>,
 }
 
 /// Sort order.
@@ -867,6 +973,15 @@ pub enum SortOrder {
     Ascending,
     /// Descending order.
     Descending,
+}
+
+/// Null ordering for sort operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NullsOrdering {
+    /// Nulls sort before all non-null values.
+    First,
+    /// Nulls sort after all non-null values.
+    Last,
 }
 
 /// Remove duplicate results.
@@ -1042,6 +1157,19 @@ pub struct ApplyOp {
     pub input: Box<LogicalOperator>,
     /// Subplan to evaluate per outer row.
     pub subplan: Box<LogicalOperator>,
+    /// Variables imported from the outer scope into the inner plan.
+    /// When non-empty, the planner injects these via `ParameterState`.
+    pub shared_variables: Vec<String>,
+}
+
+/// Parameter scan: leaf operator for correlated subquery inner plans.
+///
+/// Emits a single row containing the values injected from the outer Apply.
+/// Column names correspond to the outer variables imported via WITH.
+#[derive(Debug, Clone)]
+pub struct ParameterScanOp {
+    /// Column names for the injected parameters.
+    pub columns: Vec<String>,
 }
 
 /// Left outer join for OPTIONAL patterns.
@@ -1543,7 +1671,7 @@ pub enum LogicalExpression {
     /// List literal.
     List(Vec<LogicalExpression>),
 
-    /// Map literal (e.g., {name: 'Alice', age: 30}).
+    /// Map literal (e.g., {name: 'Alix', age: 30}).
     Map(Vec<(String, LogicalExpression)>),
 
     /// Index access (e.g., `list[0]`).

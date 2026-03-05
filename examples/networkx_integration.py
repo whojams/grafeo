@@ -44,8 +44,8 @@ def __():
     # Build a small social network
     people = {}
     for name, age, city in [
-        ("Alice", 30, "Seattle"),
-        ("Bob", 35, "Portland"),
+        ("Alix", 30, "Seattle"),
+        ("Gus", 35, "Portland"),
         ("Carol", 28, "Seattle"),
         ("Dave", 40, "San Francisco"),
         ("Eve", 32, "Portland"),
@@ -58,10 +58,10 @@ def __():
 
     # Create relationships
     connections = [
-        ("Alice", "Bob"),
-        ("Alice", "Carol"),
-        ("Bob", "Carol"),
-        ("Bob", "Dave"),
+        ("Alix", "Gus"),
+        ("Alix", "Carol"),
+        ("Gus", "Carol"),
+        ("Gus", "Dave"),
         ("Carol", "Eve"),
         ("Dave", "Eve"),
         ("Dave", "Frank"),

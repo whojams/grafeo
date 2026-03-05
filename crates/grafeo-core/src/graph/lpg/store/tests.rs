@@ -5,7 +5,7 @@ use grafeo_common::types::TxId;
 
 #[test]
 fn test_create_node() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let id = store.create_node(&["Person"]);
     assert!(id.is_valid());
@@ -17,17 +17,17 @@ fn test_create_node() {
 
 #[test]
 fn test_create_node_with_props() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let id = store.create_node_with_props(
         &["Person"],
-        [("name", Value::from("Alice")), ("age", Value::from(30i64))],
+        [("name", Value::from("Alix")), ("age", Value::from(30i64))],
     );
 
     let node = store.get_node(id).unwrap();
     assert_eq!(
         node.get_property("name").and_then(|v| v.as_str()),
-        Some("Alice")
+        Some("Alix")
     );
     assert_eq!(
         node.get_property("age").and_then(|v| v.as_int64()),
@@ -37,7 +37,7 @@ fn test_create_node_with_props() {
 
 #[test]
 fn test_delete_node() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let id = store.create_node(&["Person"]);
     assert_eq!(store.node_count(), 1);
@@ -52,23 +52,23 @@ fn test_delete_node() {
 
 #[test]
 fn test_create_edge() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
-    let alice = store.create_node(&["Person"]);
-    let bob = store.create_node(&["Person"]);
+    let alix = store.create_node(&["Person"]);
+    let gus = store.create_node(&["Person"]);
 
-    let edge_id = store.create_edge(alice, bob, "KNOWS");
+    let edge_id = store.create_edge(alix, gus, "KNOWS");
     assert!(edge_id.is_valid());
 
     let edge = store.get_edge(edge_id).unwrap();
-    assert_eq!(edge.src, alice);
-    assert_eq!(edge.dst, bob);
+    assert_eq!(edge.src, alix);
+    assert_eq!(edge.dst, gus);
     assert_eq!(edge.edge_type.as_str(), "KNOWS");
 }
 
 #[test]
 fn test_neighbors() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -89,7 +89,7 @@ fn test_neighbors() {
 
 #[test]
 fn test_nodes_by_label() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let p1 = store.create_node(&["Person"]);
     let p2 = store.create_node(&["Person"]);
@@ -106,7 +106,7 @@ fn test_nodes_by_label() {
 
 #[test]
 fn test_delete_edge() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -147,7 +147,7 @@ fn test_lpg_store_config() {
 
 #[test]
 fn test_epoch_management() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let epoch0 = store.current_epoch();
     assert_eq!(epoch0.as_u64(), 0);
@@ -161,22 +161,22 @@ fn test_epoch_management() {
 
 #[test]
 fn test_node_properties() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let id = store.create_node(&["Person"]);
 
     // Set and get property
-    store.set_node_property(id, "name", Value::from("Alice"));
+    store.set_node_property(id, "name", Value::from("Alix"));
     let name = store.get_node_property(id, &"name".into());
-    assert!(matches!(name, Some(Value::String(s)) if s.as_str() == "Alice"));
+    assert!(matches!(name, Some(Value::String(s)) if s.as_str() == "Alix"));
 
     // Update property
-    store.set_node_property(id, "name", Value::from("Bob"));
+    store.set_node_property(id, "name", Value::from("Gus"));
     let name = store.get_node_property(id, &"name".into());
-    assert!(matches!(name, Some(Value::String(s)) if s.as_str() == "Bob"));
+    assert!(matches!(name, Some(Value::String(s)) if s.as_str() == "Gus"));
 
     // Remove property
     let old = store.remove_node_property(id, "name");
-    assert!(matches!(old, Some(Value::String(s)) if s.as_str() == "Bob"));
+    assert!(matches!(old, Some(Value::String(s)) if s.as_str() == "Gus"));
 
     // Property should be gone
     let name = store.get_node_property(id, &"name".into());
@@ -189,7 +189,7 @@ fn test_node_properties() {
 
 #[test]
 fn test_edge_properties() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
     let edge_id = store.create_edge(a, b, "KNOWS");
@@ -209,7 +209,7 @@ fn test_edge_properties() {
 
 #[test]
 fn test_add_remove_label() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let id = store.create_node(&["Person"]);
 
     // Add new label
@@ -236,21 +236,21 @@ fn test_add_remove_label() {
 
 #[test]
 fn test_add_label_to_nonexistent_node() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let fake_id = NodeId::new(999);
     assert!(!store.add_label(fake_id, "Label"));
 }
 
 #[test]
 fn test_remove_label_from_nonexistent_node() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let fake_id = NodeId::new(999);
     assert!(!store.remove_label(fake_id, "Label"));
 }
 
 #[test]
 fn test_node_ids() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node(&["Person"]);
     let n2 = store.create_node(&["Person"]);
@@ -271,21 +271,21 @@ fn test_node_ids() {
 
 #[test]
 fn test_delete_node_nonexistent() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let fake_id = NodeId::new(999);
     assert!(!store.delete_node(fake_id));
 }
 
 #[test]
 fn test_delete_edge_nonexistent() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let fake_id = EdgeId::new(999);
     assert!(!store.delete_edge(fake_id));
 }
 
 #[test]
 fn test_delete_edge_double() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
     let edge_id = store.create_edge(a, b, "KNOWS");
@@ -296,7 +296,7 @@ fn test_delete_edge_double() {
 
 #[test]
 fn test_create_edge_with_props() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
 
@@ -323,7 +323,7 @@ fn test_create_edge_with_props() {
 
 #[test]
 fn test_delete_node_edges() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -342,7 +342,7 @@ fn test_delete_node_edges() {
 
 #[test]
 fn test_neighbors_both_directions() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -360,7 +360,7 @@ fn test_neighbors_both_directions() {
 
 #[test]
 fn test_edges_from() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -382,7 +382,7 @@ fn test_edges_from() {
 
 #[test]
 fn test_edges_to() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -400,7 +400,7 @@ fn test_edges_to() {
 
 #[test]
 fn test_out_degree_in_degree() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -421,7 +421,7 @@ fn test_out_degree_in_degree() {
 
 #[test]
 fn test_edge_type() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -437,7 +437,7 @@ fn test_edge_type() {
 
 #[test]
 fn test_count_methods() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     assert_eq!(store.label_count(), 0);
     assert_eq!(store.edge_type_count(), 0);
@@ -454,7 +454,7 @@ fn test_count_methods() {
 
 #[test]
 fn test_all_nodes_and_edges() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -469,7 +469,7 @@ fn test_all_nodes_and_edges() {
 
 #[test]
 fn test_all_labels_and_edge_types() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node(&["Person"]);
     store.create_node(&["Company"]);
@@ -490,9 +490,9 @@ fn test_all_labels_and_edge_types() {
 
 #[test]
 fn test_all_property_keys() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
-    let a = store.create_node_with_props(&["Person"], [("name", Value::from("Alice"))]);
+    let a = store.create_node_with_props(&["Person"], [("name", Value::from("Alix"))]);
     let b = store.create_node_with_props(&["Person"], [("age", Value::from(30i64))]);
     store.create_edge_with_props(a, b, "KNOWS", [("since", Value::from(2020i64))]);
 
@@ -504,7 +504,7 @@ fn test_all_property_keys() {
 
 #[test]
 fn test_nodes_with_label() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node(&["Person"]);
     store.create_node(&["Person"]);
@@ -522,7 +522,7 @@ fn test_nodes_with_label() {
 
 #[test]
 fn test_edges_with_type() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -543,7 +543,7 @@ fn test_edges_with_type() {
 
 #[test]
 fn test_nodes_by_label_nonexistent() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     store.create_node(&["Person"]);
 
     let empty = store.nodes_by_label("NonExistent");
@@ -552,7 +552,7 @@ fn test_nodes_by_label_nonexistent() {
 
 #[test]
 fn test_statistics() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -577,7 +577,7 @@ fn test_statistics() {
 
 #[test]
 fn test_zone_maps() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node_with_props(&["Person"], [("age", Value::from(25i64))]);
     store.create_node_with_props(&["Person"], [("age", Value::from(35i64))]);
@@ -606,7 +606,7 @@ fn test_zone_maps() {
 
 #[test]
 fn test_rebuild_zone_maps() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     store.create_node_with_props(&["Person"], [("age", Value::from(25i64))]);
 
     // Should not panic
@@ -615,7 +615,7 @@ fn test_rebuild_zone_maps() {
 
 #[test]
 fn test_create_node_with_id() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let specific_id = NodeId::new(100);
     store.create_node_with_id(specific_id, &["Person", "Employee"]);
@@ -631,7 +631,7 @@ fn test_create_node_with_id() {
 
 #[test]
 fn test_create_edge_with_id() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["A"]);
     let b = store.create_node(&["B"]);
@@ -651,7 +651,7 @@ fn test_create_edge_with_id() {
 
 #[test]
 fn test_set_epoch() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     assert_eq!(store.current_epoch().as_u64(), 0);
 
@@ -661,21 +661,21 @@ fn test_set_epoch() {
 
 #[test]
 fn test_get_node_nonexistent() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let fake_id = NodeId::new(999);
     assert!(store.get_node(fake_id).is_none());
 }
 
 #[test]
 fn test_get_edge_nonexistent() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let fake_id = EdgeId::new(999);
     assert!(store.get_edge(fake_id).is_none());
 }
 
 #[test]
 fn test_multiple_labels() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let id = store.create_node(&["Person", "Employee", "Manager"]);
     let node = store.get_node(id).unwrap();
@@ -695,7 +695,7 @@ fn test_default_impl() {
 
 #[test]
 fn test_edges_from_both_directions() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["A"]);
     let b = store.create_node(&["B"]);
@@ -750,7 +750,7 @@ fn test_no_backward_adj_edges_to() {
 
 #[test]
 fn test_node_versioned_creation() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let epoch = store.new_epoch();
     let tx_id = TxId::new(1);
@@ -761,7 +761,7 @@ fn test_node_versioned_creation() {
 
 #[test]
 fn test_edge_versioned_creation() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["A"]);
     let b = store.create_node(&["B"]);
@@ -775,14 +775,14 @@ fn test_edge_versioned_creation() {
 
 #[test]
 fn test_node_with_props_versioned() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let epoch = store.new_epoch();
     let tx_id = TxId::new(1);
 
     let id = store.create_node_with_props_versioned(
         &["Person"],
-        [("name", Value::from("Alice"))],
+        [("name", Value::from("Alix"))],
         epoch,
         tx_id,
     );
@@ -790,13 +790,13 @@ fn test_node_with_props_versioned() {
     let node = store.get_node(id).unwrap();
     assert_eq!(
         node.get_property("name").and_then(|v| v.as_str()),
-        Some("Alice")
+        Some("Alix")
     );
 }
 
 #[test]
 fn test_discard_uncommitted_versions() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let epoch = store.new_epoch();
     let tx_id = TxId::new(42);
@@ -816,15 +816,15 @@ fn test_discard_uncommitted_versions() {
 
 #[test]
 fn test_property_index_create_and_lookup() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     // Create nodes with properties
-    let alice = store.create_node(&["Person"]);
-    let bob = store.create_node(&["Person"]);
+    let alix = store.create_node(&["Person"]);
+    let gus = store.create_node(&["Person"]);
     let charlie = store.create_node(&["Person"]);
 
-    store.set_node_property(alice, "city", Value::from("NYC"));
-    store.set_node_property(bob, "city", Value::from("NYC"));
+    store.set_node_property(alix, "city", Value::from("NYC"));
+    store.set_node_property(gus, "city", Value::from("NYC"));
     store.set_node_property(charlie, "city", Value::from("LA"));
 
     // Before indexing, lookup still works (via scan)
@@ -838,8 +838,8 @@ fn test_property_index_create_and_lookup() {
     // Indexed lookup should return same results
     let nyc_people = store.find_nodes_by_property("city", &Value::from("NYC"));
     assert_eq!(nyc_people.len(), 2);
-    assert!(nyc_people.contains(&alice));
-    assert!(nyc_people.contains(&bob));
+    assert!(nyc_people.contains(&alix));
+    assert!(nyc_people.contains(&gus));
 
     let la_people = store.find_nodes_by_property("city", &Value::from("LA"));
     assert_eq!(la_people.len(), 1);
@@ -848,7 +848,7 @@ fn test_property_index_create_and_lookup() {
 
 #[test]
 fn test_property_index_maintained_on_update() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     // Create index first
     store.create_property_index("status");
@@ -876,7 +876,7 @@ fn test_property_index_maintained_on_update() {
 
 #[test]
 fn test_property_index_maintained_on_remove() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_property_index("tag");
 
@@ -897,7 +897,7 @@ fn test_property_index_maintained_on_remove() {
 
 #[test]
 fn test_property_index_drop() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_property_index("key");
     assert!(store.has_property_index("key"));
@@ -911,7 +911,7 @@ fn test_property_index_drop() {
 
 #[test]
 fn test_property_index_multiple_values() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_property_index("age");
 
@@ -938,30 +938,30 @@ fn test_property_index_multiple_values() {
 
 #[test]
 fn test_property_index_builds_from_existing_data() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     // Create nodes first
     let n1 = store.create_node(&["Person"]);
     let n2 = store.create_node(&["Person"]);
-    store.set_node_property(n1, "email", Value::from("alice@example.com"));
-    store.set_node_property(n2, "email", Value::from("bob@example.com"));
+    store.set_node_property(n1, "email", Value::from("alix@example.com"));
+    store.set_node_property(n2, "email", Value::from("gus@example.com"));
 
     // Create index after data exists
     store.create_property_index("email");
 
     // Index should include existing data
-    let alice = store.find_nodes_by_property("email", &Value::from("alice@example.com"));
-    assert_eq!(alice.len(), 1);
-    assert!(alice.contains(&n1));
+    let alix = store.find_nodes_by_property("email", &Value::from("alix@example.com"));
+    assert_eq!(alix.len(), 1);
+    assert!(alix.contains(&n1));
 
-    let bob = store.find_nodes_by_property("email", &Value::from("bob@example.com"));
-    assert_eq!(bob.len(), 1);
-    assert!(bob.contains(&n2));
+    let gus = store.find_nodes_by_property("email", &Value::from("gus@example.com"));
+    assert_eq!(gus.len(), 1);
+    assert!(gus.contains(&n2));
 }
 
 #[test]
 fn test_get_node_property_batch() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node(&["Person"]);
     let n2 = store.create_node(&["Person"]);
@@ -982,7 +982,7 @@ fn test_get_node_property_batch() {
 
 #[test]
 fn test_get_node_property_batch_empty() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let key = PropertyKey::new("any");
 
     let values = store.get_node_property_batch(&[], &key);
@@ -991,15 +991,15 @@ fn test_get_node_property_batch_empty() {
 
 #[test]
 fn test_get_nodes_properties_batch() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node(&["Person"]);
     let n2 = store.create_node(&["Person"]);
     let n3 = store.create_node(&["Person"]);
 
-    store.set_node_property(n1, "name", Value::from("Alice"));
+    store.set_node_property(n1, "name", Value::from("Alix"));
     store.set_node_property(n1, "age", Value::from(25i64));
-    store.set_node_property(n2, "name", Value::from("Bob"));
+    store.set_node_property(n2, "name", Value::from("Gus"));
     // n3 has no properties
 
     let all_props = store.get_nodes_properties_batch(&[n1, n2, n3]);
@@ -1011,17 +1011,17 @@ fn test_get_nodes_properties_batch() {
 
     assert_eq!(
         all_props[0].get(&PropertyKey::new("name")),
-        Some(&Value::from("Alice"))
+        Some(&Value::from("Alix"))
     );
     assert_eq!(
         all_props[1].get(&PropertyKey::new("name")),
-        Some(&Value::from("Bob"))
+        Some(&Value::from("Gus"))
     );
 }
 
 #[test]
 fn test_get_nodes_properties_batch_empty() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let all_props = store.get_nodes_properties_batch(&[]);
     assert!(all_props.is_empty());
@@ -1029,16 +1029,16 @@ fn test_get_nodes_properties_batch_empty() {
 
 #[test]
 fn test_get_nodes_properties_selective_batch() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node(&["Person"]);
     let n2 = store.create_node(&["Person"]);
 
     // Set multiple properties
-    store.set_node_property(n1, "name", Value::from("Alice"));
+    store.set_node_property(n1, "name", Value::from("Alix"));
     store.set_node_property(n1, "age", Value::from(25i64));
-    store.set_node_property(n1, "email", Value::from("alice@example.com"));
-    store.set_node_property(n2, "name", Value::from("Bob"));
+    store.set_node_property(n1, "email", Value::from("alix@example.com"));
+    store.set_node_property(n2, "name", Value::from("Gus"));
     store.set_node_property(n2, "age", Value::from(30i64));
     store.set_node_property(n2, "city", Value::from("NYC"));
 
@@ -1052,7 +1052,7 @@ fn test_get_nodes_properties_selective_batch() {
     assert_eq!(props[0].len(), 2);
     assert_eq!(
         props[0].get(&PropertyKey::new("name")),
-        Some(&Value::from("Alice"))
+        Some(&Value::from("Alix"))
     );
     assert_eq!(
         props[0].get(&PropertyKey::new("age")),
@@ -1064,7 +1064,7 @@ fn test_get_nodes_properties_selective_batch() {
     assert_eq!(props[1].len(), 2);
     assert_eq!(
         props[1].get(&PropertyKey::new("name")),
-        Some(&Value::from("Bob"))
+        Some(&Value::from("Gus"))
     );
     assert_eq!(
         props[1].get(&PropertyKey::new("age")),
@@ -1075,10 +1075,10 @@ fn test_get_nodes_properties_selective_batch() {
 
 #[test]
 fn test_get_nodes_properties_selective_batch_empty_keys() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node(&["Person"]);
-    store.set_node_property(n1, "name", Value::from("Alice"));
+    store.set_node_property(n1, "name", Value::from("Alix"));
 
     // Request no properties
     let props = store.get_nodes_properties_selective_batch(&[n1], &[]);
@@ -1089,10 +1089,10 @@ fn test_get_nodes_properties_selective_batch_empty_keys() {
 
 #[test]
 fn test_get_nodes_properties_selective_batch_missing_keys() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node(&["Person"]);
-    store.set_node_property(n1, "name", Value::from("Alice"));
+    store.set_node_property(n1, "name", Value::from("Alix"));
 
     // Request a property that doesn't exist
     let keys = vec![PropertyKey::new("nonexistent"), PropertyKey::new("name")];
@@ -1102,7 +1102,7 @@ fn test_get_nodes_properties_selective_batch_missing_keys() {
     assert_eq!(props[0].len(), 1); // Only name exists
     assert_eq!(
         props[0].get(&PropertyKey::new("name")),
-        Some(&Value::from("Alice"))
+        Some(&Value::from("Alix"))
     );
 }
 
@@ -1110,7 +1110,7 @@ fn test_get_nodes_properties_selective_batch_missing_keys() {
 
 #[test]
 fn test_find_nodes_in_range_inclusive() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let n1 = store.create_node_with_props(&["Person"], [("age", Value::from(20i64))]);
     let n2 = store.create_node_with_props(&["Person"], [("age", Value::from(30i64))]);
@@ -1133,7 +1133,7 @@ fn test_find_nodes_in_range_inclusive() {
 
 #[test]
 fn test_find_nodes_in_range_exclusive() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node_with_props(&["Person"], [("age", Value::from(20i64))]);
     let n2 = store.create_node_with_props(&["Person"], [("age", Value::from(30i64))]);
@@ -1153,7 +1153,7 @@ fn test_find_nodes_in_range_exclusive() {
 
 #[test]
 fn test_find_nodes_in_range_open_ended() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node_with_props(&["Person"], [("age", Value::from(20i64))]);
     store.create_node_with_props(&["Person"], [("age", Value::from(30i64))]);
@@ -1173,7 +1173,7 @@ fn test_find_nodes_in_range_open_ended() {
 
 #[test]
 fn test_find_nodes_in_range_empty_result() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node_with_props(&["Person"], [("age", Value::from(20i64))]);
 
@@ -1190,7 +1190,7 @@ fn test_find_nodes_in_range_empty_result() {
 
 #[test]
 fn test_find_nodes_in_range_nonexistent_property() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node_with_props(&["Person"], [("age", Value::from(20i64))]);
 
@@ -1208,31 +1208,31 @@ fn test_find_nodes_in_range_nonexistent_property() {
 
 #[test]
 fn test_find_nodes_by_properties_multiple_conditions() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
-    let alice = store.create_node_with_props(
+    let alix = store.create_node_with_props(
         &["Person"],
-        [("name", Value::from("Alice")), ("city", Value::from("NYC"))],
+        [("name", Value::from("Alix")), ("city", Value::from("NYC"))],
     );
     store.create_node_with_props(
         &["Person"],
-        [("name", Value::from("Bob")), ("city", Value::from("NYC"))],
+        [("name", Value::from("Gus")), ("city", Value::from("NYC"))],
     );
     store.create_node_with_props(
         &["Person"],
-        [("name", Value::from("Alice")), ("city", Value::from("LA"))],
+        [("name", Value::from("Alix")), ("city", Value::from("LA"))],
     );
 
-    // Match name="Alice" AND city="NYC"
+    // Match name="Alix" AND city="NYC"
     let result = store
-        .find_nodes_by_properties(&[("name", Value::from("Alice")), ("city", Value::from("NYC"))]);
+        .find_nodes_by_properties(&[("name", Value::from("Alix")), ("city", Value::from("NYC"))]);
     assert_eq!(result.len(), 1);
-    assert!(result.contains(&alice));
+    assert!(result.contains(&alix));
 }
 
 #[test]
 fn test_find_nodes_by_properties_empty_conditions() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node(&["Person"]);
     store.create_node(&["Person"]);
@@ -1244,9 +1244,9 @@ fn test_find_nodes_by_properties_empty_conditions() {
 
 #[test]
 fn test_find_nodes_by_properties_no_match() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
-    store.create_node_with_props(&["Person"], [("name", Value::from("Alice"))]);
+    store.create_node_with_props(&["Person"], [("name", Value::from("Alix"))]);
 
     let result = store.find_nodes_by_properties(&[("name", Value::from("Nobody"))]);
     assert!(result.is_empty());
@@ -1254,32 +1254,32 @@ fn test_find_nodes_by_properties_no_match() {
 
 #[test]
 fn test_find_nodes_by_properties_with_index() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     // Create index on name
     store.create_property_index("name");
 
-    let alice = store.create_node_with_props(
+    let alix = store.create_node_with_props(
         &["Person"],
-        [("name", Value::from("Alice")), ("age", Value::from(30i64))],
+        [("name", Value::from("Alix")), ("age", Value::from(30i64))],
     );
     store.create_node_with_props(
         &["Person"],
-        [("name", Value::from("Bob")), ("age", Value::from(30i64))],
+        [("name", Value::from("Gus")), ("age", Value::from(30i64))],
     );
 
     // Index should accelerate the lookup
     let result = store
-        .find_nodes_by_properties(&[("name", Value::from("Alice")), ("age", Value::from(30i64))]);
+        .find_nodes_by_properties(&[("name", Value::from("Alix")), ("age", Value::from(30i64))]);
     assert_eq!(result.len(), 1);
-    assert!(result.contains(&alice));
+    assert!(result.contains(&alix));
 }
 
 // === Cardinality Estimation Tests ===
 
 #[test]
 fn test_estimate_label_cardinality() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     store.create_node(&["Person"]);
     store.create_node(&["Person"]);
@@ -1305,7 +1305,7 @@ fn test_estimate_label_cardinality() {
 
 #[test]
 fn test_estimate_avg_degree() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["Person"]);
     let b = store.create_node(&["Person"]);
@@ -1334,7 +1334,7 @@ fn test_estimate_avg_degree() {
 
 #[test]
 fn test_delete_node_does_not_cascade() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
 
     let a = store.create_node(&["A"]);
     let b = store.create_node(&["B"]);
@@ -1352,7 +1352,7 @@ fn test_delete_node_does_not_cascade() {
 
 #[test]
 fn test_delete_already_deleted_node() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let a = store.create_node(&["A"]);
 
     assert!(store.delete_node(a));
@@ -1362,7 +1362,7 @@ fn test_delete_already_deleted_node() {
 
 #[test]
 fn test_delete_nonexistent_node() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     assert!(!store.delete_node(NodeId::new(999)));
 }
 
@@ -1378,41 +1378,41 @@ mod graph_store_traits {
     #[test]
     fn trait_object_safety() {
         // Must compile: Arc<dyn GraphStoreMut> proves object safety
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
         let _read: &dyn GraphStore = &*store;
     }
 
     #[test]
     fn trait_round_trip() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let store: &dyn GraphStoreMut = &store;
 
         // Create nodes via trait
-        let alice = store.create_node(&["Person"]);
-        let bob = store.create_node(&["Person", "Developer"]);
-        store.set_node_property(alice, "name", Value::from("Alice"));
-        store.set_node_property(alice, "age", Value::from(30i64));
-        store.set_node_property(bob, "name", Value::from("Bob"));
+        let alix = store.create_node(&["Person"]);
+        let gus = store.create_node(&["Person", "Developer"]);
+        store.set_node_property(alix, "name", Value::from("Alix"));
+        store.set_node_property(alix, "age", Value::from(30i64));
+        store.set_node_property(gus, "name", Value::from("Gus"));
 
         // Create edge via trait
-        let edge = store.create_edge(alice, bob, "KNOWS");
+        let edge = store.create_edge(alix, gus, "KNOWS");
         store.set_edge_property(edge, "since", Value::from(2020i64));
 
         // Read back via GraphStore trait
         let read: &dyn GraphStore = store;
 
         // Point lookups
-        let alice_node = read.get_node(alice).expect("alice should exist");
+        let alice_node = read.get_node(alix).expect("alix should exist");
         assert!(alice_node.labels.contains(&arcstr::literal!("Person")));
 
         let edge_data = read.get_edge(edge).expect("edge should exist");
-        assert_eq!(edge_data.src, alice);
-        assert_eq!(edge_data.dst, bob);
+        assert_eq!(edge_data.src, alix);
+        assert_eq!(edge_data.dst, gus);
 
         // Properties
         assert_eq!(
-            read.get_node_property(alice, &PropertyKey::new("name")),
-            Some(Value::from("Alice"))
+            read.get_node_property(alix, &PropertyKey::new("name")),
+            Some(Value::from("Alix"))
         );
         assert_eq!(
             read.get_edge_property(edge, &PropertyKey::new("since")),
@@ -1420,15 +1420,15 @@ mod graph_store_traits {
         );
 
         // Traversal
-        let neighbors = read.neighbors(alice, Direction::Outgoing);
-        assert_eq!(neighbors, vec![bob]);
+        let neighbors = read.neighbors(alix, Direction::Outgoing);
+        assert_eq!(neighbors, vec![gus]);
 
-        let edges = read.edges_from(alice, Direction::Outgoing);
+        let edges = read.edges_from(alix, Direction::Outgoing);
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0], (bob, edge));
+        assert_eq!(edges[0], (gus, edge));
 
-        assert_eq!(read.out_degree(alice), 1);
-        assert_eq!(read.in_degree(bob), 1);
+        assert_eq!(read.out_degree(alix), 1);
+        assert_eq!(read.in_degree(gus), 1);
 
         // Scans
         assert_eq!(read.node_count(), 2);
@@ -1440,13 +1440,13 @@ mod graph_store_traits {
         assert_eq!(read.edge_type(edge), Some(arcstr::literal!("KNOWS")));
 
         // Search
-        let found = read.find_nodes_by_property("name", &Value::from("Alice"));
-        assert_eq!(found, vec![alice]);
+        let found = read.find_nodes_by_property("name", &Value::from("Alix"));
+        assert_eq!(found, vec![alix]);
     }
 
     #[test]
     fn trait_mutation_operations() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let store: &dyn GraphStoreMut = &store;
 
         let node = store.create_node(&["A"]);
@@ -1467,7 +1467,7 @@ mod graph_store_traits {
 
     #[test]
     fn trait_batch_edges() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let store: &dyn GraphStoreMut = &store;
 
         let a = store.create_node(&["N"]);
@@ -1482,10 +1482,10 @@ mod graph_store_traits {
 
 #[test]
 fn test_clear() {
-    let store = LpgStore::new();
+    let store = LpgStore::new().unwrap();
     let n1 = store.create_node(&["Person"]);
     let n2 = store.create_node(&["Person"]);
-    store.set_node_property(n1, "name", "Alice".into());
+    store.set_node_property(n1, "name", "Alix".into());
     let _e = store.create_edge(n1, n2, "KNOWS");
     store.set_edge_property(_e, "since", 2024.into());
 

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use comfy_table::Cell;
-use grafeo_engine::{GrafeoDB, SchemaInfo};
+use grafeo_engine::SchemaInfo;
 use serde::Serialize;
 
 use crate::OutputFormat;
@@ -52,7 +52,7 @@ struct PredicateOutput {
 
 /// Run the schema command.
 pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
-    let db = GrafeoDB::open(path)?;
+    let db = super::open_existing(path)?;
     let schema = db.schema();
 
     let fmt: Format = format.into();

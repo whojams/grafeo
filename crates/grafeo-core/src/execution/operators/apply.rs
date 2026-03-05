@@ -8,8 +8,11 @@
 //! - GQL: `VALUE { subquery }`
 //! - Pattern comprehensions (with a Collect aggregate wrapper)
 
+use std::sync::Arc;
+
 use grafeo_common::types::{LogicalType, Value};
 
+use super::parameter_scan::ParameterState;
 use super::{DataChunk, Operator, OperatorResult};
 use crate::execution::vector::ValueVector;
 
@@ -18,9 +21,17 @@ use crate::execution::vector::ValueVector;
 /// Evaluates `inner` once for each row of `outer`. The result schema is
 /// `outer_columns ++ inner_columns`. If the inner plan produces zero rows
 /// for a given outer row, that outer row is omitted (inner join semantics).
+///
+/// When `param_state` is set, outer row values for the specified column indices
+/// are injected into the shared [`ParameterState`] before each inner execution,
+/// allowing the inner plan's [`ParameterScanOperator`] to read them.
 pub struct ApplyOperator {
     outer: Box<dyn Operator>,
     inner: Box<dyn Operator>,
+    /// Shared parameter state for correlated subqueries.
+    param_state: Option<Arc<ParameterState>>,
+    /// Indices of outer columns to inject into the inner plan.
+    param_col_indices: Vec<usize>,
     /// Buffered outer rows waiting to be combined with inner results.
     state: ApplyState,
 }
@@ -41,11 +52,32 @@ enum ApplyState {
 }
 
 impl ApplyOperator {
-    /// Creates a new Apply operator.
+    /// Creates a new Apply operator (uncorrelated: no parameter injection).
     pub fn new(outer: Box<dyn Operator>, inner: Box<dyn Operator>) -> Self {
         Self {
             outer,
             inner,
+            param_state: None,
+            param_col_indices: Vec::new(),
+            state: ApplyState::Init,
+        }
+    }
+
+    /// Creates a correlated Apply operator that injects outer row values.
+    ///
+    /// `param_state` is shared with a [`ParameterScanOperator`] in the inner plan.
+    /// `param_col_indices` specifies which outer columns to inject (by index).
+    pub fn new_correlated(
+        outer: Box<dyn Operator>,
+        inner: Box<dyn Operator>,
+        param_state: Arc<ParameterState>,
+        param_col_indices: Vec<usize>,
+    ) -> Self {
+        Self {
+            outer,
+            inner,
+            param_state: Some(param_state),
+            param_col_indices,
             state: ApplyState::Init,
         }
     }
@@ -110,6 +142,16 @@ impl Operator for ApplyOperator {
                     while *outer_row < selected.len() {
                         let row = selected[*outer_row];
                         let outer_values = Self::extract_row(outer_chunk, row);
+
+                        // Inject outer values into the inner plan's parameter state
+                        if let Some(ref param_state) = self.param_state {
+                            let injected: Vec<Value> = self
+                                .param_col_indices
+                                .iter()
+                                .map(|&idx| outer_values.get(idx).cloned().unwrap_or(Value::Null))
+                                .collect();
+                            param_state.set_values(injected);
+                        }
 
                         // Reset and run inner plan for this outer row
                         self.inner.reset();

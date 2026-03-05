@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_chain() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create chain: a -> b -> c -> d
         let a = store.create_node(&["Node"]);
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_min_hops() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create chain: a -> b -> c
         let a = store.create_node(&["Node"]);
@@ -731,7 +731,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_diamond() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         //     a
         //    / \
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_no_matching_edges() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_single_hop() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -851,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_with_path_length() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_reset() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -924,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_name() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let scan = Box::new(ScanOperator::with_label(
             Arc::clone(&store) as Arc<dyn GraphStore>,
             "Node",
@@ -943,7 +943,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_empty_input() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let scan = Box::new(ScanOperator::with_label(
             Arc::clone(&store) as Arc<dyn GraphStore>,
             "Nonexistent",
@@ -964,7 +964,7 @@ mod tests {
 
     #[test]
     fn test_variable_length_expand_with_chunk_capacity() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create a star graph: center -> 5 outer nodes
         let center = store.create_node(&["Node"]);

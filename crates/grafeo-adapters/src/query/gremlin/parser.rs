@@ -905,7 +905,7 @@ impl<'a> Parser<'a> {
         Ok(traversals)
     }
 
-    /// Parse a sub-traversal (e.g., g.V().has('name', 'Bob'))
+    /// Parse a sub-traversal (e.g., g.V().has('name', 'Gus'))
     /// Returns the steps as a Vec<Step>
     fn parse_sub_traversal(&mut self) -> Result<Vec<Step>> {
         // Consume 'g'
@@ -1091,14 +1091,14 @@ mod tests {
 
     #[test]
     fn test_parse_has_with_value() {
-        let mut parser = Parser::new("g.V().has('name', 'Alice')");
+        let mut parser = Parser::new("g.V().has('name', 'Alix')");
         let result = parser.parse();
         assert!(result.is_ok());
         let stmt = result.unwrap();
         assert_eq!(stmt.steps.len(), 1);
         if let Step::Has(HasStep::KeyValue(key, value)) = &stmt.steps[0] {
             assert_eq!(key, "name");
-            assert_eq!(*value, Value::String("Alice".into()));
+            assert_eq!(*value, Value::String("Alix".into()));
         } else {
             panic!("Expected Has step with key-value");
         }
@@ -1431,12 +1431,12 @@ mod tests {
 
     #[test]
     fn test_parse_property() {
-        let stmt = Parser::new("g.addV('Person').property('name', 'Alice')")
+        let stmt = Parser::new("g.addV('Person').property('name', 'Alix')")
             .parse()
             .unwrap();
         if let Step::Property(prop) = &stmt.steps[0] {
             assert_eq!(prop.key, "name");
-            assert_eq!(prop.value, Value::String("Alice".into()));
+            assert_eq!(prop.value, Value::String("Alix".into()));
         } else {
             panic!("Expected Property step");
         }
@@ -1544,13 +1544,13 @@ mod tests {
 
     #[test]
     fn test_parse_has_label_key_value() {
-        let stmt = Parser::new("g.V().has('Person', 'name', 'Alice')")
+        let stmt = Parser::new("g.V().has('Person', 'name', 'Alix')")
             .parse()
             .unwrap();
         if let Step::Has(HasStep::LabelKeyValue(label, key, val)) = &stmt.steps[0] {
             assert_eq!(label, "Person");
             assert_eq!(key, "name");
-            assert_eq!(*val, Value::String("Alice".into()));
+            assert_eq!(*val, Value::String("Alix".into()));
         } else {
             panic!("Expected LabelKeyValue has step");
         }
@@ -1576,7 +1576,7 @@ mod tests {
 
     #[test]
     fn test_parse_vertex_creation_with_properties() {
-        let stmt = Parser::new("g.addV('Person').property('name', 'Alice').as('a')")
+        let stmt = Parser::new("g.addV('Person').property('name', 'Alix').as('a')")
             .parse()
             .unwrap();
         assert!(matches!(&stmt.source, TraversalSource::AddV(Some(l)) if l == "Person"));

@@ -61,11 +61,13 @@ pub struct RdfStore {
     /// All triples (primary storage).
     triples: RwLock<FxHashSet<Arc<Triple>>>,
     /// Subject index: subject -> triples.
-    subject_index: RwLock<hashbrown::HashMap<Term, Vec<Arc<Triple>>, ahash::RandomState>>,
+    subject_index: RwLock<hashbrown::HashMap<Term, Vec<Arc<Triple>>, foldhash::fast::RandomState>>,
     /// Predicate index: predicate -> triples.
-    predicate_index: RwLock<hashbrown::HashMap<Term, Vec<Arc<Triple>>, ahash::RandomState>>,
+    predicate_index:
+        RwLock<hashbrown::HashMap<Term, Vec<Arc<Triple>>, foldhash::fast::RandomState>>,
     /// Object index: object -> triples (optional).
-    object_index: RwLock<Option<hashbrown::HashMap<Term, Vec<Arc<Triple>>, ahash::RandomState>>>,
+    object_index:
+        RwLock<Option<hashbrown::HashMap<Term, Vec<Arc<Triple>>, foldhash::fast::RandomState>>>,
     /// Transaction buffers for pending operations.
     tx_buffer: RwLock<TransactionBuffer>,
     /// Named graphs, each a separate `RdfStore` partition.
@@ -83,7 +85,7 @@ impl RdfStore {
         let object_index = if config.index_objects {
             Some(hashbrown::HashMap::with_capacity_and_hasher(
                 config.initial_capacity,
-                ahash::RandomState::new(),
+                foldhash::fast::RandomState::default(),
             ))
         } else {
             None
@@ -93,11 +95,11 @@ impl RdfStore {
             triples: RwLock::new(FxHashSet::default()),
             subject_index: RwLock::new(hashbrown::HashMap::with_capacity_and_hasher(
                 config.initial_capacity,
-                ahash::RandomState::new(),
+                foldhash::fast::RandomState::default(),
             )),
             predicate_index: RwLock::new(hashbrown::HashMap::with_capacity_and_hasher(
                 config.initial_capacity,
-                ahash::RandomState::new(),
+                foldhash::fast::RandomState::default(),
             )),
             object_index: RwLock::new(object_index),
             tx_buffer: RwLock::new(TransactionBuffer::default()),
@@ -757,24 +759,24 @@ mod tests {
     fn sample_triples() -> Vec<Triple> {
         vec![
             Triple::new(
-                Term::iri("http://example.org/alice"),
+                Term::iri("http://example.org/alix"),
                 Term::iri("http://xmlns.com/foaf/0.1/name"),
-                Term::literal("Alice"),
+                Term::literal("Alix"),
             ),
             Triple::new(
-                Term::iri("http://example.org/alice"),
+                Term::iri("http://example.org/alix"),
                 Term::iri("http://xmlns.com/foaf/0.1/age"),
                 Term::typed_literal("30", "http://www.w3.org/2001/XMLSchema#integer"),
             ),
             Triple::new(
-                Term::iri("http://example.org/alice"),
+                Term::iri("http://example.org/alix"),
                 Term::iri("http://xmlns.com/foaf/0.1/knows"),
-                Term::iri("http://example.org/bob"),
+                Term::iri("http://example.org/gus"),
             ),
             Triple::new(
-                Term::iri("http://example.org/bob"),
+                Term::iri("http://example.org/gus"),
                 Term::iri("http://xmlns.com/foaf/0.1/name"),
-                Term::literal("Bob"),
+                Term::literal("Gus"),
             ),
         ]
     }
@@ -823,12 +825,12 @@ mod tests {
             store.insert(triple);
         }
 
-        let alice = Term::iri("http://example.org/alice");
-        let alice_triples = store.triples_with_subject(&alice);
+        let alix = Term::iri("http://example.org/alix");
+        let alice_triples = store.triples_with_subject(&alix);
 
         assert_eq!(alice_triples.len(), 3);
         for triple in &alice_triples {
-            assert_eq!(triple.subject(), &alice);
+            assert_eq!(triple.subject(), &alix);
         }
     }
 
@@ -855,11 +857,11 @@ mod tests {
             store.insert(triple);
         }
 
-        let bob = Term::iri("http://example.org/bob");
-        let bob_triples = store.triples_with_object(&bob);
+        let gus = Term::iri("http://example.org/gus");
+        let bob_triples = store.triples_with_object(&gus);
 
         assert_eq!(bob_triples.len(), 1);
-        assert_eq!(bob_triples[0].object(), &bob);
+        assert_eq!(bob_triples[0].object(), &gus);
     }
 
     #[test]
@@ -869,16 +871,16 @@ mod tests {
             store.insert(triple);
         }
 
-        // Find all triples with subject alice and predicate knows
+        // Find all triples with subject alix and predicate knows
         let pattern = TriplePattern {
-            subject: Some(Term::iri("http://example.org/alice")),
+            subject: Some(Term::iri("http://example.org/alix")),
             predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/knows")),
             object: None,
         };
 
         let results = store.find(&pattern);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].object(), &Term::iri("http://example.org/bob"));
+        assert_eq!(results[0].object(), &Term::iri("http://example.org/gus"));
     }
 
     #[test]
@@ -890,7 +892,7 @@ mod tests {
 
         let stats = store.stats();
         assert_eq!(stats.triple_count, 4);
-        assert_eq!(stats.subject_count, 2); // alice, bob
+        assert_eq!(stats.subject_count, 2); // alix, gus
         assert_eq!(stats.predicate_count, 3); // name, age, knows
     }
 
@@ -919,11 +921,11 @@ mod tests {
 
         // Create a transaction and add a pending delete
         let tx_id = TxId::new(1);
-        store.remove_in_tx(tx_id, triples[0].clone()); // Delete Alice's name triple
+        store.remove_in_tx(tx_id, triples[0].clone()); // Delete Alix's name triple
 
         // Query with transaction context - should NOT see the deleted triple
         let pattern = TriplePattern {
-            subject: Some(Term::iri("http://example.org/alice")),
+            subject: Some(Term::iri("http://example.org/alix")),
             predicate: None,
             object: None,
         };
@@ -943,9 +945,9 @@ mod tests {
 
         // Verify pending inserts are still included
         let new_triple = Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/email"),
-            Term::literal("alice@example.org"),
+            Term::literal("alix@example.org"),
         );
         store.insert_in_tx(tx_id, new_triple.clone());
 
@@ -1141,8 +1143,8 @@ mod tests {
         }
 
         // Indexes should be populated correctly
-        let alice = Term::iri("http://example.org/alice");
-        assert_eq!(store.triples_with_subject(&alice).len(), 3);
+        let alix = Term::iri("http://example.org/alix");
+        assert_eq!(store.triples_with_subject(&alix).len(), 3);
     }
 
     #[test]

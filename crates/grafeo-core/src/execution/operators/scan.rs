@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_scan_by_label() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         store.create_node(&["Person"]);
         store.create_node(&["Person"]);
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_scan_reset() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
         store.create_node(&["Person"]);
 
         let mut scan = ScanOperator::with_label(store.clone() as Arc<dyn GraphStore>, "Person");
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_full_scan() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes with different labels
         store.create_node(&["Person"]);
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_scan_with_mvcc_context() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes at epoch 1
         let epoch1 = EpochId::new(1);

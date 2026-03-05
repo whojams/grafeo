@@ -29,7 +29,7 @@ impl super::GrafeoDB {
     /// db.create_property_index("email");
     ///
     /// // Now lookups by email are O(1)
-    /// let nodes = db.find_nodes_by_property("email", &Value::from("alice@example.com"));
+    /// let nodes = db.find_nodes_by_property("email", &Value::from("alix@example.com"));
     /// ```
     pub fn create_property_index(&self, property: &str) {
         self.store.create_property_index(property);

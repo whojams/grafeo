@@ -3,7 +3,6 @@
 use std::fs;
 
 use anyhow::{Context, Result};
-use grafeo_engine::GrafeoDB;
 
 use crate::output;
 use crate::{BackupCommands, OutputFormat};
@@ -14,7 +13,7 @@ pub fn run(cmd: BackupCommands, _format: OutputFormat, quiet: bool) -> Result<()
         BackupCommands::Create { path, output: out } => {
             output::status(&format!("Creating backup of {}...", path.display()), quiet);
 
-            let db = GrafeoDB::open(&path)?;
+            let db = super::open_existing(&path)?;
             db.save(&out)
                 .with_context(|| format!("Failed to create backup at {}", out.display()))?;
 
@@ -43,7 +42,7 @@ pub fn run(cmd: BackupCommands, _format: OutputFormat, quiet: bool) -> Result<()
 
             output::status(&format!("Restoring from {}...", backup.display()), quiet);
 
-            let db = GrafeoDB::open(&backup)
+            let db = super::open_existing(&backup)
                 .with_context(|| format!("Failed to open backup at {}", backup.display()))?;
             db.save(&path)
                 .with_context(|| format!("Failed to restore to {}", path.display()))?;

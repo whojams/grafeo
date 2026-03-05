@@ -170,9 +170,9 @@ mod tests {
     #[test]
     fn test_triple_creation() {
         let triple = Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
+            Term::literal("Alix"),
         );
 
         assert!(triple.subject().is_iri());
@@ -183,34 +183,32 @@ mod tests {
     #[test]
     fn test_triple_display() {
         let triple = Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
+            Term::literal("Alix"),
         );
 
         let display = triple.to_string();
-        assert!(display.contains("<http://example.org/alice>"));
+        assert!(display.contains("<http://example.org/alix>"));
         assert!(display.contains("<http://xmlns.com/foaf/0.1/name>"));
-        assert!(display.contains("\"Alice\""));
+        assert!(display.contains("\"Alix\""));
         assert!(display.ends_with('.'));
     }
 
     #[test]
     fn test_triple_pattern_matching() {
         let triple = Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
+            Term::literal("Alix"),
         );
 
         // Match any
         assert!(TriplePattern::any().matches(&triple));
 
         // Match by subject
-        assert!(
-            TriplePattern::with_subject(Term::iri("http://example.org/alice")).matches(&triple)
-        );
-        assert!(!TriplePattern::with_subject(Term::iri("http://example.org/bob")).matches(&triple));
+        assert!(TriplePattern::with_subject(Term::iri("http://example.org/alix")).matches(&triple));
+        assert!(!TriplePattern::with_subject(Term::iri("http://example.org/gus")).matches(&triple));
 
         // Match by predicate
         assert!(

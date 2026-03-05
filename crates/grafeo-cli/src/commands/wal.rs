@@ -1,7 +1,6 @@
 //! WAL management commands.
 
 use anyhow::Result;
-use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
 use crate::output::{self, Format, format_bytes};
@@ -23,7 +22,7 @@ struct WalStatusOutput {
 pub fn run(cmd: WalCommands, format: OutputFormat, quiet: bool) -> Result<()> {
     match cmd {
         WalCommands::Status { path } => {
-            let db = GrafeoDB::open(&path)?;
+            let db = super::open_existing(&path)?;
             let status = db.wal_status();
 
             let output = WalStatusOutput {
@@ -64,7 +63,7 @@ pub fn run(cmd: WalCommands, format: OutputFormat, quiet: bool) -> Result<()> {
         WalCommands::Checkpoint { path } => {
             output::status("Forcing WAL checkpoint...", quiet);
 
-            let db = GrafeoDB::open(&path)?;
+            let db = super::open_existing(&path)?;
             db.wal_checkpoint()?;
 
             output::success("WAL checkpoint completed", quiet);

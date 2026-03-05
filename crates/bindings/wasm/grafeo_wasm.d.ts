@@ -26,7 +26,7 @@ export class Database {
    * @example
    * ```js
    * const results = db.execute("MATCH (p:Person) RETURN p.name, p.age");
-   * // [{name: "Alice", age: 30}, {name: "Bob", age: 25}]
+   * // [{name: "Alix", age: 30}, {name: "Gus", age: 25}]
    * ```
    */
   execute(query: string): Record<string, unknown>[];

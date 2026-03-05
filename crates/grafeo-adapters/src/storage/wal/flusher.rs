@@ -78,8 +78,12 @@ impl AdaptiveFlusher {
     ///
     /// * `wal` - The WAL manager to flush
     /// * `target_interval_ms` - Target interval between flushes in milliseconds
-    #[must_use]
-    pub fn new(wal: Arc<WalManager>, target_interval_ms: u64) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the background flusher thread cannot be spawned.
+    // FIXME: propagate Result to callers
+    pub fn new(wal: Arc<WalManager>, target_interval_ms: u64) -> Result<Self, std::io::Error> {
         let target_interval = Duration::from_millis(target_interval_ms);
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
@@ -87,14 +91,13 @@ impl AdaptiveFlusher {
             .name("grafeo-wal-flusher".to_string())
             .spawn(move || {
                 Self::flusher_loop(wal, target_interval, shutdown_rx);
-            })
-            .expect("Failed to spawn WAL flusher thread");
+            })?;
 
-        Self {
+        Ok(Self {
             target_interval,
             shutdown_tx: Some(shutdown_tx),
             handle: Some(handle),
-        }
+        })
     }
 
     /// Returns the target flush interval.

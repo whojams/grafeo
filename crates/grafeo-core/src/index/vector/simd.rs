@@ -46,7 +46,7 @@ pub fn has_sse() -> bool {
 /// Returns true if NEON instructions are available (always true on aarch64).
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(dead_code)]
+#[allow(dead_code)] // Used only when NEON SIMD paths are compiled
 pub fn has_neon() -> bool {
     true // NEON is mandatory on aarch64
 }
@@ -54,21 +54,21 @@ pub fn has_neon() -> bool {
 // Fallback for other architectures (wasm32, riscv, etc.)
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline]
-#[allow(dead_code)]
+#[allow(dead_code)] // Platform stub: called only on matching target
 pub fn has_avx2() -> bool {
     false
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline]
-#[allow(dead_code)]
+#[allow(dead_code)] // Platform stub: called only on matching target
 pub fn has_sse() -> bool {
     false
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline]
-#[allow(dead_code)]
+#[allow(dead_code)] // Platform stub: called only on matching target
 pub fn has_neon() -> bool {
     false
 }

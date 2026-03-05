@@ -100,6 +100,11 @@ impl super::Planner {
             format!("_anon_edge_{}", count)
         });
         self.edge_columns.borrow_mut().insert(edge_col_name.clone());
+        if is_variable_length {
+            self.group_list_variables
+                .borrow_mut()
+                .insert(edge_col_name.clone());
+        }
         columns.push(edge_col_name);
 
         columns.push(expand.to_variable.clone());

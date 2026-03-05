@@ -77,17 +77,17 @@ mod statistics_tests {
         let mut collector = RdfStatisticsCollector::new();
 
         // Add triples with repeated subjects and objects
-        collector.record_triple("alice", "knows", "bob");
-        collector.record_triple("alice", "knows", "charlie");
-        collector.record_triple("bob", "knows", "charlie");
-        collector.record_triple("bob", "knows", "alice");
+        collector.record_triple("alix", "knows", "gus");
+        collector.record_triple("alix", "knows", "charlie");
+        collector.record_triple("gus", "knows", "charlie");
+        collector.record_triple("gus", "knows", "alix");
 
         let stats = collector.build();
 
         // Should have 2 distinct subjects
-        assert_eq!(stats.subject_count, 2); // alice, bob
+        assert_eq!(stats.subject_count, 2); // alix, gus
         // Should have 3 distinct objects
-        assert_eq!(stats.object_count, 3); // bob, charlie, alice
+        assert_eq!(stats.object_count, 3); // gus, charlie, alix
     }
 }
 
@@ -141,12 +141,12 @@ mod parallel_tests {
     fn test_parallel_triple_source_read() {
         let triples = vec![
             (
-                Value::String("alice".into()),
+                Value::String("alix".into()),
                 Value::String("knows".into()),
-                Value::String("bob".into()),
+                Value::String("gus".into()),
             ),
             (
-                Value::String("bob".into()),
+                Value::String("gus".into()),
                 Value::String("knows".into()),
                 Value::String("charlie".into()),
             ),

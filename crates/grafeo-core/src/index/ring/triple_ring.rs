@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Default)]
 pub struct TermDictionary {
     /// Term to ID mapping.
-    term_to_id: HashMap<Arc<Term>, u32, ahash::RandomState>,
+    term_to_id: HashMap<Arc<Term>, u32, foldhash::fast::RandomState>,
     /// ID to term mapping.
     id_to_term: Vec<Arc<Term>>,
 }
@@ -24,7 +24,7 @@ impl TermDictionary {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            term_to_id: HashMap::with_hasher(ahash::RandomState::new()),
+            term_to_id: HashMap::with_hasher(foldhash::fast::RandomState::default()),
             id_to_term: Vec::new(),
         }
     }
@@ -33,7 +33,10 @@ impl TermDictionary {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            term_to_id: HashMap::with_capacity_and_hasher(capacity, ahash::RandomState::new()),
+            term_to_id: HashMap::with_capacity_and_hasher(
+                capacity,
+                foldhash::fast::RandomState::default(),
+            ),
             id_to_term: Vec::with_capacity(capacity),
         }
     }
@@ -492,18 +495,18 @@ mod tests {
     #[test]
     fn test_find_by_subject() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("alice", "knows", "carol"),
-            make_triple("bob", "knows", "carol"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("alix", "knows", "carol"),
+            make_triple("gus", "knows", "carol"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let pattern = TriplePattern::with_subject(Term::iri("alice"));
+        let pattern = TriplePattern::with_subject(Term::iri("alix"));
         let results: Vec<Triple> = ring.find(&pattern).collect();
 
         assert_eq!(results.len(), 2);
         for triple in &results {
-            assert_eq!(triple.subject(), &Term::iri("alice"));
+            assert_eq!(triple.subject(), &Term::iri("alix"));
         }
     }
 
@@ -512,7 +515,7 @@ mod tests {
         let triples = vec![
             make_triple("s1", "type", "Person"),
             make_triple("s2", "type", "Place"),
-            make_triple("s1", "name", "Alice"),
+            make_triple("s1", "name", "Alix"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -791,20 +794,20 @@ mod tests {
     #[test]
     fn test_dictionary_accessor() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("alice", "likes", "charlie"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("alix", "likes", "charlie"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
         let dict = ring.dictionary();
         assert!(!dict.is_empty());
-        // Should have 5 unique terms: alice, knows, bob, likes, charlie
+        // Should have 5 unique terms: alix, knows, gus, likes, charlie
         assert_eq!(dict.len(), 5);
 
         // Verify we can look up terms
-        assert!(dict.get_id(&Term::iri("alice")).is_some());
+        assert!(dict.get_id(&Term::iri("alix")).is_some());
         assert!(dict.get_id(&Term::iri("knows")).is_some());
-        assert!(dict.get_id(&Term::iri("bob")).is_some());
+        assert!(dict.get_id(&Term::iri("gus")).is_some());
     }
 
     #[test]

@@ -225,7 +225,7 @@ impl HnswIndex {
             return;
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("entry_point confirmed Some above");
         let current_max_level = *max_level;
 
         // Insert the node first so we can reference it
@@ -373,7 +373,7 @@ impl HnswIndex {
             return Vec::new();
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("entry_point confirmed Some above");
 
         // Greedy search from top layer to layer 1
         let mut current_ep = ep;
@@ -460,7 +460,7 @@ impl HnswIndex {
             return Vec::new();
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("entry_point confirmed Some above");
 
         // Greedy search from top layer to layer 1
         let mut current_ep = ep;

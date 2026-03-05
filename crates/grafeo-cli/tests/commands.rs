@@ -12,8 +12,8 @@ fn create_test_db(dir: &Path) -> grafeo_engine::GrafeoDB {
     let n2 = db.create_node(&["Person"]);
     let n3 = db.create_node(&["Company"]);
 
-    db.set_node_property(n1, "name", "Alice".into());
-    db.set_node_property(n2, "name", "Bob".into());
+    db.set_node_property(n1, "name", "Alix".into());
+    db.set_node_property(n2, "name", "Gus".into());
     db.set_node_property(n3, "name", "Acme Corp".into());
 
     db.create_edge(n1, n2, "KNOWS");
@@ -174,7 +174,7 @@ fn test_query_with_parameters() {
     let mut params = std::collections::HashMap::new();
     params.insert(
         "name".to_string(),
-        grafeo_common::types::Value::from("Alice"),
+        grafeo_common::types::Value::from("Alix"),
     );
 
     let session = db.session();

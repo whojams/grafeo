@@ -96,6 +96,7 @@ impl TrieIndex {
     }
 
     /// Creates an iterator at the root level.
+    #[allow(clippy::iter_not_returning_iterator)] // TrieIterator is a cursor, not std::iter::Iterator
     pub fn iter(&self) -> TrieIterator<'_> {
         TrieIterator::new(&self.root)
     }

@@ -76,7 +76,7 @@
 //! let result = session.execute("MATCH (n:Person) RETURN n")?;
 //!
 //! // Writes are isolated until commit
-//! session.execute("INSERT (:Person {name: 'Alice'})")?;
+//! session.execute("INSERT (:Person {name: 'Alix'})")?;
 //!
 //! // Commit may fail if write-write conflict detected
 //! session.commit()?;
@@ -91,7 +91,7 @@ pub mod parallel;
 mod prepared;
 
 pub use manager::{EntityId, IsolationLevel, TransactionManager, TxInfo, TxState};
-pub use mvcc::{Version, VersionChain, VersionInfo};
+pub use mvcc::{VersionChain, VersionInfo};
 pub use prepared::{CommitInfo, PreparedCommit};
 
 #[cfg(feature = "parallel")]

@@ -19,31 +19,7 @@ pub mod optimizer;
 pub mod plan;
 pub mod planner;
 pub mod processor;
-pub(crate) mod translator_common;
-
-#[cfg(feature = "rdf")]
-pub mod planner_rdf;
-
-#[cfg(feature = "gql")]
-pub mod gql_translator;
-
-#[cfg(feature = "cypher")]
-pub mod cypher_translator;
-
-#[cfg(feature = "sparql")]
-pub mod sparql_translator;
-
-#[cfg(feature = "gremlin")]
-pub mod gremlin_translator;
-
-#[cfg(feature = "graphql")]
-pub mod graphql_translator;
-
-#[cfg(feature = "sql-pgq")]
-pub mod sql_pgq_translator;
-
-#[cfg(all(feature = "graphql", feature = "rdf"))]
-pub mod graphql_rdf_translator;
+pub mod translators;
 
 // Core exports
 pub use cache::{CacheKey, CacheStats, CachingQueryProcessor, QueryCache};
@@ -57,26 +33,26 @@ pub use planner::{
 pub use processor::{QueryLanguage, QueryParams, QueryProcessor};
 
 #[cfg(feature = "rdf")]
-pub use planner_rdf::RdfPlanner;
+pub use planner::rdf::RdfPlanner;
 
 // Translator exports
 #[cfg(feature = "gql")]
-pub use gql_translator::translate as translate_gql;
+pub use translators::gql::translate as translate_gql;
 
 #[cfg(feature = "cypher")]
-pub use cypher_translator::translate as translate_cypher;
+pub use translators::cypher::translate as translate_cypher;
 
 #[cfg(feature = "sparql")]
-pub use sparql_translator::translate as translate_sparql;
+pub use translators::sparql::translate as translate_sparql;
 
 #[cfg(feature = "gremlin")]
-pub use gremlin_translator::translate as translate_gremlin;
+pub use translators::gremlin::translate as translate_gremlin;
 
 #[cfg(feature = "graphql")]
-pub use graphql_translator::translate as translate_graphql;
+pub use translators::graphql::translate as translate_graphql;
 
 #[cfg(feature = "sql-pgq")]
-pub use sql_pgq_translator::translate as translate_sql_pgq;
+pub use translators::sql_pgq::translate as translate_sql_pgq;
 
 #[cfg(all(feature = "graphql", feature = "rdf"))]
-pub use graphql_rdf_translator::translate as translate_graphql_rdf;
+pub use translators::graphql_rdf::translate as translate_graphql_rdf;

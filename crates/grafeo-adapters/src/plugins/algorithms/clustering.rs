@@ -495,7 +495,7 @@ mod tests {
 
     fn create_triangle_graph() -> LpgStore {
         // Simple triangle: 0 - 1 - 2 - 0
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -514,7 +514,7 @@ mod tests {
     fn create_star_graph() -> LpgStore {
         // Star: center (0) connected to leaves (1, 2, 3, 4)
         // No triangles because leaves don't connect to each other
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let center = store.create_node(&["Center"]);
 
         for _ in 0..4 {
@@ -528,7 +528,7 @@ mod tests {
 
     fn create_complete_graph(n: usize) -> LpgStore {
         // K_n: complete graph with n nodes (all pairs connected)
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let nodes: Vec<NodeId> = (0..n).map(|_| store.create_node(&["Node"])).collect();
 
         for i in 0..n {
@@ -543,7 +543,7 @@ mod tests {
 
     fn create_path_graph() -> LpgStore {
         // Path: 0 - 1 - 2 - 3
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_empty_graph() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = clustering_coefficient(&store);
 
         assert!(result.coefficients.is_empty());
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
 
         let result = clustering_coefficient(&store);
@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn test_two_connected_nodes() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n1, "EDGE");
@@ -788,7 +788,7 @@ mod tests {
         //   0---1
         //    \ /
         //     3
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);

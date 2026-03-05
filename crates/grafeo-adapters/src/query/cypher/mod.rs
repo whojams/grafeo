@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn test_parse_create() {
-        let result = parse("CREATE (n:Person {name: 'Alice'})");
+        let result = parse("CREATE (n:Person {name: 'Alix'})");
         assert!(result.is_ok());
     }
 
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_parse_merge() {
-        let result = parse("MERGE (n:Person {name: 'Alice'}) RETURN n");
+        let result = parse("MERGE (n:Person {name: 'Alix'}) RETURN n");
         assert!(result.is_ok());
     }
 }

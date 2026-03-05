@@ -446,17 +446,17 @@ mod tests {
     fn test_statistics_collector() {
         let mut collector = RdfStatisticsCollector::new();
 
-        collector.record_triple("alice", "knows", "bob");
-        collector.record_triple("alice", "name", "Alice");
-        collector.record_triple("bob", "name", "Bob");
-        collector.record_triple("bob", "knows", "charlie");
+        collector.record_triple("alix", "knows", "gus");
+        collector.record_triple("alix", "name", "Alix");
+        collector.record_triple("gus", "name", "Gus");
+        collector.record_triple("gus", "knows", "charlie");
 
         let stats = collector.build();
 
         assert_eq!(stats.total_triples, 4);
-        assert_eq!(stats.subject_count, 2); // alice, bob
+        assert_eq!(stats.subject_count, 2); // alix, gus
         assert_eq!(stats.predicate_count, 2); // knows, name
-        assert_eq!(stats.object_count, 4); // bob, Alice, Bob, charlie
+        assert_eq!(stats.object_count, 4); // gus, Alix, Gus, charlie
     }
 
     #[test]

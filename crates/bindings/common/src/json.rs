@@ -171,9 +171,9 @@ mod tests {
 
     #[test]
     fn params_conversion() {
-        let params = serde_json::json!({"name": "Alice", "age": 30});
+        let params = serde_json::json!({"name": "Alix", "age": 30});
         let map = json_params_to_map(Some(&params)).unwrap().unwrap();
-        assert_eq!(map.get("name"), Some(&Value::String("Alice".into())));
+        assert_eq!(map.get("name"), Some(&Value::String("Alix".into())));
         assert_eq!(map.get("age"), Some(&Value::Int64(30)));
     }
 

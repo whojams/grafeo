@@ -4,10 +4,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
-
-wasm_bindgen_test_configure!(run_in_node);
 
 use grafeo_wasm::Database;
 
@@ -22,7 +19,7 @@ fn test_database_creation() {
 fn test_insert_and_query() {
     let db = Database::new().expect("create db");
 
-    db.execute("CREATE (:Person {name: 'Alice', age: 30})")
+    db.execute("CREATE (:Person {name: 'Alix', age: 30})")
         .expect("create node");
     assert_eq!(db.node_count(), 1);
 
@@ -53,7 +50,7 @@ fn test_execute_raw_structure() {
 fn test_execute_with_language_gql() {
     let db = Database::new().expect("create db");
 
-    db.execute("CREATE (:Person {name: 'Alice'})")
+    db.execute("CREATE (:Person {name: 'Alix'})")
         .expect("create");
 
     let result = db
@@ -75,7 +72,7 @@ fn test_execute_with_unknown_language_error() {
 fn test_snapshot_roundtrip() {
     let db = Database::new().expect("create db");
 
-    db.execute("CREATE (:Person {name: 'Alice'})")
+    db.execute("CREATE (:Person {name: 'Alix'})")
         .expect("create");
     assert_eq!(db.node_count(), 1);
 
@@ -92,7 +89,7 @@ fn test_snapshot_roundtrip() {
 fn test_schema() {
     let db = Database::new().expect("create db");
 
-    db.execute("CREATE (:Person {name: 'Alice'})-[:KNOWS]->(:Person {name: 'Bob'})")
+    db.execute("CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
         .expect("create");
 
     let schema = db.schema().expect("schema");
@@ -102,6 +99,6 @@ fn test_schema() {
 
 #[wasm_bindgen_test]
 fn test_version() {
-    let v = grafeo_wasm::version();
+    let v = Database::version();
     assert!(!v.is_empty());
 }

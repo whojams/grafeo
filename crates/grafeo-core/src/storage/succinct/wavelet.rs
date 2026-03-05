@@ -99,7 +99,11 @@ impl WaveletTree {
         // Remap sequence to codes
         let codes: Vec<u64> = sequence
             .iter()
-            .map(|&s| *symbol_to_code.get(&s).unwrap())
+            .map(|&s| {
+                *symbol_to_code
+                    .get(&s)
+                    .expect("symbol_to_code built from same sequence")
+            })
             .collect();
 
         // Build wavelet tree levels

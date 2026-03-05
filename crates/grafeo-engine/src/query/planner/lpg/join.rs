@@ -1,7 +1,7 @@
 //! Join, union, and distinct planning.
 
-use super::common;
 use super::*;
+use crate::query::planner::common;
 
 impl super::Planner {
     /// Plans a JOIN operator.
@@ -44,13 +44,6 @@ impl super::Planner {
 
         let output_schema = self.derive_schema_from_columns(&columns);
 
-        // Check if we should use leapfrog join for cyclic patterns
-        // Currently we use hash join by default; leapfrog is available but
-        // requires explicit multi-way join detection which will be added
-        // when we have proper cyclic pattern detection in the optimizer.
-        // For now, LeapfrogJoinOperator is available for direct use.
-        let _ = LeapfrogJoinOperator::new; // Suppress unused warning
-
         let operator: Box<dyn Operator> = Box::new(HashJoinOperator::new(
             left_op,
             right_op,
@@ -61,6 +54,81 @@ impl super::Planner {
         ));
 
         Ok((operator, columns))
+    }
+
+    /// Plans a multi-way leapfrog join (WCOJ) operator.
+    ///
+    /// Materializes each input into a sorted trie and uses `LeapfrogJoinOperator`
+    /// for worst-case optimal intersection.
+    pub(super) fn plan_multi_way_join(
+        &self,
+        mwj: &MultiWayJoinOp,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        // Plan each input, collecting operators and their column lists
+        let mut input_ops: Vec<Box<dyn Operator>> = Vec::with_capacity(mwj.inputs.len());
+        let mut input_columns: Vec<Vec<String>> = Vec::with_capacity(mwj.inputs.len());
+
+        for input in &mwj.inputs {
+            let (op, cols) = self.plan_operator(input)?;
+            input_ops.push(op);
+            input_columns.push(cols);
+        }
+
+        // For each input, find the column indices of the shared variables (join keys)
+        let mut join_key_indices: Vec<Vec<usize>> = Vec::with_capacity(mwj.inputs.len());
+        for cols in &input_columns {
+            let mut key_indices = Vec::new();
+            for shared_var in &mwj.shared_variables {
+                if let Some(idx) = cols.iter().position(|c| c == shared_var) {
+                    key_indices.push(idx);
+                }
+            }
+            join_key_indices.push(key_indices);
+        }
+
+        // Build combined output columns: shared variables first (deduplicated),
+        // then remaining columns from each input
+        let mut output_columns: Vec<String> = mwj.shared_variables.clone();
+        let mut output_column_mapping: Vec<(usize, usize)> = Vec::new();
+
+        // Map shared variables from the first input that has them
+        for shared_var in &mwj.shared_variables {
+            let mut found = false;
+            for (input_idx, cols) in input_columns.iter().enumerate() {
+                if let Some(col_idx) = cols.iter().position(|c| c == shared_var) {
+                    output_column_mapping.push((input_idx, col_idx));
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(Error::Internal(format!(
+                    "Shared variable '{}' not found in any input",
+                    shared_var
+                )));
+            }
+        }
+
+        // Add non-shared columns from each input
+        for (input_idx, cols) in input_columns.iter().enumerate() {
+            for (col_idx, col_name) in cols.iter().enumerate() {
+                if !mwj.shared_variables.contains(col_name) {
+                    output_columns.push(col_name.clone());
+                    output_column_mapping.push((input_idx, col_idx));
+                }
+            }
+        }
+
+        let output_schema = self.derive_schema_from_columns(&output_columns);
+
+        let operator: Box<dyn Operator> = Box::new(LeapfrogJoinOperator::new(
+            input_ops,
+            join_key_indices,
+            output_schema,
+            output_column_mapping,
+        ));
+
+        Ok((operator, output_columns))
     }
 
     /// Extracts a column index from an expression.
@@ -153,14 +221,52 @@ impl super::Planner {
     }
 
     /// Plans an APPLY (lateral join) operator.
+    ///
+    /// When `shared_variables` is non-empty, creates a correlated Apply that
+    /// injects outer row values into the inner plan via [`ParameterState`].
     pub(super) fn plan_apply(&self, apply: &ApplyOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        let (outer_op, columns) = self.plan_operator(&apply.input)?;
+        let (outer_op, outer_columns) = self.plan_operator(&apply.input)?;
+
+        if apply.shared_variables.is_empty() {
+            // Uncorrelated Apply
+            let (inner_op, inner_columns) = self.plan_operator(&apply.subplan)?;
+            return Ok(common::build_apply(
+                outer_op,
+                inner_op,
+                outer_columns,
+                inner_columns,
+            ));
+        }
+
+        // Correlated Apply: create shared ParameterState
+        let param_state = std::sync::Arc::new(
+            grafeo_core::execution::operators::ParameterState::new(apply.shared_variables.clone()),
+        );
+
+        // Find column indices for the shared variables in outer columns
+        let param_col_indices: Vec<usize> = apply
+            .shared_variables
+            .iter()
+            .map(|var| outer_columns.iter().position(|c| c == var).unwrap_or(0))
+            .collect();
+
+        // Set the parameter state so the inner plan's ParameterScan can find it
+        *self.correlated_param_state.borrow_mut() = Some(std::sync::Arc::clone(&param_state));
+
         let (inner_op, inner_columns) = self.plan_operator(&apply.subplan)?;
-        Ok(common::build_apply(
+
+        // Clear the parameter state after planning the inner operator
+        *self.correlated_param_state.borrow_mut() = None;
+
+        // Build correlated Apply
+        let mut columns = outer_columns;
+        columns.extend(inner_columns);
+        let operator = Box::new(ApplyOperator::new_correlated(
             outer_op,
             inner_op,
-            columns,
-            inner_columns,
-        ))
+            param_state,
+            param_col_indices,
+        ));
+        Ok((operator, columns))
     }
 }

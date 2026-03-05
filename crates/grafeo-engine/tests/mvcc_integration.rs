@@ -15,20 +15,20 @@ use grafeo_engine::{
 
 /// Helper to create a test store with some initial data.
 fn create_test_store() -> Arc<LpgStore> {
-    let store = Arc::new(LpgStore::new());
+    let store = Arc::new(LpgStore::new().unwrap());
 
     // Create some initial nodes
     let alice_id = store.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
         ],
     );
     let bob_id = store.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
         ],
     );
@@ -77,7 +77,7 @@ fn test_snapshot_isolation_reads_see_consistent_data() {
 #[test]
 fn test_transaction_sees_own_writes() {
     // A transaction should always see its own uncommitted writes
-    let store = Arc::new(LpgStore::new());
+    let store = Arc::new(LpgStore::new().unwrap());
     let tx_manager = Arc::new(TransactionManager::new());
 
     let tx1 = tx_manager.begin();
@@ -97,7 +97,7 @@ fn test_transaction_sees_own_writes() {
 #[test]
 fn test_committed_writes_visible_to_new_transactions() {
     // After commit, writes should be visible to new transactions
-    let store = Arc::new(LpgStore::new());
+    let store = Arc::new(LpgStore::new().unwrap());
     let tx_manager = Arc::new(TransactionManager::new());
 
     // T1 creates and commits
@@ -188,7 +188,7 @@ fn test_non_overlapping_writes_succeed() {
 #[test]
 fn test_rollback_makes_writes_invisible() {
     // After rollback, a transaction's writes should not be visible
-    let store = Arc::new(LpgStore::new());
+    let store = Arc::new(LpgStore::new().unwrap());
     let tx_manager = Arc::new(TransactionManager::new());
 
     // T1 creates a node
@@ -401,7 +401,7 @@ fn test_commit_after_abort_fails() {
 #[test]
 fn test_many_concurrent_transactions() {
     // Verify system handles many concurrent transactions
-    let store = Arc::new(LpgStore::new());
+    let store = Arc::new(LpgStore::new().unwrap());
     let tx_manager = Arc::new(TransactionManager::new());
 
     let mut transactions = Vec::new();

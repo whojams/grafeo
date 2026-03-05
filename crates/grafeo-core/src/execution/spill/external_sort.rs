@@ -400,7 +400,7 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
 /// Adapter to write to SpillFile through std::io::Write.
 struct SpillFileWriter<'a>(&'a mut SpillFile);
 
-impl<'a> std::io::Write for SpillFileWriter<'a> {
+impl std::io::Write for SpillFileWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write_all(buf)?;
         Ok(buf.len())
@@ -414,7 +414,7 @@ impl<'a> std::io::Write for SpillFileWriter<'a> {
 /// Adapter to read from SpillFileReader through std::io::Read.
 struct SpillFileReaderAdapter<'a>(&'a mut SpillFileReader);
 
-impl<'a> std::io::Read for SpillFileReaderAdapter<'a> {
+impl std::io::Read for SpillFileReaderAdapter<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.0.read_exact(buf)?;
         Ok(buf.len())

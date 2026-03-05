@@ -24,8 +24,8 @@ fn test_concurrent_read_sessions() {
     // Create some initial data
     {
         let session = db.session();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
         session.execute("INSERT (:Person {name: 'Carol'})").unwrap();
     }
 
@@ -418,16 +418,13 @@ async fn test_async_concurrent_sessions() {
 #[tokio::test]
 async fn test_async_transaction_isolation() {
     use std::sync::atomic::AtomicBool;
-    use tokio::sync::Barrier as TokioBarrier;
     use tokio::task;
 
     let db = Arc::new(GrafeoDB::new_in_memory());
-    let barrier = Arc::new(TokioBarrier::new(2));
     let writer_committed = Arc::new(AtomicBool::new(false));
 
     // Writer task
     let db_writer: Arc<GrafeoDB> = Arc::clone(&db);
-    let _barrier_writer = Arc::clone(&barrier);
     let committed_flag = Arc::clone(&writer_committed);
 
     let writer = task::spawn_blocking(move || {
@@ -436,28 +433,21 @@ async fn test_async_transaction_isolation() {
         session
             .execute("INSERT (:AsyncIsolated {data: 'test'})")
             .unwrap();
-
-        // Signal ready
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // Commit
         session.commit().unwrap();
         committed_flag.store(true, Ordering::Release);
     });
 
-    // Reader task
+    // Reader task: waits for writer commit via atomic flag, no sleep
     let db_reader: Arc<GrafeoDB> = Arc::clone(&db);
+    let reader_flag = Arc::clone(&writer_committed);
 
     let reader = task::spawn_blocking(move || {
-        // Wait a bit for writer to start
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // Spin until writer has committed
+        while !reader_flag.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
 
         let session = db_reader.session();
-
-        // Wait for writer to commit
-        std::thread::sleep(std::time::Duration::from_millis(20));
-
-        // Now should see data
         let result = session.execute("MATCH (n:AsyncIsolated) RETURN n").unwrap();
         result.row_count()
     });

@@ -173,16 +173,16 @@ impl<K: PartialOrd, T> PartialEq for MinScored<K, T> {
 
 impl<K: PartialOrd, T> Eq for MinScored<K, T> {}
 
-impl<K: PartialOrd, T> PartialOrd for MinScored<K, T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+impl<K: PartialOrd, T> Ord for MinScored<K, T> {
+    fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering for min-heap
-        other.0.partial_cmp(&self.0)
+        other.0.partial_cmp(&self.0).unwrap_or(Ordering::Equal)
     }
 }
 
-impl<K: PartialOrd, T> Ord for MinScored<K, T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+impl<K: PartialOrd, T> PartialOrd for MinScored<K, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -251,12 +251,12 @@ pub trait DistanceMap<K> {
     }
 }
 
-impl<K> DistanceMap<K> for HashMap<NodeId, K> {
-    fn get(&self, node: NodeId) -> Option<&K> {
+impl<V> DistanceMap<V> for HashMap<NodeId, V> {
+    fn get(&self, node: NodeId) -> Option<&V> {
         HashMap::get(self, &node)
     }
 
-    fn insert(&mut self, node: NodeId, dist: K) {
+    fn insert(&mut self, node: NodeId, dist: V) {
         HashMap::insert(self, node, dist);
     }
 }

@@ -4,15 +4,15 @@
 //! representation. The inner MATCH clause reuses GQL AST types, so pattern
 //! translation follows the GQL translator pattern.
 
+use super::common::{
+    combine_with_and, is_aggregate_function, to_aggregate_function, wrap_filter, wrap_limit,
+    wrap_return, wrap_skip, wrap_sort,
+};
 use crate::query::plan::{
     AggregateExpr, AggregateOp, BinaryOp, CallProcedureOp, CreatePropertyGraphOp, ExpandDirection,
     ExpandOp, LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, PathMode,
     ProcedureYield, PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, SortKey, SortOrder,
     UnaryOp,
-};
-use crate::query::translator_common::{
-    combine_with_and, is_aggregate_function, to_aggregate_function, wrap_filter, wrap_limit,
-    wrap_return, wrap_skip, wrap_sort,
 };
 use grafeo_adapters::query::sql_pgq::{self, ast};
 use grafeo_common::types::Value;
@@ -84,6 +84,7 @@ impl SqlPgqTranslator {
                             ast::SortDirection::Asc => SortOrder::Ascending,
                             ast::SortDirection::Desc => SortOrder::Descending,
                         },
+                        nulls: None,
                     })
                 })
                 .collect::<Result<_>>()?;
@@ -126,7 +127,9 @@ impl SqlPgqTranslator {
                             args,
                             distinct,
                         } if is_aggregate_function(name) => {
-                            let agg_fn = to_aggregate_function(name).unwrap();
+                            let agg_fn = to_aggregate_function(name).expect(
+                                "aggregate function validated by is_aggregate_function guard",
+                            );
                             let expr = if args.len() == 1 {
                                 let arg = &args[0];
                                 if matches!(arg, ast::Expression::Variable(v) if v == "*") {
@@ -140,6 +143,7 @@ impl SqlPgqTranslator {
                             aggregates.push(AggregateExpr {
                                 function: agg_fn,
                                 expression: expr,
+                                expression2: None,
                                 distinct: *distinct,
                                 alias,
                                 percentile: None,
@@ -223,6 +227,7 @@ impl SqlPgqTranslator {
                                 ast::GqlSortOrder::Asc => SortOrder::Ascending,
                                 ast::GqlSortOrder::Desc => SortOrder::Descending,
                             },
+                            nulls: None,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -289,12 +294,12 @@ impl SqlPgqTranslator {
         match pattern {
             ast::Pattern::Node(node) => self.translate_node_pattern(node, input),
             ast::Pattern::Path(path) => self.translate_path_pattern(path, input),
-            ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
-                Err(Error::Query(QueryError::new(
-                    QueryErrorKind::Semantic,
-                    "SQL/PGQ does not support quantified or union patterns",
-                )))
-            }
+            ast::Pattern::Quantified { .. }
+            | ast::Pattern::Union(_)
+            | ast::Pattern::MultisetUnion(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "SQL/PGQ does not support quantified or union patterns",
+            ))),
         }
     }
 
@@ -923,7 +928,7 @@ mod tests {
                 MATCH (a:Person)
                 COLUMNS (a.name AS person)
             ) AS g
-            WHERE g.person = 'Alice'",
+            WHERE g.person = 'Alix'",
         )
         .unwrap();
 
@@ -943,7 +948,7 @@ mod tests {
             matches!(left.as_ref(), LogicalExpression::Property { variable, property } if variable == "a" && property == "name")
         );
         assert!(
-            matches!(right.as_ref(), LogicalExpression::Literal(Value::String(s)) if s.as_str() == "Alice")
+            matches!(right.as_ref(), LogicalExpression::Literal(Value::String(s)) if s.as_str() == "Alix")
         );
     }
 
@@ -1134,5 +1139,278 @@ mod tests {
             agg.aggregates[0].expression.is_none(),
             "COUNT(*) should have None expression"
         );
+    }
+
+    // === Undirected Edge Tests ===
+
+    #[test]
+    fn test_translate_undirected_edge() {
+        let plan = translate(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (a:Person)-[:KNOWS]-(b:Person)
+                COLUMNS (a.name AS from_name, b.name AS to_name)
+            )",
+        )
+        .unwrap();
+        // Should parse without error; undirected produces Both direction
+        fn find_expand(op: &LogicalOperator) -> Option<&ExpandOp> {
+            match op {
+                LogicalOperator::Expand(e) => Some(e),
+                LogicalOperator::Filter(f) => find_expand(&f.input),
+                LogicalOperator::Return(r) => find_expand(&r.input),
+                LogicalOperator::Project(p) => find_expand(&p.input),
+                _ => None,
+            }
+        }
+        let expand = find_expand(&plan.root).expect("Expected Expand for undirected edge");
+        assert_eq!(expand.direction, ExpandDirection::Both);
+    }
+
+    // === Node Property Filter Tests ===
+
+    #[test]
+    fn test_translate_node_property_filter() {
+        let plan = translate(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person {age: 30})
+                COLUMNS (n.name AS name)
+            )",
+        )
+        .unwrap();
+        // Inline property filter should produce a Filter operator
+        fn has_filter(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Filter(_) => true,
+                LogicalOperator::Return(r) => has_filter(&r.input),
+                LogicalOperator::Project(p) => has_filter(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            has_filter(&plan.root),
+            "Property filter should produce Filter"
+        );
+    }
+
+    // === CALL Statement Tests ===
+
+    #[test]
+    fn test_translate_call_statement() {
+        // SQL/PGQ CALL uses ORDER BY directly (no RETURN keyword)
+        let plan = translate("CALL db.labels() YIELD label ORDER BY label").unwrap();
+        fn find_call(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::CallProcedure(_) => true,
+                LogicalOperator::Sort(s) => find_call(&s.input),
+                LogicalOperator::Filter(f) => find_call(&f.input),
+                _ => false,
+            }
+        }
+        assert!(find_call(&plan.root), "CALL should produce CallProcedure");
+    }
+
+    #[test]
+    fn test_translate_call_with_where() {
+        let plan = translate("CALL db.labels() YIELD label WHERE label <> 'Internal'").unwrap();
+        fn find_filter(op: &LogicalOperator) -> bool {
+            matches!(op, LogicalOperator::Filter(_))
+        }
+        assert!(find_filter(&plan.root), "CALL WHERE should produce Filter");
+    }
+
+    // === Aggregate Function Tests ===
+
+    #[test]
+    fn test_translate_outer_aggregate_sum() {
+        use crate::query::plan::AggregateFunction;
+
+        let plan = translate(
+            "SELECT SUM(g.score) AS total FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.score AS score)
+            ) AS g",
+        )
+        .unwrap();
+
+        fn find_aggregate(op: &LogicalOperator) -> Option<&AggregateOp> {
+            match op {
+                LogicalOperator::Aggregate(a) => Some(a),
+                LogicalOperator::Return(r) => find_aggregate(&r.input),
+                LogicalOperator::Filter(f) => find_aggregate(&f.input),
+                _ => None,
+            }
+        }
+        let agg = find_aggregate(&plan.root).expect("Expected Aggregate for SUM");
+        assert_eq!(agg.aggregates.len(), 1);
+        assert!(matches!(agg.aggregates[0].function, AggregateFunction::Sum));
+    }
+
+    #[test]
+    fn test_translate_outer_aggregate_avg_min_max() {
+        use crate::query::plan::AggregateFunction;
+
+        for (func, expected) in [
+            ("AVG", AggregateFunction::Avg),
+            ("MIN", AggregateFunction::Min),
+            ("MAX", AggregateFunction::Max),
+        ] {
+            let query = format!(
+                "SELECT {}(g.val) AS result FROM GRAPH_TABLE (
+                    MATCH (n:Item)
+                    COLUMNS (n.value AS val)
+                ) AS g",
+                func
+            );
+            let plan = translate(&query).unwrap();
+
+            fn find_agg(op: &LogicalOperator) -> Option<&AggregateOp> {
+                match op {
+                    LogicalOperator::Aggregate(a) => Some(a),
+                    LogicalOperator::Return(r) => find_agg(&r.input),
+                    LogicalOperator::Filter(f) => find_agg(&f.input),
+                    _ => None,
+                }
+            }
+            let agg =
+                find_agg(&plan.root).unwrap_or_else(|| panic!("Expected Aggregate for {func}"));
+            assert!(
+                agg.aggregates[0].function == expected,
+                "{func} should produce {expected:?}"
+            );
+        }
+    }
+
+    // === Multiple MATCH Patterns ===
+
+    #[test]
+    fn test_translate_multiple_patterns() {
+        let plan = translate(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (a:Person), (b:Company)
+                COLUMNS (a.name AS person, b.name AS company)
+            )",
+        )
+        .unwrap();
+        // Multiple patterns produce nested NodeScans (second scan has input from first)
+        fn count_node_scans(op: &LogicalOperator) -> usize {
+            match op {
+                LogicalOperator::NodeScan(scan) => {
+                    1 + scan.input.as_ref().map_or(0, |i| count_node_scans(i))
+                }
+                LogicalOperator::Filter(f) => count_node_scans(&f.input),
+                LogicalOperator::Return(r) => count_node_scans(&r.input),
+                _ => 0,
+            }
+        }
+        assert!(
+            count_node_scans(&plan.root) >= 2,
+            "Multiple patterns should produce at least 2 NodeScans"
+        );
+    }
+
+    // === Parameter Tests ===
+
+    #[test]
+    fn test_translate_parameter_in_outer_where() {
+        // Parameters go in the outer SELECT WHERE, not inside GRAPH_TABLE
+        let plan = translate(
+            "SELECT g.name FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)
+            ) AS g WHERE g.name = $name",
+        )
+        .unwrap();
+        fn find_param(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Filter(f) => {
+                    matches!(&f.predicate, LogicalExpression::Binary { right, .. }
+                        if matches!(right.as_ref(), LogicalExpression::Parameter(_)))
+                }
+                LogicalOperator::Return(r) => find_param(&r.input),
+                _ => false,
+            }
+        }
+        assert!(
+            find_param(&plan.root),
+            "Parameter should appear in outer WHERE filter"
+        );
+    }
+
+    // === Multiple COLUMNS with Expressions ===
+
+    #[test]
+    fn test_translate_three_columns_with_edge() {
+        let plan = translate(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (a:Person)-[e:KNOWS]->(b:Person)
+                COLUMNS (a.name AS from_name, b.name AS to_name, e.since AS since)
+            )",
+        )
+        .unwrap();
+        // Find the return and check 3 items
+        if let LogicalOperator::Return(ret) = &plan.root {
+            assert_eq!(ret.items.len(), 3, "Should have 3 return items");
+        } else {
+            panic!("Expected Return as root operator");
+        }
+    }
+
+    // === Node Property Filter ===
+
+    #[test]
+    fn test_translate_node_inline_property() {
+        let plan = translate(
+            "SELECT * FROM GRAPH_TABLE (
+                MATCH (n:Person {age: 30})
+                COLUMNS (n.name AS name)
+            )",
+        )
+        .unwrap();
+        fn has_filter(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Filter(_) => true,
+                LogicalOperator::Return(r) => has_filter(&r.input),
+                LogicalOperator::Project(p) => has_filter(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            has_filter(&plan.root),
+            "Inline property should produce Filter"
+        );
+    }
+
+    // === CALL with LIMIT ===
+
+    #[test]
+    fn test_translate_call_with_limit() {
+        let plan = translate("CALL db.labels() YIELD label LIMIT 5").unwrap();
+        fn find_limit(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Limit(_) => true,
+                LogicalOperator::Sort(s) => find_limit(&s.input),
+                _ => false,
+            }
+        }
+        assert!(find_limit(&plan.root), "CALL LIMIT should produce Limit");
+    }
+
+    // === CALL with multiple YIELD items ===
+
+    #[test]
+    fn test_translate_call_multiple_yields() {
+        let plan = translate("CALL db.stats() YIELD name, value").unwrap();
+        fn find_call(op: &LogicalOperator) -> Option<&CallProcedureOp> {
+            match op {
+                LogicalOperator::CallProcedure(c) => Some(c),
+                LogicalOperator::Filter(f) => find_call(&f.input),
+                _ => None,
+            }
+        }
+        let call = find_call(&plan.root).expect("Expected CallProcedure");
+        let yields = call.yield_items.as_ref().expect("Expected yield items");
+        assert_eq!(yields.len(), 2, "Should have 2 yield items");
+        assert_eq!(yields[0].field_name, "name");
+        assert_eq!(yields[1].field_name, "value");
     }
 }

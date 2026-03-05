@@ -249,8 +249,8 @@ enum DataCommands {
         output: PathBuf,
 
         /// Export format (parquet, turtle, json)
-        #[arg(long)]
-        format: Option<String>,
+        #[arg(long = "export-format")]
+        export_format: Option<String>,
     },
 
     /// Import data from a dump

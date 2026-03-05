@@ -2,15 +2,13 @@
 //!
 //! Translates SPARQL 1.1 AST to the common logical plan representation.
 
+use super::common::{wrap_distinct, wrap_filter, wrap_limit, wrap_skip, wrap_sort};
 use crate::query::plan::{
     AddGraphOp, AggregateExpr, AggregateFunction, AggregateOp, AntiJoinOp, BinaryOp, BindOp,
     ClearGraphOp, CopyGraphOp, CreateGraphOp, DeleteTripleOp, DropGraphOp, InsertTripleOp, JoinOp,
     JoinType, LeftJoinOp, LoadGraphOp, LogicalExpression, LogicalOperator, LogicalPlan, ModifyOp,
     MoveGraphOp, ProjectOp, Projection, SortKey, SortOrder, TripleComponent, TripleScanOp,
     TripleTemplate, UnaryOp, UnionOp,
-};
-use crate::query::translator_common::{
-    wrap_distinct, wrap_filter, wrap_limit, wrap_skip, wrap_sort,
 };
 use grafeo_adapters::query::sparql::{self, ast};
 use grafeo_common::types::Value;
@@ -128,6 +126,7 @@ impl SparqlTranslator {
                             ast::SortDirection::Ascending => SortOrder::Ascending,
                             ast::SortDirection::Descending => SortOrder::Descending,
                         },
+                        nulls: None,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -262,7 +261,9 @@ impl SparqlTranslator {
         if ops.is_empty() {
             Ok(LogicalPlan::new(LogicalOperator::Empty))
         } else if ops.len() == 1 {
-            Ok(LogicalPlan::new(ops.into_iter().next().unwrap()))
+            Ok(LogicalPlan::new(
+                ops.into_iter().next().expect("single-element iterator"),
+            ))
         } else {
             Ok(LogicalPlan::new(LogicalOperator::Union(UnionOp {
                 inputs: ops,
@@ -291,7 +292,9 @@ impl SparqlTranslator {
         if ops.is_empty() {
             Ok(LogicalPlan::new(LogicalOperator::Empty))
         } else if ops.len() == 1 {
-            Ok(LogicalPlan::new(ops.into_iter().next().unwrap()))
+            Ok(LogicalPlan::new(
+                ops.into_iter().next().expect("single-element iterator"),
+            ))
         } else {
             Ok(LogicalPlan::new(LogicalOperator::Union(UnionOp {
                 inputs: ops,
@@ -327,7 +330,9 @@ impl SparqlTranslator {
         if ops.is_empty() {
             Ok(LogicalPlan::new(match_plan))
         } else if ops.len() == 1 {
-            Ok(LogicalPlan::new(ops.into_iter().next().unwrap()))
+            Ok(LogicalPlan::new(
+                ops.into_iter().next().expect("single-element iterator"),
+            ))
         } else {
             Ok(LogicalPlan::new(LogicalOperator::Union(UnionOp {
                 inputs: ops,
@@ -638,7 +643,7 @@ impl SparqlTranslator {
                             op: BinaryOp::And,
                             right: Box::new(pred),
                         })
-                        .unwrap();
+                        .expect("predicates non-empty after is_empty check");
 
                     plan = wrap_filter(plan, combined);
                 }
@@ -732,7 +737,10 @@ impl SparqlTranslator {
                     branches.push(plan);
                 }
                 if branches.len() == 1 {
-                    Ok(branches.into_iter().next().unwrap())
+                    Ok(branches
+                        .into_iter()
+                        .next()
+                        .expect("single-element iterator"))
                 } else {
                     Ok(LogicalOperator::Union(UnionOp { inputs: branches }))
                 }
@@ -777,16 +785,26 @@ impl SparqlTranslator {
                     TripleComponent::Variable(format!("_:seq{}", self.next_anon()))
                 };
 
-                let pred = self.translate_property_path(path)?;
-                let scan = LogicalOperator::TripleScan(TripleScanOp {
-                    subject: current_subject,
-                    predicate: pred,
-                    object: next_object.clone(),
-                    graph: graph.clone(),
-                    input: None,
-                });
+                let step = if self.is_simple_path(path) {
+                    let pred = self.translate_property_path(path)?;
+                    LogicalOperator::TripleScan(TripleScanOp {
+                        subject: current_subject.clone(),
+                        predicate: pred,
+                        object: next_object.clone(),
+                        graph: graph.clone(),
+                        input: None,
+                    })
+                } else {
+                    // Complex path (ZeroOrMore, OneOrMore, etc.): recurse
+                    let sub_triple = ast::TriplePattern {
+                        subject: self.triple_component_to_term(&current_subject),
+                        predicate: path.clone(),
+                        object: self.triple_component_to_term(&next_object),
+                    };
+                    self.translate_triple_pattern(&sub_triple)?
+                };
 
-                plan = self.join_patterns(plan, scan);
+                plan = self.join_patterns(plan, step);
                 current_subject = next_object;
             }
 
@@ -882,6 +900,29 @@ impl SparqlTranslator {
         }
     }
 
+    /// Returns true if the property path is a simple predicate (IRI, variable, or rdf:type).
+    fn is_simple_path(&self, path: &ast::PropertyPath) -> bool {
+        matches!(
+            path,
+            ast::PropertyPath::Predicate(_)
+                | ast::PropertyPath::Variable(_)
+                | ast::PropertyPath::RdfType
+        )
+    }
+
+    /// Converts a `TripleComponent` back to an AST `TripleTerm` for recursive translation.
+    fn triple_component_to_term(&self, component: &TripleComponent) -> ast::TripleTerm {
+        match component {
+            TripleComponent::Variable(name) => ast::TripleTerm::Variable(name.clone()),
+            TripleComponent::Iri(iri) => ast::TripleTerm::Iri(ast::Iri(iri.clone())),
+            TripleComponent::Literal(val) => ast::TripleTerm::Literal(ast::Literal {
+                value: val.to_string(),
+                datatype: None,
+                language: None,
+            }),
+        }
+    }
+
     fn translate_property_path(&mut self, path: &ast::PropertyPath) -> Result<TripleComponent> {
         match path {
             ast::PropertyPath::Predicate(iri) => Ok(TripleComponent::Iri(self.resolve_iri(iri))),
@@ -926,6 +967,10 @@ impl SparqlTranslator {
 
             ast::Expression::Unary { operator, operand } => {
                 let operand = self.translate_expression(operand)?;
+                // Unary plus is a no-op: just return the operand unchanged
+                if *operator == ast::UnaryOperator::Plus {
+                    return Ok(operand);
+                }
                 let op = self.translate_unary_op(*operator);
                 Ok(LogicalExpression::Unary {
                     op,
@@ -1094,7 +1139,8 @@ impl SparqlTranslator {
     fn translate_unary_op(&self, op: ast::UnaryOperator) -> UnaryOp {
         match op {
             ast::UnaryOperator::Not => UnaryOp::Not,
-            ast::UnaryOperator::Plus => UnaryOp::Not, // No direct mapping, use identity
+            // Plus is handled as a no-op at the call site; this arm is unreachable
+            ast::UnaryOperator::Plus => UnaryOp::Not,
             ast::UnaryOperator::Minus => UnaryOp::Neg,
         }
     }
@@ -1215,15 +1261,14 @@ impl SparqlTranslator {
                     (AggregateFunction::Max, Some(expression.as_ref()), false)
                 }
                 ast::AggregateExpression::Sample { expression } => {
-                    // Map SAMPLE to Collect for now
-                    (AggregateFunction::Collect, Some(expression.as_ref()), false)
+                    (AggregateFunction::Sample, Some(expression.as_ref()), false)
                 }
                 ast::AggregateExpression::GroupConcat {
                     distinct,
                     expression,
                     ..
                 } => (
-                    AggregateFunction::Collect,
+                    AggregateFunction::GroupConcat,
                     Some(expression.as_ref()),
                     *distinct,
                 ),
@@ -1238,6 +1283,7 @@ impl SparqlTranslator {
             Ok(Some(AggregateExpr {
                 function: func,
                 expression,
+                expression2: None,
                 distinct,
                 alias: alias.clone(),
                 percentile: None, // SPARQL doesn't support percentile functions
@@ -1265,7 +1311,9 @@ impl SparqlTranslator {
                     for agg in aggregates {
                         let agg_name = format!("{:?}", agg.function).to_uppercase();
                         if agg_name == upper && agg.alias.is_some() {
-                            return LogicalExpression::Variable(agg.alias.clone().unwrap());
+                            return LogicalExpression::Variable(
+                                agg.alias.clone().expect("alias checked by is_some guard"),
+                            );
                         }
                     }
                 }
@@ -1450,7 +1498,7 @@ impl SparqlTranslator {
                     op: BinaryOp::And,
                     right: Box::new(right),
                 })
-                .unwrap();
+                .expect("excluded non-empty after is_empty check");
 
             Ok(wrap_filter(scan, predicate))
         };
@@ -1664,7 +1712,7 @@ impl SparqlTranslator {
         Ok(plan)
     }
 
-    /// Projects a scan so that the subject variable appears as both the subject
+    /// Projects a scan so that the subject value appears as both the subject
     /// and object output variables, producing reflexive (0-hop) rows.
     fn project_reflexive(
         &self,
@@ -1672,28 +1720,30 @@ impl SparqlTranslator {
         object: &TripleComponent,
         input: LogicalOperator,
     ) -> Result<LogicalOperator> {
-        if let (TripleComponent::Variable(s_var), TripleComponent::Variable(o_var)) =
-            (subject, object)
-        {
-            Ok(LogicalOperator::Project(ProjectOp {
-                projections: vec![
-                    Projection {
-                        expression: LogicalExpression::Variable(s_var.clone()),
-                        alias: Some(s_var.clone()),
-                    },
-                    Projection {
-                        expression: LogicalExpression::Variable(s_var.clone()),
-                        alias: Some(o_var.clone()),
-                    },
-                ],
-                input: Box::new(input),
-            }))
-        } else {
-            Ok(input)
+        let subj_expr = self.triple_component_to_expression(subject);
+        let obj_var = match object {
+            TripleComponent::Variable(v) => v.clone(),
+            _ => return Ok(input),
+        };
+        let mut projections = Vec::new();
+        // Keep subject variable in output if it is a variable
+        if let TripleComponent::Variable(s_var) = subject {
+            projections.push(Projection {
+                expression: LogicalExpression::Variable(s_var.clone()),
+                alias: Some(s_var.clone()),
+            });
         }
+        projections.push(Projection {
+            expression: subj_expr,
+            alias: Some(obj_var),
+        });
+        Ok(LogicalOperator::Project(ProjectOp {
+            projections,
+            input: Box::new(input),
+        }))
     }
 
-    /// Projects a scan so that the object variable appears as both the subject
+    /// Projects a scan so that the object value appears as both the subject
     /// and object output variables, producing reflexive (0-hop) rows.
     fn project_reflexive_from_object(
         &self,
@@ -1701,24 +1751,36 @@ impl SparqlTranslator {
         object: &TripleComponent,
         input: LogicalOperator,
     ) -> Result<LogicalOperator> {
-        if let (TripleComponent::Variable(s_var), TripleComponent::Variable(o_var)) =
-            (subject, object)
-        {
-            Ok(LogicalOperator::Project(ProjectOp {
-                projections: vec![
-                    Projection {
-                        expression: LogicalExpression::Variable(o_var.clone()),
-                        alias: Some(s_var.clone()),
-                    },
-                    Projection {
-                        expression: LogicalExpression::Variable(o_var.clone()),
-                        alias: Some(o_var.clone()),
-                    },
-                ],
-                input: Box::new(input),
-            }))
-        } else {
-            Ok(input)
+        let obj_expr = self.triple_component_to_expression(object);
+        let subj_var = match subject {
+            TripleComponent::Variable(v) => v.clone(),
+            _ => return Ok(input),
+        };
+        let mut projections = vec![Projection {
+            expression: obj_expr,
+            alias: Some(subj_var),
+        }];
+        // Keep object variable in output if it is a variable
+        if let TripleComponent::Variable(o_var) = object {
+            projections.push(Projection {
+                expression: LogicalExpression::Variable(o_var.clone()),
+                alias: Some(o_var.clone()),
+            });
+        }
+        Ok(LogicalOperator::Project(ProjectOp {
+            projections,
+            input: Box::new(input),
+        }))
+    }
+
+    /// Converts a `TripleComponent` to a `LogicalExpression` for use in projections.
+    fn triple_component_to_expression(&self, component: &TripleComponent) -> LogicalExpression {
+        match component {
+            TripleComponent::Variable(name) => LogicalExpression::Variable(name.clone()),
+            TripleComponent::Iri(iri) => {
+                LogicalExpression::Literal(Value::String(iri.clone().into()))
+            }
+            TripleComponent::Literal(val) => LogicalExpression::Literal(val.clone()),
         }
     }
 
@@ -2216,7 +2278,7 @@ mod tests {
             PREFIX foaf: <http://xmlns.com/foaf/0.1/>
             SELECT ?name
             WHERE {
-                VALUES ?person { <http://ex.org/alice> }
+                VALUES ?person { <http://ex.org/alix> }
                 ?person foaf:name ?name .
             }
         "#;

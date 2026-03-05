@@ -21,10 +21,10 @@ mod wal {
         {
             let db = GrafeoDB::open(&path).expect("open for write");
             let a = db.create_node(&["Person"]);
-            db.set_node_property(a, "name", Value::String("Alice".into()));
+            db.set_node_property(a, "name", Value::String("Alix".into()));
             db.set_node_property(a, "age", Value::Int64(30));
             let b = db.create_node(&["Person"]);
-            db.set_node_property(b, "name", Value::String("Bob".into()));
+            db.set_node_property(b, "name", Value::String("Gus".into()));
             db.create_edge(a, b, "KNOWS");
             db.close().expect("close");
         }
@@ -37,7 +37,7 @@ mod wal {
 
             let session = db.session();
             let result = session
-                .execute("MATCH (n:Person {name: 'Alice'}) RETURN n.age")
+                .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.age")
                 .unwrap();
             assert_eq!(result.rows.len(), 1);
             assert_eq!(result.rows[0][0], Value::Int64(30));
@@ -75,9 +75,9 @@ mod wal {
         {
             let db = GrafeoDB::open(&path).expect("open");
             let a = db.create_node(&["Person"]);
-            db.set_node_property(a, "name", Value::String("Alice".into()));
+            db.set_node_property(a, "name", Value::String("Alix".into()));
             let b = db.create_node(&["Person"]);
-            db.set_node_property(b, "name", Value::String("Bob".into()));
+            db.set_node_property(b, "name", Value::String("Gus".into()));
             let c = db.create_node(&["Person"]);
             db.set_node_property(c, "name", Value::String("Carol".into()));
             db.create_edge(a, b, "KNOWS");
@@ -106,9 +106,9 @@ mod wal {
 
         let db = GrafeoDB::new_in_memory();
         let a = db.create_node(&["Person"]);
-        db.set_node_property(a, "name", Value::String("Alice".into()));
+        db.set_node_property(a, "name", Value::String("Alix".into()));
         let b = db.create_node(&["Person"]);
-        db.set_node_property(b, "name", Value::String("Bob".into()));
+        db.set_node_property(b, "name", Value::String("Gus".into()));
         db.create_edge(a, b, "KNOWS");
 
         // Save in-memory database to disk
@@ -130,7 +130,7 @@ mod wal {
         {
             let db = GrafeoDB::open(&path).expect("open");
             let n = db.create_node(&["Person"]);
-            db.set_node_property(n, "name", Value::String("Alice".into()));
+            db.set_node_property(n, "name", Value::String("Alix".into()));
             db.close().expect("close");
         }
 
@@ -167,13 +167,126 @@ mod wal {
     }
 
     #[test]
+    fn test_query_mutations_persist() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("query_persist.grafeo");
+
+        // Create data via GQL queries (not CRUD API)
+        {
+            let db = GrafeoDB::open(&path).expect("open");
+            let session = db.session();
+            session
+                .execute("INSERT (:Person {name: 'Alix', age: 30})")
+                .expect("insert Alix");
+            session
+                .execute("INSERT (:Person {name: 'Gus', age: 25})")
+                .expect("insert Gus");
+            session
+                .execute(
+                    "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+                     INSERT (a)-[:KNOWS {since: 2020}]->(b)",
+                )
+                .expect("insert edge");
+
+            // Verify data exists before close
+            let result = session
+                .execute("MATCH (n:Person) RETURN n.name ORDER BY n.name")
+                .unwrap();
+            assert_eq!(result.rows.len(), 2);
+
+            db.close().expect("close");
+        }
+
+        // Reopen and verify all query-created data survived
+        {
+            let db = GrafeoDB::open(&path).expect("reopen");
+            assert_eq!(db.node_count(), 2, "query-created nodes should persist");
+            assert_eq!(db.edge_count(), 1, "query-created edges should persist");
+
+            let session = db.session();
+            let result = session
+                .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.age")
+                .unwrap();
+            assert_eq!(result.rows.len(), 1, "Alix should be queryable");
+            assert_eq!(result.rows[0][0], Value::Int64(30));
+
+            let result = session
+                .execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a.name, b.name")
+                .unwrap();
+            assert_eq!(result.rows.len(), 1, "KNOWS edge should persist");
+
+            db.close().expect("close");
+        }
+    }
+
+    #[test]
+    fn test_query_delete_persists() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("query_delete.grafeo");
+
+        {
+            let db = GrafeoDB::open(&path).expect("open");
+            let session = db.session();
+            session
+                .execute("INSERT (:Person {name: 'Alix'})")
+                .expect("insert");
+            session
+                .execute("INSERT (:Person {name: 'Gus'})")
+                .expect("insert");
+            session
+                .execute("MATCH (n:Person {name: 'Gus'}) DELETE n")
+                .expect("delete");
+            db.close().expect("close");
+        }
+
+        {
+            let db = GrafeoDB::open(&path).expect("reopen");
+            assert_eq!(db.node_count(), 1, "delete should persist");
+            let session = db.session();
+            let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+            db.close().expect("close");
+        }
+    }
+
+    #[test]
+    fn test_query_set_property_persists() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("query_set.grafeo");
+
+        {
+            let db = GrafeoDB::open(&path).expect("open");
+            let session = db.session();
+            session
+                .execute("INSERT (:Person {name: 'Alix', age: 30})")
+                .expect("insert");
+            session
+                .execute("MATCH (n:Person {name: 'Alix'}) SET n.age = 31")
+                .expect("update");
+            db.close().expect("close");
+        }
+
+        {
+            let db = GrafeoDB::open(&path).expect("reopen");
+            let session = db.session();
+            let result = session
+                .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.age")
+                .unwrap();
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], Value::Int64(31), "SET should persist");
+            db.close().expect("close");
+        }
+    }
+
+    #[test]
     fn test_wal_checkpoint_succeeds() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let path = dir.path().join("checkpoint.grafeo");
 
         let db = GrafeoDB::open(&path).expect("open");
         let n = db.create_node(&["Person"]);
-        db.set_node_property(n, "name", Value::String("Alice".into()));
+        db.set_node_property(n, "name", Value::String("Alix".into()));
 
         // Explicit checkpoint should not error
         db.wal_checkpoint().expect("checkpoint should succeed");

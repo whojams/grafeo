@@ -114,7 +114,7 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "Failed to install dependencies" }
 
             Write-Host "  Running tests..." -ForegroundColor Gray
-            & $pythonCmd -m pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py --ignore=tests/python/benchmark_phases.py
+            & $pythonCmd -m pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py
             if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
 
             Write-Host "  Python $pyVer PASSED" -ForegroundColor Green

@@ -50,7 +50,7 @@ pub struct Session {
     /// Whether the session is in auto-commit mode.
     auto_commit: bool,
     /// Adaptive execution configuration.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Stored for future adaptive re-optimization during execution
     adaptive_config: AdaptiveConfig,
     /// Whether to use factorized execution for multi-hop queries.
     factorized_execution: bool,
@@ -130,8 +130,16 @@ impl Session {
     }
 
     /// Sets the WAL for this session (shared with the database).
+    ///
+    /// This also wraps `graph_store` in a [`WalGraphStore`] so that mutation
+    /// operators (INSERT, DELETE, SET via queries) log to the WAL.
     #[cfg(feature = "wal")]
     pub(crate) fn set_wal(&mut self, wal: Arc<grafeo_adapters::storage::wal::LpgWal>) {
+        // Wrap the graph store so query-engine mutations are WAL-logged
+        self.graph_store = Arc::new(crate::database::wal_store::WalGraphStore::new(
+            Arc::clone(&self.store),
+            Arc::clone(&wal),
+        ));
         self.wal = Some(wal);
     }
 
@@ -205,7 +213,7 @@ impl Session {
         gc_interval: usize,
     ) -> Self {
         Self {
-            store: Arc::new(LpgStore::new()), // dummy for LpgStore-specific ops
+            store: Arc::new(LpgStore::new().expect("arena allocation for dummy LpgStore")), // dummy for LpgStore-specific ops
             graph_store: store,
             catalog,
             #[cfg(feature = "rdf")]
@@ -346,7 +354,10 @@ impl Session {
                 if_not_exists,
                 typed,
             } => {
-                let created = self.store.create_graph(&name);
+                let created = self
+                    .store
+                    .create_graph(&name)
+                    .map_err(|e| Error::Internal(e.to_string()))?;
                 if !created && !if_not_exists {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
@@ -739,11 +750,118 @@ impl Session {
             }
             SchemaStatement::CreateGraphType(stmt) => {
                 use crate::catalog::GraphTypeDefinition;
+                use grafeo_adapters::query::gql::ast::InlineElementType;
+
+                // GG04: LIKE clause copies type from existing graph
+                let (mut node_types, mut edge_types, open) =
+                    if let Some(ref like_graph) = stmt.like_graph {
+                        // Infer types from the graph's bound type, or use its existing types
+                        if let Some(type_name) = self.catalog.get_graph_type_binding(like_graph) {
+                            if let Some(existing) = self
+                                .catalog
+                                .schema()
+                                .and_then(|s| s.get_graph_type(&type_name))
+                            {
+                                (
+                                    existing.allowed_node_types.clone(),
+                                    existing.allowed_edge_types.clone(),
+                                    existing.open,
+                                )
+                            } else {
+                                (Vec::new(), Vec::new(), true)
+                            }
+                        } else {
+                            // GG22: Infer from graph data (labels used in graph)
+                            let nt = self.catalog.all_node_type_names();
+                            let et = self.catalog.all_edge_type_names();
+                            if nt.is_empty() && et.is_empty() {
+                                (Vec::new(), Vec::new(), true)
+                            } else {
+                                (nt, et, false)
+                            }
+                        }
+                    } else {
+                        (stmt.node_types.clone(), stmt.edge_types.clone(), stmt.open)
+                    };
+
+                // GG03: Register inline element types and add their names
+                for inline in &stmt.inline_types {
+                    match inline {
+                        InlineElementType::Node {
+                            name, properties, ..
+                        } => {
+                            let def = NodeTypeDefinition {
+                                name: name.clone(),
+                                properties: properties
+                                    .iter()
+                                    .map(|p| TypedProperty {
+                                        name: p.name.clone(),
+                                        data_type: PropertyDataType::from_type_name(&p.data_type),
+                                        nullable: p.nullable,
+                                        default_value: None,
+                                    })
+                                    .collect(),
+                                constraints: Vec::new(),
+                            };
+                            // Register or replace so inline defs override existing
+                            self.catalog.register_or_replace_node_type(def);
+                            #[cfg(feature = "wal")]
+                            {
+                                let props_for_wal: Vec<(String, String, bool)> = properties
+                                    .iter()
+                                    .map(|p| (p.name.clone(), p.data_type.clone(), p.nullable))
+                                    .collect();
+                                self.log_schema_wal(&WalRecord::CreateNodeType {
+                                    name: name.clone(),
+                                    properties: props_for_wal,
+                                    constraints: Vec::new(),
+                                });
+                            }
+                            if !node_types.contains(name) {
+                                node_types.push(name.clone());
+                            }
+                        }
+                        InlineElementType::Edge {
+                            name, properties, ..
+                        } => {
+                            let def = EdgeTypeDefinition {
+                                name: name.clone(),
+                                properties: properties
+                                    .iter()
+                                    .map(|p| TypedProperty {
+                                        name: p.name.clone(),
+                                        data_type: PropertyDataType::from_type_name(&p.data_type),
+                                        nullable: p.nullable,
+                                        default_value: None,
+                                    })
+                                    .collect(),
+                                constraints: Vec::new(),
+                            };
+                            self.catalog.register_or_replace_edge_type_def(def);
+                            #[cfg(feature = "wal")]
+                            {
+                                let props_for_wal: Vec<(String, String, bool)> = properties
+                                    .iter()
+                                    .map(|p| (p.name.clone(), p.data_type.clone(), p.nullable))
+                                    .collect();
+                                self.log_schema_wal(&WalRecord::CreateEdgeType {
+                                    name: name.clone(),
+                                    properties: props_for_wal,
+                                    constraints: Vec::new(),
+                                });
+                            }
+                            if !edge_types.contains(name) {
+                                edge_types.push(name.clone());
+                            }
+                        }
+                    }
+                }
+
                 let def = GraphTypeDefinition {
                     name: stmt.name.clone(),
-                    allowed_node_types: stmt.node_types.clone(),
-                    allowed_edge_types: stmt.edge_types.clone(),
-                    open: stmt.open,
+                    allowed_node_types: node_types.clone(),
+                    allowed_edge_types: edge_types.clone(),
+                    open,
                 };
                 let result = if stmt.or_replace {
                     // Drop existing first, ignore error if not found
@@ -758,9 +876,9 @@ impl Session {
                             self,
                             WalRecord::CreateGraphType {
                                 name: stmt.name.clone(),
-                                node_types: stmt.node_types,
-                                edge_types: stmt.edge_types,
-                                open: stmt.open,
+                                node_types,
+                                edge_types,
+                                open,
                             }
                         );
                         Ok(QueryResult::status(format!(
@@ -1190,7 +1308,7 @@ impl Session {
     /// let session = db.session();
     ///
     /// // Create a node
-    /// session.execute("INSERT (:Person {name: 'Alice', age: 30})")?;
+    /// session.execute("INSERT (:Person {name: 'Alix', age: 30})")?;
     ///
     /// // Query nodes
     /// let result = session.execute("MATCH (n:Person) RETURN n.name, n.age")?;
@@ -1205,19 +1323,20 @@ impl Session {
         self.require_lpg("GQL")?;
 
         use crate::query::{
-            Executor, binder::Binder, cache::CacheKey, gql_translator, optimizer::Optimizer,
-            processor::QueryLanguage,
+            Executor, binder::Binder, cache::CacheKey, optimizer::Optimizer,
+            processor::QueryLanguage, translators::gql,
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         let start_time = std::time::Instant::now();
 
         // Parse and translate, checking for session/schema commands first
-        let translation = gql_translator::translate_full(query)?;
+        let translation = gql::translate_full(query)?;
         let logical_plan = match translation {
-            gql_translator::GqlTranslationResult::SessionCommand(cmd) => {
+            gql::GqlTranslationResult::SessionCommand(cmd) => {
                 return self.execute_session_command(cmd);
             }
-            gql_translator::GqlTranslationResult::SchemaCommand(cmd) => {
+            gql::GqlTranslationResult::SchemaCommand(cmd) => {
                 // All DDL is a write operation
                 if *self.read_only_tx.lock() {
                     return Err(grafeo_common::utils::error::Error::Transaction(
@@ -1226,7 +1345,7 @@ impl Session {
                 }
                 return self.execute_schema_command(cmd);
             }
-            gql_translator::GqlTranslationResult::Plan(plan) => {
+            gql::GqlTranslationResult::Plan(plan) => {
                 // Block mutations in read-only transactions
                 if *self.read_only_tx.lock() && plan.root.has_mutations() {
                     return Err(grafeo_common::utils::error::Error::Transaction(
@@ -1266,26 +1385,33 @@ impl Session {
             return Ok(explain_result(&plan));
         }
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = optimized_plan.root.has_mutations();
 
-        // Convert to physical plan with transaction context
-        // (Physical planning cannot be cached as it depends on transaction state)
-        let planner = self.create_planner(viewing_epoch, tx_id);
-        let mut physical_plan = planner.plan(&optimized_plan)?;
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone())
-            .with_deadline(self.query_deadline());
-        let mut result = executor.execute(physical_plan.operator.as_mut())?;
+            // Convert to physical plan with transaction context
+            // (Physical planning cannot be cached as it depends on transaction state)
+            let planner = self.create_planner(viewing_epoch, tx_id);
+            let mut physical_plan = planner.plan(&optimized_plan)?;
 
-        // Add execution metrics
-        let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-        let rows_scanned = result.rows.len() as u64;
-        result.execution_time_ms = Some(elapsed_ms);
-        result.rows_scanned = Some(rows_scanned);
+            // Execute the plan
+            let executor = Executor::with_columns(physical_plan.columns.clone())
+                .with_deadline(self.query_deadline());
+            let mut result = executor.execute(physical_plan.operator.as_mut())?;
 
-        Ok(result)
+            // Add execution metrics
+            let rows_scanned = result.rows.len() as u64;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+                result.execution_time_ms = Some(elapsed_ms);
+            }
+            result.rows_scanned = Some(rows_scanned);
+
+            Ok(result)
+        })
     }
 
     /// Executes a GQL query with visibility at the specified epoch.
@@ -1319,23 +1445,27 @@ impl Session {
 
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = Self::query_looks_like_mutation(query);
 
-        // Create processor with transaction context
-        let processor = QueryProcessor::for_graph_store_with_tx(
-            Arc::clone(&self.graph_store),
-            Arc::clone(&self.tx_manager),
-        );
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Apply transaction context if in a transaction
-        let processor = if let Some(tx_id) = tx_id {
-            processor.with_tx_context(viewing_epoch, tx_id)
-        } else {
-            processor
-        };
+            // Create processor with transaction context
+            let processor = QueryProcessor::for_graph_store_with_tx(
+                Arc::clone(&self.graph_store),
+                Arc::clone(&self.tx_manager),
+            );
 
-        processor.process(query, QueryLanguage::Gql, Some(&params))
+            // Apply transaction context if in a transaction
+            let processor = if let Some(tx_id) = tx_id {
+                processor.with_tx_context(viewing_epoch, tx_id)
+            } else {
+                processor
+            };
+
+            processor.process(query, QueryLanguage::Gql, Some(&params))
+        })
     }
 
     /// Executes a GQL query with parameters.
@@ -1374,8 +1504,8 @@ impl Session {
     #[cfg(feature = "cypher")]
     pub fn execute_cypher(&self, query: &str) -> Result<QueryResult> {
         use crate::query::{
-            Executor, binder::Binder, cache::CacheKey, cypher_translator, optimizer::Optimizer,
-            processor::QueryLanguage,
+            Executor, binder::Binder, cache::CacheKey, optimizer::Optimizer,
+            processor::QueryLanguage, translators::cypher,
         };
 
         // Create cache key for this query
@@ -1386,7 +1516,7 @@ impl Session {
             cached_plan
         } else {
             // Parse and translate the query to a logical plan
-            let logical_plan = cypher_translator::translate(query)?;
+            let logical_plan = cypher::translate(query)?;
 
             // Semantic validation
             let mut binder = Binder::new();
@@ -1402,18 +1532,21 @@ impl Session {
             plan
         };
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = optimized_plan.root.has_mutations();
 
-        // Convert to physical plan with transaction context
-        let planner = self.create_planner(viewing_epoch, tx_id);
-        let mut physical_plan = planner.plan(&optimized_plan)?;
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone())
-            .with_deadline(self.query_deadline());
-        let result = executor.execute(physical_plan.operator.as_mut())?;
-        Ok(result)
+            // Convert to physical plan with transaction context
+            let planner = self.create_planner(viewing_epoch, tx_id);
+            let mut physical_plan = planner.plan(&optimized_plan)?;
+
+            // Execute the plan
+            let executor = Executor::with_columns(physical_plan.columns.clone())
+                .with_deadline(self.query_deadline());
+            executor.execute(physical_plan.operator.as_mut())
+        })
     }
 
     /// Executes a Gremlin query.
@@ -1441,10 +1574,10 @@ impl Session {
     /// ```
     #[cfg(feature = "gremlin")]
     pub fn execute_gremlin(&self, query: &str) -> Result<QueryResult> {
-        use crate::query::{Executor, binder::Binder, gremlin_translator, optimizer::Optimizer};
+        use crate::query::{Executor, binder::Binder, optimizer::Optimizer, translators::gremlin};
 
         // Parse and translate the query to a logical plan
-        let logical_plan = gremlin_translator::translate(query)?;
+        let logical_plan = gremlin::translate(query)?;
 
         // Semantic validation
         let mut binder = Binder::new();
@@ -1454,18 +1587,21 @@ impl Session {
         let optimizer = Optimizer::from_graph_store(&*self.graph_store);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = optimized_plan.root.has_mutations();
 
-        // Convert to physical plan with transaction context
-        let planner = self.create_planner(viewing_epoch, tx_id);
-        let mut physical_plan = planner.plan(&optimized_plan)?;
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone())
-            .with_deadline(self.query_deadline());
-        let result = executor.execute(physical_plan.operator.as_mut())?;
-        Ok(result)
+            // Convert to physical plan with transaction context
+            let planner = self.create_planner(viewing_epoch, tx_id);
+            let mut physical_plan = planner.plan(&optimized_plan)?;
+
+            // Execute the plan
+            let executor = Executor::with_columns(physical_plan.columns.clone())
+                .with_deadline(self.query_deadline());
+            executor.execute(physical_plan.operator.as_mut())
+        })
     }
 
     /// Executes a Gremlin query with parameters.
@@ -1481,23 +1617,27 @@ impl Session {
     ) -> Result<QueryResult> {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = Self::query_looks_like_mutation(query);
 
-        // Create processor with transaction context
-        let processor = QueryProcessor::for_graph_store_with_tx(
-            Arc::clone(&self.graph_store),
-            Arc::clone(&self.tx_manager),
-        );
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Apply transaction context if in a transaction
-        let processor = if let Some(tx_id) = tx_id {
-            processor.with_tx_context(viewing_epoch, tx_id)
-        } else {
-            processor
-        };
+            // Create processor with transaction context
+            let processor = QueryProcessor::for_graph_store_with_tx(
+                Arc::clone(&self.graph_store),
+                Arc::clone(&self.tx_manager),
+            );
 
-        processor.process(query, QueryLanguage::Gremlin, Some(&params))
+            // Apply transaction context if in a transaction
+            let processor = if let Some(tx_id) = tx_id {
+                processor.with_tx_context(viewing_epoch, tx_id)
+            } else {
+                processor
+            };
+
+            processor.process(query, QueryLanguage::Gremlin, Some(&params))
+        })
     }
 
     /// Executes a GraphQL query against the LPG store.
@@ -1525,10 +1665,10 @@ impl Session {
     /// ```
     #[cfg(feature = "graphql")]
     pub fn execute_graphql(&self, query: &str) -> Result<QueryResult> {
-        use crate::query::{Executor, binder::Binder, graphql_translator, optimizer::Optimizer};
+        use crate::query::{Executor, binder::Binder, optimizer::Optimizer, translators::graphql};
 
         // Parse and translate the query to a logical plan
-        let logical_plan = graphql_translator::translate(query)?;
+        let logical_plan = graphql::translate(query)?;
 
         // Semantic validation
         let mut binder = Binder::new();
@@ -1538,18 +1678,21 @@ impl Session {
         let optimizer = Optimizer::from_graph_store(&*self.graph_store);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = optimized_plan.root.has_mutations();
 
-        // Convert to physical plan with transaction context
-        let planner = self.create_planner(viewing_epoch, tx_id);
-        let mut physical_plan = planner.plan(&optimized_plan)?;
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone())
-            .with_deadline(self.query_deadline());
-        let result = executor.execute(physical_plan.operator.as_mut())?;
-        Ok(result)
+            // Convert to physical plan with transaction context
+            let planner = self.create_planner(viewing_epoch, tx_id);
+            let mut physical_plan = planner.plan(&optimized_plan)?;
+
+            // Execute the plan
+            let executor = Executor::with_columns(physical_plan.columns.clone())
+                .with_deadline(self.query_deadline());
+            executor.execute(physical_plan.operator.as_mut())
+        })
     }
 
     /// Executes a GraphQL query with parameters.
@@ -1565,23 +1708,27 @@ impl Session {
     ) -> Result<QueryResult> {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = Self::query_looks_like_mutation(query);
 
-        // Create processor with transaction context
-        let processor = QueryProcessor::for_graph_store_with_tx(
-            Arc::clone(&self.graph_store),
-            Arc::clone(&self.tx_manager),
-        );
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Apply transaction context if in a transaction
-        let processor = if let Some(tx_id) = tx_id {
-            processor.with_tx_context(viewing_epoch, tx_id)
-        } else {
-            processor
-        };
+            // Create processor with transaction context
+            let processor = QueryProcessor::for_graph_store_with_tx(
+                Arc::clone(&self.graph_store),
+                Arc::clone(&self.tx_manager),
+            );
 
-        processor.process(query, QueryLanguage::GraphQL, Some(&params))
+            // Apply transaction context if in a transaction
+            let processor = if let Some(tx_id) = tx_id {
+                processor.with_tx_context(viewing_epoch, tx_id)
+            } else {
+                processor
+            };
+
+            processor.process(query, QueryLanguage::GraphQL, Some(&params))
+        })
     }
 
     /// Executes a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
@@ -1612,11 +1759,11 @@ impl Session {
     pub fn execute_sql(&self, query: &str) -> Result<QueryResult> {
         use crate::query::{
             Executor, binder::Binder, cache::CacheKey, optimizer::Optimizer, plan::LogicalOperator,
-            processor::QueryLanguage, sql_pgq_translator,
+            processor::QueryLanguage, translators::sql_pgq,
         };
 
         // Parse and translate (always needed to check for DDL)
-        let logical_plan = sql_pgq_translator::translate(query)?;
+        let logical_plan = sql_pgq::translate(query)?;
 
         // Handle DDL statements directly (they don't go through the query pipeline)
         if let LogicalOperator::CreatePropertyGraph(ref cpg) = logical_plan.root {
@@ -1656,18 +1803,21 @@ impl Session {
             plan
         };
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = optimized_plan.root.has_mutations();
 
-        // Convert to physical plan with transaction context
-        let planner = self.create_planner(viewing_epoch, tx_id);
-        let mut physical_plan = planner.plan(&optimized_plan)?;
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Execute the plan
-        let executor = Executor::with_columns(physical_plan.columns.clone())
-            .with_deadline(self.query_deadline());
-        let result = executor.execute(physical_plan.operator.as_mut())?;
-        Ok(result)
+            // Convert to physical plan with transaction context
+            let planner = self.create_planner(viewing_epoch, tx_id);
+            let mut physical_plan = planner.plan(&optimized_plan)?;
+
+            // Execute the plan
+            let executor = Executor::with_columns(physical_plan.columns.clone())
+                .with_deadline(self.query_deadline());
+            executor.execute(physical_plan.operator.as_mut())
+        })
     }
 
     /// Executes a SQL/PGQ query with parameters.
@@ -1683,23 +1833,27 @@ impl Session {
     ) -> Result<QueryResult> {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
-        // Get transaction context for MVCC visibility
-        let (viewing_epoch, tx_id) = self.get_transaction_context();
+        let has_mutations = Self::query_looks_like_mutation(query);
 
-        // Create processor with transaction context
-        let processor = QueryProcessor::for_graph_store_with_tx(
-            Arc::clone(&self.graph_store),
-            Arc::clone(&self.tx_manager),
-        );
+        self.with_auto_commit(has_mutations, || {
+            // Get transaction context for MVCC visibility
+            let (viewing_epoch, tx_id) = self.get_transaction_context();
 
-        // Apply transaction context if in a transaction
-        let processor = if let Some(tx_id) = tx_id {
-            processor.with_tx_context(viewing_epoch, tx_id)
-        } else {
-            processor
-        };
+            // Create processor with transaction context
+            let processor = QueryProcessor::for_graph_store_with_tx(
+                Arc::clone(&self.graph_store),
+                Arc::clone(&self.tx_manager),
+            );
 
-        processor.process(query, QueryLanguage::SqlPgq, Some(&params))
+            // Apply transaction context if in a transaction
+            let processor = if let Some(tx_id) = tx_id {
+                processor.with_tx_context(viewing_epoch, tx_id)
+            } else {
+                processor
+            };
+
+            processor.process(query, QueryLanguage::SqlPgq, Some(&params))
+        })
     }
 
     /// Executes a SPARQL query.
@@ -1710,11 +1864,11 @@ impl Session {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     pub fn execute_sparql(&self, query: &str) -> Result<QueryResult> {
         use crate::query::{
-            Executor, optimizer::Optimizer, planner_rdf::RdfPlanner, sparql_translator,
+            Executor, optimizer::Optimizer, planner::rdf::RdfPlanner, translators::sparql,
         };
 
         // Parse and translate the SPARQL query to a logical plan
-        let logical_plan = sparql_translator::translate(query)?;
+        let logical_plan = sparql::translate(query)?;
 
         // Optimize the plan
         let optimizer = Optimizer::from_graph_store(&*self.graph_store);
@@ -1773,17 +1927,20 @@ impl Session {
             "cypher" => {
                 if let Some(p) = params {
                     use crate::query::processor::{QueryLanguage, QueryProcessor};
-                    let processor = QueryProcessor::for_graph_store_with_tx(
-                        Arc::clone(&self.graph_store),
-                        Arc::clone(&self.tx_manager),
-                    );
-                    let (viewing_epoch, tx_id) = self.get_transaction_context();
-                    let processor = if let Some(tx_id) = tx_id {
-                        processor.with_tx_context(viewing_epoch, tx_id)
-                    } else {
-                        processor
-                    };
-                    processor.process(query, QueryLanguage::Cypher, Some(&p))
+                    let has_mutations = Self::query_looks_like_mutation(query);
+                    self.with_auto_commit(has_mutations, || {
+                        let processor = QueryProcessor::for_graph_store_with_tx(
+                            Arc::clone(&self.graph_store),
+                            Arc::clone(&self.tx_manager),
+                        );
+                        let (viewing_epoch, tx_id) = self.get_transaction_context();
+                        let processor = if let Some(tx_id) = tx_id {
+                            processor.with_tx_context(viewing_epoch, tx_id)
+                        } else {
+                            processor
+                        };
+                        processor.process(query, QueryLanguage::Cypher, Some(&p))
+                    })
                 } else {
                     self.execute_cypher(query)
                 }
@@ -1845,8 +2002,8 @@ impl Session {
     /// let mut session = db.session();
     ///
     /// session.begin_tx()?;
-    /// session.execute("INSERT (:Person {name: 'Alice'})")?;
-    /// session.execute("INSERT (:Person {name: 'Bob'})")?;
+    /// session.execute("INSERT (:Person {name: 'Alix'})")?;
+    /// session.execute("INSERT (:Person {name: 'Gus'})")?;
     /// session.commit()?; // Both inserts committed atomically
     /// # Ok(())
     /// # }
@@ -1964,7 +2121,7 @@ impl Session {
     /// let mut session = db.session();
     ///
     /// session.begin_tx()?;
-    /// session.execute("INSERT (:Person {name: 'Alice'})")?;
+    /// session.execute("INSERT (:Person {name: 'Alix'})")?;
     /// session.rollback()?; // Insert is discarded
     /// # Ok(())
     /// # }
@@ -2057,7 +2214,7 @@ impl Session {
     /// let mut session = db.session();
     ///
     /// session.begin_tx()?;
-    /// session.execute("INSERT (:Person {name: 'Alice'})")?;
+    /// session.execute("INSERT (:Person {name: 'Alix'})")?;
     ///
     /// let mut prepared = session.prepare_commit()?;
     /// println!("Nodes written: {}", prepared.info().nodes_written);
@@ -2081,10 +2238,66 @@ impl Session {
         self.auto_commit
     }
 
+    /// Returns `true` if auto-commit should wrap this execution.
+    ///
+    /// Auto-commit kicks in when: the session is in auto-commit mode,
+    /// no explicit transaction is active, and the query mutates data.
+    fn needs_auto_commit(&self, has_mutations: bool) -> bool {
+        self.auto_commit && has_mutations && self.current_tx.lock().is_none()
+    }
+
+    /// Wraps `body` in an automatic begin/commit when [`needs_auto_commit`]
+    /// returns `true`. On error the transaction is rolled back.
+    fn with_auto_commit<F>(&self, has_mutations: bool, body: F) -> Result<QueryResult>
+    where
+        F: FnOnce() -> Result<QueryResult>,
+    {
+        if self.needs_auto_commit(has_mutations) {
+            self.begin_tx_inner(false, None)?;
+            match body() {
+                Ok(result) => {
+                    self.commit_inner()?;
+                    Ok(result)
+                }
+                Err(e) => {
+                    let _ = self.rollback_inner();
+                    Err(e)
+                }
+            }
+        } else {
+            body()
+        }
+    }
+
+    /// Quick heuristic: returns `true` when the query text looks like it
+    /// performs a mutation. Used by `_with_params` paths that go through the
+    /// `QueryProcessor` (where the logical plan isn't available before
+    /// execution). False negatives are harmless: the data just won't be
+    /// auto-committed, which matches the prior behaviour.
+    fn query_looks_like_mutation(query: &str) -> bool {
+        let upper = query.to_ascii_uppercase();
+        upper.contains("INSERT")
+            || upper.contains("CREATE")
+            || upper.contains("DELETE")
+            || upper.contains("MERGE")
+            || upper.contains("SET")
+            || upper.contains("REMOVE")
+            || upper.contains("DROP")
+            || upper.contains("ALTER")
+    }
+
     /// Computes the wall-clock deadline for query execution.
     #[must_use]
     fn query_deadline(&self) -> Option<Instant> {
-        self.query_timeout.map(|d| Instant::now() + d)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.query_timeout.map(|d| Instant::now() + d)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = &self.query_timeout;
+            None
+        }
     }
 
     /// Evaluates a simple integer literal from a session parameter expression.
@@ -2162,7 +2375,7 @@ impl Session {
         let (epoch, tx_id) = self.get_transaction_context();
         self.store.create_node_with_props_versioned(
             labels,
-            properties.into_iter().map(|(k, v)| (k, v)),
+            properties,
             epoch,
             tx_id.unwrap_or(TxId::SYSTEM),
         )
@@ -2234,11 +2447,11 @@ impl Session {
     /// # use grafeo_common::types::Value;
     /// # let db = GrafeoDB::new_in_memory();
     /// let session = db.session();
-    /// let id = session.create_node_with_props(&["Person"], [("name", "Alice".into())]);
+    /// let id = session.create_node_with_props(&["Person"], [("name", "Alix".into())]);
     ///
     /// // Direct property access - O(1)
     /// let name = session.get_node_property(id, "name");
-    /// assert_eq!(name, Some(Value::String("Alice".into())));
+    /// assert_eq!(name, Some(Value::String("Alix".into())));
     /// ```
     #[must_use]
     pub fn get_node_property(&self, id: NodeId, key: &str) -> Option<Value> {
@@ -2275,14 +2488,14 @@ impl Session {
     /// # use grafeo_engine::GrafeoDB;
     /// # let db = GrafeoDB::new_in_memory();
     /// let session = db.session();
-    /// let alice = session.create_node(&["Person"]);
-    /// let bob = session.create_node(&["Person"]);
-    /// session.create_edge(alice, bob, "KNOWS");
+    /// let alix = session.create_node(&["Person"]);
+    /// let gus = session.create_node(&["Person"]);
+    /// session.create_edge(alix, gus, "KNOWS");
     ///
     /// // Direct neighbor lookup - O(degree)
-    /// let neighbors = session.get_neighbors_outgoing(alice);
+    /// let neighbors = session.get_neighbors_outgoing(alix);
     /// assert_eq!(neighbors.len(), 1);
-    /// assert_eq!(neighbors[0].0, bob);
+    /// assert_eq!(neighbors[0].0, gus);
     /// ```
     #[must_use]
     pub fn get_neighbors_outgoing(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
@@ -2310,8 +2523,8 @@ impl Session {
     /// # use grafeo_engine::GrafeoDB;
     /// # let db = GrafeoDB::new_in_memory();
     /// # let session = db.session();
-    /// # let alice = session.create_node(&["Person"]);
-    /// let neighbors = session.get_neighbors_outgoing_by_type(alice, "KNOWS");
+    /// # let alix = session.create_node(&["Person"]);
+    /// let neighbors = session.get_neighbors_outgoing_by_type(alix, "KNOWS");
     /// ```
     #[must_use]
     pub fn get_neighbors_outgoing_by_type(
@@ -2569,7 +2782,7 @@ mod tests {
         session.begin_tx().unwrap();
 
         let node_in_tx =
-            session.create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
+            session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
         assert!(node_in_tx.is_valid());
 
         // Should see 2 nodes
@@ -2636,20 +2849,20 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            // Create a graph: Alice -> Bob, Alice -> Charlie
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            // Create a graph: Alix -> Gus, Alix -> Charlie
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let charlie = session.create_node(&["Person"]);
 
-            session.create_edge(alice, bob, "KNOWS");
-            session.create_edge(alice, charlie, "KNOWS");
+            session.create_edge(alix, gus, "KNOWS");
+            session.create_edge(alix, charlie, "KNOWS");
 
             // Execute a path query: MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b
             let result = session
                 .execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b")
                 .unwrap();
 
-            // Should return 2 rows (Alice->Bob, Alice->Charlie)
+            // Should return 2 rows (Alix->Gus, Alix->Charlie)
             assert_eq!(result.row_count(), 2);
             assert_eq!(result.column_count(), 2);
             assert_eq!(result.columns[0], "a");
@@ -2661,20 +2874,20 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            // Create a graph: Alice -KNOWS-> Bob, Alice -WORKS_WITH-> Charlie
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            // Create a graph: Alix -KNOWS-> Gus, Alix -WORKS_WITH-> Charlie
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let charlie = session.create_node(&["Person"]);
 
-            session.create_edge(alice, bob, "KNOWS");
-            session.create_edge(alice, charlie, "WORKS_WITH");
+            session.create_edge(alix, gus, "KNOWS");
+            session.create_edge(alix, charlie, "WORKS_WITH");
 
             // Query only KNOWS relationships
             let result = session
                 .execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b")
                 .unwrap();
 
-            // Should return only 1 row (Alice->Bob)
+            // Should return only 1 row (Alix->Gus)
             assert_eq!(result.row_count(), 1);
         }
 
@@ -2727,16 +2940,16 @@ mod tests {
             let session = db.session();
 
             // Create people with names
-            session.create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
-            session.create_node_with_props(&["Person"], [("name", Value::String("Bob".into()))]);
-            session.create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
+            session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
+            session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
+            session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
 
-            // Query with WHERE clause: name = "Alice"
+            // Query with WHERE clause: name = "Alix"
             let result = session
-                .execute("MATCH (n:Person) WHERE n.name = \"Alice\" RETURN n")
+                .execute("MATCH (n:Person) WHERE n.name = \"Alix\" RETURN n")
                 .unwrap();
 
-            // Should return 2 people named Alice
+            // Should return 2 people named Alix
             assert_eq!(result.row_count(), 2);
         }
 
@@ -2751,14 +2964,14 @@ mod tests {
             session.create_node_with_props(
                 &["Person"],
                 [
-                    ("name", Value::String("Alice".into())),
+                    ("name", Value::String("Alix".into())),
                     ("age", Value::Int64(30)),
                 ],
             );
             session.create_node_with_props(
                 &["Person"],
                 [
-                    ("name", Value::String("Bob".into())),
+                    ("name", Value::String("Gus".into())),
                     ("age", Value::Int64(25)),
                 ],
             );
@@ -2776,8 +2989,8 @@ mod tests {
 
             // Check that we get actual values
             let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-            assert!(names.contains(&&Value::String("Alice".into())));
-            assert!(names.contains(&&Value::String("Bob".into())));
+            assert!(names.contains(&&Value::String("Alix".into())));
+            assert!(names.contains(&&Value::String("Gus".into())));
         }
 
         #[test]
@@ -2788,7 +3001,7 @@ mod tests {
             let session = db.session();
 
             // Create a person
-            session.create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
+            session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
 
             // Query returning both node and property
             let result = session
@@ -2801,7 +3014,7 @@ mod tests {
             assert_eq!(result.columns[1], "n.name");
 
             // Second column should be the name
-            assert_eq!(result.rows[0][1], Value::String("Alice".into()));
+            assert_eq!(result.rows[0][1], Value::String("Alix".into()));
         }
     }
 
@@ -2888,10 +3101,10 @@ mod tests {
             let session = db.session();
 
             let id = session
-                .create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
+                .create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
 
             let name = session.get_node_property(id, "name");
-            assert_eq!(name, Some(Value::String("Alice".into())));
+            assert_eq!(name, Some(Value::String("Alix".into())));
 
             // Non-existent property
             let missing = session.get_node_property(id, "missing");
@@ -2903,16 +3116,16 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
-            let edge_id = session.create_edge(alice, bob, "KNOWS");
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
+            let edge_id = session.create_edge(alix, gus, "KNOWS");
 
             let edge = session.get_edge(edge_id);
             assert!(edge.is_some());
             let edge = edge.unwrap();
             assert_eq!(edge.id, edge_id);
-            assert_eq!(edge.src, alice);
-            assert_eq!(edge.dst, bob);
+            assert_eq!(edge.src, alix);
+            assert_eq!(edge.dst, gus);
         }
 
         #[test]
@@ -2931,18 +3144,18 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let carol = session.create_node(&["Person"]);
 
-            session.create_edge(alice, bob, "KNOWS");
-            session.create_edge(alice, carol, "KNOWS");
+            session.create_edge(alix, gus, "KNOWS");
+            session.create_edge(alix, carol, "KNOWS");
 
-            let neighbors = session.get_neighbors_outgoing(alice);
+            let neighbors = session.get_neighbors_outgoing(alix);
             assert_eq!(neighbors.len(), 2);
 
             let neighbor_ids: Vec<_> = neighbors.iter().map(|(node_id, _)| *node_id).collect();
-            assert!(neighbor_ids.contains(&bob));
+            assert!(neighbor_ids.contains(&gus));
             assert!(neighbor_ids.contains(&carol));
         }
 
@@ -2951,18 +3164,18 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let carol = session.create_node(&["Person"]);
 
-            session.create_edge(bob, alice, "KNOWS");
-            session.create_edge(carol, alice, "KNOWS");
+            session.create_edge(gus, alix, "KNOWS");
+            session.create_edge(carol, alix, "KNOWS");
 
-            let neighbors = session.get_neighbors_incoming(alice);
+            let neighbors = session.get_neighbors_incoming(alix);
             assert_eq!(neighbors.len(), 2);
 
             let neighbor_ids: Vec<_> = neighbors.iter().map(|(node_id, _)| *node_id).collect();
-            assert!(neighbor_ids.contains(&bob));
+            assert!(neighbor_ids.contains(&gus));
             assert!(neighbor_ids.contains(&carol));
         }
 
@@ -2971,23 +3184,23 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let company = session.create_node(&["Company"]);
 
-            session.create_edge(alice, bob, "KNOWS");
-            session.create_edge(alice, company, "WORKS_AT");
+            session.create_edge(alix, gus, "KNOWS");
+            session.create_edge(alix, company, "WORKS_AT");
 
-            let knows_neighbors = session.get_neighbors_outgoing_by_type(alice, "KNOWS");
+            let knows_neighbors = session.get_neighbors_outgoing_by_type(alix, "KNOWS");
             assert_eq!(knows_neighbors.len(), 1);
-            assert_eq!(knows_neighbors[0].0, bob);
+            assert_eq!(knows_neighbors[0].0, gus);
 
-            let works_neighbors = session.get_neighbors_outgoing_by_type(alice, "WORKS_AT");
+            let works_neighbors = session.get_neighbors_outgoing_by_type(alix, "WORKS_AT");
             assert_eq!(works_neighbors.len(), 1);
             assert_eq!(works_neighbors[0].0, company);
 
             // No edges of this type
-            let no_neighbors = session.get_neighbors_outgoing_by_type(alice, "LIKES");
+            let no_neighbors = session.get_neighbors_outgoing_by_type(alix, "LIKES");
             assert!(no_neighbors.is_empty());
         }
 
@@ -3011,9 +3224,9 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
-            let edge_id = session.create_edge(alice, bob, "KNOWS");
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
+            let edge_id = session.create_edge(alix, gus, "KNOWS");
 
             assert!(session.edge_exists(edge_id));
             assert!(!session.edge_exists(EdgeId::new(9999)));
@@ -3024,17 +3237,17 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let carol = session.create_node(&["Person"]);
 
-            // Alice knows Bob and Carol (2 outgoing)
-            session.create_edge(alice, bob, "KNOWS");
-            session.create_edge(alice, carol, "KNOWS");
-            // Bob knows Alice (1 incoming for Alice)
-            session.create_edge(bob, alice, "KNOWS");
+            // Alix knows Gus and Carol (2 outgoing)
+            session.create_edge(alix, gus, "KNOWS");
+            session.create_edge(alix, carol, "KNOWS");
+            // Gus knows Alix (1 incoming for Alix)
+            session.create_edge(gus, alix, "KNOWS");
 
-            let (out_degree, in_degree) = session.get_degree(alice);
+            let (out_degree, in_degree) = session.get_degree(alix);
             assert_eq!(out_degree, 2);
             assert_eq!(in_degree, 1);
 
@@ -3050,11 +3263,11 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
             let carol = session.create_node(&["Person"]);
 
-            let nodes = session.get_nodes_batch(&[alice, bob, carol]);
+            let nodes = session.get_nodes_batch(&[alix, gus, carol]);
             assert_eq!(nodes.len(), 3);
             assert!(nodes[0].is_some());
             assert!(nodes[1].is_some());
@@ -3062,7 +3275,7 @@ mod tests {
 
             // With non-existent node
             use grafeo_common::types::NodeId;
-            let nodes_with_missing = session.get_nodes_batch(&[alice, NodeId::new(9999), carol]);
+            let nodes_with_missing = session.get_nodes_batch(&[alix, NodeId::new(9999), carol]);
             assert_eq!(nodes_with_missing.len(), 3);
             assert!(nodes_with_missing[0].is_some());
             assert!(nodes_with_missing[1].is_none()); // Missing node
@@ -3121,12 +3334,12 @@ mod tests {
             let mut session = db.session();
 
             // Create nodes outside transaction
-            let alice = session.create_node(&["Person"]);
-            let bob = session.create_node(&["Person"]);
+            let alix = session.create_node(&["Person"]);
+            let gus = session.create_node(&["Person"]);
 
             // Create edge in transaction
             session.begin_tx().unwrap();
-            let edge_id = session.create_edge(alice, bob, "KNOWS");
+            let edge_id = session.create_edge(alix, gus, "KNOWS");
 
             // Edge should be visible in the transaction
             assert!(session.edge_exists(edge_id));
@@ -3216,7 +3429,8 @@ mod tests {
         use std::sync::Arc;
 
         let config = crate::config::Config::in_memory();
-        let store = Arc::new(grafeo_core::graph::lpg::LpgStore::new()) as Arc<dyn GraphStoreMut>;
+        let store =
+            Arc::new(grafeo_core::graph::lpg::LpgStore::new().unwrap()) as Arc<dyn GraphStoreMut>;
         let db = GrafeoDB::with_store(store, config).unwrap();
 
         let session = db.session();
@@ -3431,7 +3645,7 @@ mod tests {
 
             session.execute("START TRANSACTION").unwrap();
             assert!(session.in_transaction());
-            session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+            session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
             session.execute("COMMIT").unwrap();
             assert!(!session.in_transaction());
 
@@ -3445,7 +3659,7 @@ mod tests {
             let session = db.session();
 
             session.execute("START TRANSACTION READ ONLY").unwrap();
-            let result = session.execute("INSERT (:Person {name: 'Alice'})");
+            let result = session.execute("INSERT (:Person {name: 'Alix'})");
             assert!(result.is_err());
             let err = result.unwrap_err().to_string();
             assert!(
@@ -3460,7 +3674,7 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let mut session = db.session();
             session.begin_tx().unwrap();
-            session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+            session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
             session.commit().unwrap();
 
             session.execute("START TRANSACTION READ ONLY").unwrap();
@@ -3475,7 +3689,7 @@ mod tests {
             let session = db.session();
 
             session.execute("START TRANSACTION").unwrap();
-            session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+            session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
             session.execute("ROLLBACK").unwrap();
 
             let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();

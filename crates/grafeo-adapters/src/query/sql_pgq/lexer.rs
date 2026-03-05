@@ -727,7 +727,7 @@ mod tests {
             "SELECT g.person FROM GRAPH_TABLE ( \
              MATCH (a:Person)-[e:KNOWS]->(b:Person) \
              COLUMNS (a.name AS person, b.name AS friend) \
-             ) AS g WHERE g.person = 'Alice' ORDER BY g.person LIMIT 10",
+             ) AS g WHERE g.person = 'Alix' ORDER BY g.person LIMIT 10",
         );
         assert_eq!(lexer.next_token().kind, TokenKind::Select);
         assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // g
@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(lexer.next_token().kind, TokenKind::Dot);
         assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // person
         assert_eq!(lexer.next_token().kind, TokenKind::Eq);
-        assert_eq!(lexer.next_token().kind, TokenKind::String); // 'Alice'
+        assert_eq!(lexer.next_token().kind, TokenKind::String); // 'Alix'
         assert_eq!(lexer.next_token().kind, TokenKind::Order);
         assert_eq!(lexer.next_token().kind, TokenKind::By);
         assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // g

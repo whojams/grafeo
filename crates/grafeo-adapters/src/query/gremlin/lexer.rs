@@ -523,15 +523,15 @@ mod tests {
 
     #[test]
     fn test_has_step() {
-        let mut lexer = Lexer::new("g.V().has('name', 'Alice')");
+        let mut lexer = Lexer::new("g.V().has('name', 'Alix')");
         let tokens = lexer.tokenize();
 
-        // g.V().has('name', 'Alice')
+        // g.V().has('name', 'Alix')
         // 0=G 1=Dot 2=V 3=LParen 4=RParen 5=Dot 6=Has 7=LParen 8=String 9=Comma 10=String 11=RParen
         assert_eq!(tokens[0].kind, TokenKind::G);
         assert_eq!(tokens[6].kind, TokenKind::Has);
         assert_eq!(tokens[8].kind, TokenKind::String("name".to_string()));
-        assert_eq!(tokens[10].kind, TokenKind::String("Alice".to_string()));
+        assert_eq!(tokens[10].kind, TokenKind::String("Alix".to_string()));
     }
 
     #[test]

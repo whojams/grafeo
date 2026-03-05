@@ -1,5 +1,6 @@
 //! Pure in-memory storage backend.
 
+use grafeo_common::memory::arena::AllocError;
 use grafeo_core::graph::lpg::LpgStore;
 use std::sync::Arc;
 
@@ -14,11 +15,14 @@ pub struct MemoryBackend {
 
 impl MemoryBackend {
     /// Creates a new in-memory backend.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            store: Arc::new(LpgStore::new()),
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if arena allocation fails.
+    pub fn new() -> Result<Self, AllocError> {
+        Ok(Self {
+            store: Arc::new(LpgStore::new()?),
+        })
     }
 
     /// Returns a reference to the underlying store.
@@ -30,7 +34,7 @@ impl MemoryBackend {
 
 impl Default for MemoryBackend {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("arena allocation for default MemoryBackend")
     }
 }
 

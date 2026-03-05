@@ -26,28 +26,28 @@ use grafeo_engine::GrafeoDB;
 /// Creates a test database with a social network graph.
 ///
 /// Structure:
-/// - Alice (Person, age: 30) -KNOWS-> Bob (Person, age: 25)
-/// - Alice -KNOWS-> Carol (Person, age: 35)
-/// - Bob -KNOWS-> Carol
-/// - Alice -WORKS_AT-> TechCorp (Company, founded: 2010)
-/// - Bob -WORKS_AT-> TechCorp
+/// - Alix (Person, age: 30) -KNOWS-> Gus (Person, age: 25)
+/// - Alix -KNOWS-> Carol (Person, age: 35)
+/// - Gus -KNOWS-> Carol
+/// - Alix -WORKS_AT-> TechCorp (Company, founded: 2010)
+/// - Gus -WORKS_AT-> TechCorp
 /// - Carol -WORKS_AT-> Startup (Company, founded: 2020)
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
     // Create people
-    let alice = session.create_node_with_props(
+    let alix = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
         ],
     );
-    let bob = session.create_node_with_props(
+    let gus = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
         ],
     );
@@ -76,13 +76,13 @@ fn create_social_network() -> GrafeoDB {
     );
 
     // Create KNOWS relationships
-    session.create_edge(alice, bob, "KNOWS");
-    session.create_edge(alice, carol, "KNOWS");
-    session.create_edge(bob, carol, "KNOWS");
+    session.create_edge(alix, gus, "KNOWS");
+    session.create_edge(alix, carol, "KNOWS");
+    session.create_edge(gus, carol, "KNOWS");
 
     // Create WORKS_AT relationships
-    session.create_edge(alice, techcorp, "WORKS_AT");
-    session.create_edge(bob, techcorp, "WORKS_AT");
+    session.create_edge(alix, techcorp, "WORKS_AT");
+    session.create_edge(gus, techcorp, "WORKS_AT");
     session.create_edge(carol, startup, "WORKS_AT");
 
     db
@@ -244,7 +244,7 @@ mod gql_basic_patterns {
         assert_eq!(
             result.row_count(),
             2,
-            "Should find 2 people older than 28 (Alice: 30, Carol: 35)"
+            "Should find 2 people older than 28 (Alix: 30, Carol: 35)"
         );
     }
 
@@ -254,12 +254,12 @@ mod gql_basic_patterns {
         let session = db.session();
 
         let result = session
-            .execute("MATCH (n:Person) WHERE n.name = \"Alice\" RETURN n")
+            .execute("MATCH (n:Person) WHERE n.name = \"Alix\" RETURN n")
             .unwrap();
         assert_eq!(
             result.row_count(),
             1,
-            "Should find exactly 1 person named Alice"
+            "Should find exactly 1 person named Alix"
         );
     }
 
@@ -288,8 +288,8 @@ mod gql_basic_patterns {
 
         // Check that we have all expected names
         let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-        assert!(names.contains(&&Value::String("Alice".into())));
-        assert!(names.contains(&&Value::String("Bob".into())));
+        assert!(names.contains(&&Value::String("Alix".into())));
+        assert!(names.contains(&&Value::String("Gus".into())));
         assert!(names.contains(&&Value::String("Carol".into())));
     }
 
@@ -449,7 +449,7 @@ mod gql_joins {
             .execute("MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, b.name, c.name")
             .unwrap();
 
-        // Alice knows Bob, Bob knows Carol
+        // Alix knows Gus, Gus knows Carol
         assert!(
             result.row_count() >= 1,
             "Should find at least one 2-hop path"
@@ -519,7 +519,7 @@ mod gql_mutations {
         let session = db.session();
 
         session
-            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
             .unwrap();
 
         let result = session
@@ -531,8 +531,8 @@ mod gql_mutations {
         assert!(
             result.rows[0]
                 .iter()
-                .any(|v| *v == Value::String("Alice".into())),
-            "Should find Alice in result"
+                .any(|v| *v == Value::String("Alix".into())),
+            "Should find Alix in result"
         );
     }
 
@@ -541,8 +541,8 @@ mod gql_mutations {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
 
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
         session.execute("INSERT (:Person {name: 'Carol'})").unwrap();
 
         let result = session.execute("MATCH (n:Person) RETURN n").unwrap();
@@ -555,7 +555,7 @@ mod gql_mutations {
         let mut session = db.session();
 
         session.begin_tx().unwrap();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session.commit().unwrap();
 
         let result = session.execute("MATCH (n:Person) RETURN n").unwrap();
@@ -632,7 +632,7 @@ mod cypher_tests {
         let session = db.session();
 
         session
-            .execute_cypher("CREATE (:Person {name: 'Alice', age: 30})")
+            .execute_cypher("CREATE (:Person {name: 'Alix', age: 30})")
             .unwrap();
 
         let result = session
@@ -660,7 +660,7 @@ mod cypher_tests {
 
     #[test]
     fn test_cypher_exists_subquery_basic() {
-        // Alice-[:KNOWS]->Bob, Alice-[:KNOWS]->Carol, Bob-[:KNOWS]->Carol
+        // Alix-[:KNOWS]->Gus, Alix-[:KNOWS]->Carol, Gus-[:KNOWS]->Carol
         let db = create_social_network();
         let session = db.session();
 
@@ -670,10 +670,10 @@ mod cypher_tests {
             )
             .unwrap();
 
-        // Alice knows Bob and Carol, Bob knows Carol
+        // Alix knows Gus and Carol, Gus knows Carol
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
-        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
     }
 
     #[test]
@@ -714,12 +714,12 @@ mod cypher_tests {
 
         let result = session
             .execute_cypher(
-                "MATCH (n:Person) WHERE EXISTS { MATCH (n)-[:KNOWS]->() } AND n.name = 'Alice' RETURN n.name",
+                "MATCH (n:Person) WHERE EXISTS { MATCH (n)-[:KNOWS]->() } AND n.name = 'Alix' RETURN n.name",
             )
             .unwrap();
 
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     }
 
     #[test]
@@ -735,9 +735,9 @@ mod cypher_tests {
             .unwrap();
 
         assert_eq!(result.row_count(), 3);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
-        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
-        assert_eq!(result.rows[2][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[1][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[2][0], Value::String("Gus".into()));
     }
 
     #[test]
@@ -1153,18 +1153,18 @@ mod gql_direction_tests {
         let db = create_social_network();
         let session = db.session();
 
-        // Carol is known by both Alice and Bob (incoming KNOWS)
+        // Carol is known by both Alix and Gus (incoming KNOWS)
         let result = session
             .execute("MATCH (c:Person {name: \"Carol\"})<-[:KNOWS]-(x) RETURN x.name")
             .unwrap();
         assert_eq!(result.row_count(), 2, "Carol should be known by 2 people");
 
-        // Bob is known by Alice (incoming KNOWS)
+        // Gus is known by Alix (incoming KNOWS)
         let result = session
-            .execute("MATCH (b:Person {name: \"Bob\"})<-[:KNOWS]-(x) RETURN x.name")
+            .execute("MATCH (b:Person {name: \"Gus\"})<-[:KNOWS]-(x) RETURN x.name")
             .unwrap();
-        assert_eq!(result.row_count(), 1, "Bob should be known by 1 person");
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.row_count(), 1, "Gus should be known by 1 person");
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     }
 }
 
@@ -1330,14 +1330,14 @@ mod cross_language_mutations {
         let session = db.session();
 
         session
-            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
             .unwrap();
 
         let result = session
             .execute_cypher("MATCH (n:Person) RETURN n.name, n.age")
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     }
 
     #[test]
@@ -1347,14 +1347,14 @@ mod cross_language_mutations {
         let session = db.session();
 
         session
-            .execute_cypher("CREATE (:Person {name: 'Bob', age: 25})")
+            .execute_cypher("CREATE (:Person {name: 'Gus', age: 25})")
             .unwrap();
 
         let result = session
             .execute("MATCH (n:Person) RETURN n.name, n.age")
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Bob".into()));
+        assert_eq!(result.rows[0][0], Value::String("Gus".into()));
     }
 
     #[test]
@@ -1363,11 +1363,11 @@ mod cross_language_mutations {
         let session = db.session();
 
         // Insert with GQL
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         // Create with Cypher
         session
-            .execute_cypher("CREATE (:Person {name: 'Bob'})")
+            .execute_cypher("CREATE (:Person {name: 'Gus'})")
             .unwrap();
 
         // Verify both exist
@@ -1387,10 +1387,10 @@ mod gql_in_operator {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
         session
-            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
             .unwrap();
         session
-            .execute("INSERT (:Person {name: 'Bob', age: 25})")
+            .execute("INSERT (:Person {name: 'Gus', age: 25})")
             .unwrap();
         session
             .execute("INSERT (:Person {name: 'Carol', age: 35})")
@@ -1404,12 +1404,12 @@ mod gql_in_operator {
         let session = db.session();
         let result = session
             .execute(
-                "MATCH (n:Person) WHERE n.name IN ['Alice', 'Bob'] RETURN n.name ORDER BY n.name",
+                "MATCH (n:Person) WHERE n.name IN ['Alix', 'Gus'] RETURN n.name ORDER BY n.name",
             )
             .unwrap();
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
-        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
     }
 
     #[test]
@@ -1420,8 +1420,8 @@ mod gql_in_operator {
             .execute("MATCH (n:Person) WHERE n.age IN [25, 35] RETURN n.name ORDER BY n.name")
             .unwrap();
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Bob".into()));
-        assert_eq!(result.rows[1][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[0][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
     }
 
     #[test]
@@ -1471,10 +1471,10 @@ mod parameterized_queries {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
         session
-            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
             .unwrap();
         session
-            .execute("INSERT (:Person {name: 'Bob', age: 25})")
+            .execute("INSERT (:Person {name: 'Gus', age: 25})")
             .unwrap();
         session
             .execute("INSERT (:Person {name: 'Carol', age: 35})")
@@ -1488,7 +1488,7 @@ mod parameterized_queries {
         let session = db.session();
 
         let mut params = HashMap::new();
-        params.insert("name".to_string(), Value::String("Alice".into()));
+        params.insert("name".to_string(), Value::String("Alix".into()));
 
         let result = session
             .execute_with_params(
@@ -1497,7 +1497,7 @@ mod parameterized_queries {
             )
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     }
 
     #[test]
@@ -1515,7 +1515,7 @@ mod parameterized_queries {
             )
             .unwrap();
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
         assert_eq!(result.rows[1][0], Value::String("Carol".into()));
     }
 
@@ -1535,8 +1535,8 @@ mod parameterized_queries {
             )
             .unwrap();
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
-        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
     }
 
     #[test]
@@ -1544,7 +1544,7 @@ mod parameterized_queries {
         let db = setup_db();
 
         let mut params = HashMap::new();
-        params.insert("name".to_string(), Value::String("Bob".into()));
+        params.insert("name".to_string(), Value::String("Gus".into()));
 
         let result = db
             .execute_with_params("MATCH (n:Person) WHERE n.name = $name RETURN n.age", params)
@@ -1618,7 +1618,7 @@ mod cypher_db_execute {
     fn test_db_execute_cypher_with_params() {
         let db = create_social_network();
         let mut params = HashMap::new();
-        params.insert("name".to_string(), Value::String("Alice".into()));
+        params.insert("name".to_string(), Value::String("Alix".into()));
 
         let result = db
             .execute_cypher_with_params(
@@ -1627,14 +1627,14 @@ mod cypher_db_execute {
             )
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     }
 
     #[test]
     fn test_cypher_exists_as_alias() {
         let db = create_social_network();
         let result = db
-            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' RETURN count(n) as exists")
+            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' RETURN count(n) as exists")
             .unwrap();
         assert_eq!(result.row_count(), 1);
     }
@@ -1644,14 +1644,14 @@ mod cypher_db_execute {
         let db = create_social_network();
         let result = db
             .execute_cypher(
-                "MATCH (a:Person) WHERE a.name = 'Alice' \
-                 MATCH (b:Person) WHERE b.name = 'Bob' \
+                "MATCH (a:Person) WHERE a.name = 'Alix' \
+                 MATCH (b:Person) WHERE b.name = 'Gus' \
                  RETURN a.name, b.name",
             )
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
-        assert_eq!(result.rows[0][1], Value::String("Bob".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[0][1], Value::String("Gus".into()));
     }
 
     #[test]
@@ -1697,21 +1697,21 @@ mod cypher_db_execute {
             &["Person"],
             [
                 ("id", Value::String("a".into())),
-                ("name", Value::String("Alice".into())),
+                ("name", Value::String("Alix".into())),
             ],
         );
         session.create_node_with_props(
             &["Person"],
             [
                 ("id", Value::String("b".into())),
-                ("name", Value::String("Bob".into())),
+                ("name", Value::String("Gus".into())),
             ],
         );
 
         // MERGE should create the relationship since it doesn't exist
         let result = db
             .execute_cypher(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
                  MERGE (a)-[r:KNOWS]->(b) \
                  RETURN r",
             )
@@ -1721,7 +1721,7 @@ mod cypher_db_execute {
         // Running MERGE again should return the same relationship (idempotent)
         let result2 = db
             .execute_cypher(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
                  MERGE (a)-[r:KNOWS]->(b) \
                  RETURN r",
             )
@@ -1733,13 +1733,13 @@ mod cypher_db_execute {
     fn test_cypher_merge_relationship_with_properties() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        session.create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
-        session.create_node_with_props(&["Person"], [("name", Value::String("Bob".into()))]);
+        session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
+        session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
 
         // MERGE with match properties
         let result = db
             .execute_cypher(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
                  MERGE (a)-[r:KNOWS {id: 'edge1'}]->(b) \
                  RETURN r",
             )
@@ -1749,7 +1749,7 @@ mod cypher_db_execute {
         // Second MERGE with same id should not create duplicate
         let result2 = db
             .execute_cypher(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
                  MERGE (a)-[r:KNOWS {id: 'edge1'}]->(b) \
                  RETURN r",
             )
@@ -1761,13 +1761,13 @@ mod cypher_db_execute {
     fn test_cypher_merge_relationship_then_set() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        session.create_node_with_props(&["Person"], [("name", Value::String("Alice".into()))]);
-        session.create_node_with_props(&["Person"], [("name", Value::String("Bob".into()))]);
+        session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
+        session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
 
         // MERGE relationship then SET a property on it
         let result = db
             .execute_cypher(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
                  MERGE (a)-[r:KNOWS]->(b) \
                  SET r.weight = 5 \
                  RETURN r",
@@ -1808,14 +1808,14 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_set_node_property() {
         let db = GrafeoDB::new_in_memory();
-        db.execute_cypher("CREATE (n:Person {name: 'Alice'})")
+        db.execute_cypher("CREATE (n:Person {name: 'Alix'})")
             .unwrap();
 
-        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' SET n.age = 30")
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' SET n.age = 30")
             .unwrap();
 
         let result = db
-            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.age")
+            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' RETURN n.age")
             .unwrap();
         assert_eq!(result.row_count(), 1);
         let age = &result.rows[0][0];
@@ -1825,10 +1825,10 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_set_labels() {
         let db = GrafeoDB::new_in_memory();
-        db.execute_cypher("CREATE (n:Person {name: 'Alice'})")
+        db.execute_cypher("CREATE (n:Person {name: 'Alix'})")
             .unwrap();
 
-        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' SET n:Employee")
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' SET n:Employee")
             .unwrap();
 
         // Should now match as Employee
@@ -1837,7 +1837,7 @@ mod cypher_db_execute {
             .unwrap();
         assert_eq!(result.row_count(), 1);
         let name = &result.rows[0][0];
-        assert_eq!(name, &Value::String("Alice".into()));
+        assert_eq!(name, &Value::String("Alix".into()));
     }
 
     // === Cypher DELETE tests ===
@@ -1861,22 +1861,22 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_detach_delete_with_edges() {
         let db = GrafeoDB::new_in_memory();
-        db.execute_cypher("CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})")
+        db.execute_cypher("CREATE (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})")
             .unwrap();
         db.execute_cypher(
-            "MATCH (a:Person), (b:Person) WHERE a.name = 'Alice' AND b.name = 'Bob' \
+            "MATCH (a:Person), (b:Person) WHERE a.name = 'Alix' AND b.name = 'Gus' \
              CREATE (a)-[:KNOWS]->(b)",
         )
         .unwrap();
 
         // DETACH DELETE removes the node and its connected edges
-        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' DETACH DELETE n")
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' DETACH DELETE n")
             .unwrap();
 
         let result = db.execute_cypher("MATCH (n:Person) RETURN n.name").unwrap();
         assert_eq!(result.row_count(), 1);
         let name = &result.rows[0][0];
-        assert_eq!(name, &Value::String("Bob".into()));
+        assert_eq!(name, &Value::String("Gus".into()));
     }
 
     // === Cypher REMOVE tests ===
@@ -1884,14 +1884,14 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_remove_property() {
         let db = GrafeoDB::new_in_memory();
-        db.execute_cypher("CREATE (n:Person {name: 'Alice', age: 30})")
+        db.execute_cypher("CREATE (n:Person {name: 'Alix', age: 30})")
             .unwrap();
 
-        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' REMOVE n.age")
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' REMOVE n.age")
             .unwrap();
 
         let result = db
-            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.age")
+            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' RETURN n.age")
             .unwrap();
         assert_eq!(result.row_count(), 1);
         let age = &result.rows[0][0];
@@ -1901,10 +1901,10 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_remove_label() {
         let db = GrafeoDB::new_in_memory();
-        db.execute_cypher("CREATE (n:Person:Employee {name: 'Alice'})")
+        db.execute_cypher("CREATE (n:Person:Employee {name: 'Alix'})")
             .unwrap();
 
-        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' REMOVE n:Employee")
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alix' REMOVE n:Employee")
             .unwrap();
 
         // Should no longer match as Employee
@@ -1921,9 +1921,9 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_return_count_gt_zero() {
         let db = GrafeoDB::new_in_memory();
-        db.execute_cypher("CREATE (n:Person {name: 'Alice'})")
+        db.execute_cypher("CREATE (n:Person {name: 'Alix'})")
             .unwrap();
-        db.execute_cypher("CREATE (n:Person {name: 'Bob'})")
+        db.execute_cypher("CREATE (n:Person {name: 'Gus'})")
             .unwrap();
 
         let result = db

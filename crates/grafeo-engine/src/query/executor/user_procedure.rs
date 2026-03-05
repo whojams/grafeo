@@ -97,7 +97,7 @@ impl UserProcedureOperator {
         }
 
         // Use the module-level translate function
-        let logical_plan = crate::query::gql_translator::translate(&body).map_err(|e| {
+        let logical_plan = crate::query::translators::gql::translate(&body).map_err(|e| {
             OperatorError::Execution(format!("Failed to translate procedure body: {e}"))
         })?;
 
@@ -169,7 +169,10 @@ impl Operator for UserProcedureOperator {
             self.execute_body()?;
         }
 
-        let rows = self.result_rows.as_ref().unwrap();
+        let rows = self
+            .result_rows
+            .as_ref()
+            .expect("result_rows populated by execute_body");
         if self.row_index >= rows.len() {
             return Ok(None);
         }

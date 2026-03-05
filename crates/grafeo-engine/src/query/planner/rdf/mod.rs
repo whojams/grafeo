@@ -406,13 +406,18 @@ impl RdfPlanner {
                     if let Some(&col_idx) = variable_columns.get(name) {
                         projections.push(ProjectExpr::Column(col_idx));
                         output_columns.push(proj.alias.clone().unwrap_or_else(|| name.clone()));
-                        output_types.push(LogicalType::String); // RDF values are strings
+                        output_types.push(LogicalType::Any); // preserve actual value types
                     } else {
                         return Err(Error::Internal(format!(
                             "Variable '{}' not found in input columns",
                             name
                         )));
                     }
+                }
+                LogicalExpression::Literal(value) => {
+                    projections.push(ProjectExpr::Constant(value.clone()));
+                    output_columns.push(proj.alias.clone().unwrap_or_else(|| format!("{value}")));
+                    output_types.push(LogicalType::Any);
                 }
                 _ => {
                     // For non-variable expressions, we need to evaluate them
@@ -488,9 +493,16 @@ impl RdfPlanner {
                     .map(|e| resolve_expression(e, &variable_columns))
                     .transpose()?;
 
+                let column2 = agg_expr
+                    .expression2
+                    .as_ref()
+                    .map(|e| resolve_expression(e, &variable_columns))
+                    .transpose()?;
+
                 Ok(PhysicalAggregateExpr {
                     function: convert_aggregate_function(agg_expr.function),
                     column,
+                    column2,
                     distinct: agg_expr.distinct,
                     alias: agg_expr.alias.clone(),
                     percentile: agg_expr.percentile,
@@ -724,7 +736,13 @@ impl RdfPlanner {
         }
 
         if operators.len() == 1 {
-            return Ok((operators.into_iter().next().unwrap(), columns));
+            return Ok((
+                operators
+                    .into_iter()
+                    .next()
+                    .expect("single-element iterator"),
+                columns,
+            ));
         }
 
         // Create a chain operator that executes all operators in sequence
@@ -1934,12 +1952,16 @@ impl Operator for RdfBindOperator {
         let input_col_count = input.column_count();
         let row_count = input.row_count();
 
-        // Build output schema: same as input + one extra String column for BIND result
+        // Build output schema: preserve input column types + one extra column for BIND result
         let mut output_types: Vec<LogicalType> = Vec::with_capacity(input_col_count + 1);
-        for _ in 0..input_col_count {
-            output_types.push(LogicalType::String);
+        for col_idx in 0..input_col_count {
+            if let Some(col) = input.column(col_idx) {
+                output_types.push(col.logical_type());
+            } else {
+                output_types.push(LogicalType::String);
+            }
         }
-        output_types.push(LogicalType::String);
+        output_types.push(LogicalType::Any);
 
         let mut output = DataChunk::with_capacity(&output_types, row_count);
 
@@ -2070,7 +2092,10 @@ impl Operator for RdfTripleScanOperator {
     fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
         self.ensure_triples();
 
-        let triples = self.triples.as_ref().unwrap();
+        let triples = self
+            .triples
+            .as_ref()
+            .expect("triples populated by ensure_triples");
 
         if self.position >= triples.len() {
             return Ok(None);
@@ -2864,10 +2889,314 @@ impl RdfExpressionPredicate {
                 }
             }
 
+            // ================================================================
+            // Date/Time Functions (SPARQL 1.1 Section 17.4.5)
+            // ================================================================
+
+            // NOW - current datetime
+            "NOW" => {
+                let ts = grafeo_common::types::Timestamp::now();
+                Some(Value::Timestamp(ts))
+            }
+
+            // YEAR - extract year from date/datetime
+            "YEAR" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Date(d) => Some(Value::Int64(i64::from(d.year()))),
+                    Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_date().year()))),
+                    Value::String(s) => grafeo_common::types::Date::parse(&s)
+                        .map(|d| Value::Int64(i64::from(d.year()))),
+                    _ => None,
+                }
+            }
+
+            // MONTH - extract month from date/datetime
+            "MONTH" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Date(d) => Some(Value::Int64(i64::from(d.month()))),
+                    Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_date().month()))),
+                    Value::String(s) => grafeo_common::types::Date::parse(&s)
+                        .map(|d| Value::Int64(i64::from(d.month()))),
+                    _ => None,
+                }
+            }
+
+            // DAY - extract day from date/datetime
+            "DAY" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Date(d) => Some(Value::Int64(i64::from(d.day()))),
+                    Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_date().day()))),
+                    Value::String(s) => grafeo_common::types::Date::parse(&s)
+                        .map(|d| Value::Int64(i64::from(d.day()))),
+                    _ => None,
+                }
+            }
+
+            // HOURS - extract hours from time/datetime
+            "HOURS" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Time(t) => Some(Value::Int64(i64::from(t.hour()))),
+                    Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_time().hour()))),
+                    Value::String(s) => grafeo_common::types::Time::parse(&s)
+                        .map(|t| Value::Int64(i64::from(t.hour()))),
+                    _ => None,
+                }
+            }
+
+            // MINUTES - extract minutes from time/datetime
+            "MINUTES" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Time(t) => Some(Value::Int64(i64::from(t.minute()))),
+                    Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_time().minute()))),
+                    Value::String(s) => grafeo_common::types::Time::parse(&s)
+                        .map(|t| Value::Int64(i64::from(t.minute()))),
+                    _ => None,
+                }
+            }
+
+            // SECONDS - extract seconds (with fractional) from time/datetime
+            "SECONDS" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let to_secs = |t: &grafeo_common::types::Time| {
+                    f64::from(t.second()) + f64::from(t.nanosecond()) / 1_000_000_000.0
+                };
+                match val {
+                    Value::Time(t) => Some(Value::Float64(to_secs(&t))),
+                    Value::Timestamp(ts) => Some(Value::Float64(to_secs(&ts.to_time()))),
+                    Value::String(s) => {
+                        grafeo_common::types::Time::parse(&s).map(|t| Value::Float64(to_secs(&t)))
+                    }
+                    _ => None,
+                }
+            }
+
+            // TIMEZONE - extract timezone as xsd:dayTimeDuration
+            "TIMEZONE" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Time(t) => t.offset_seconds().map(|offset| {
+                        Value::Duration(grafeo_common::types::Duration::from_seconds(i64::from(
+                            offset,
+                        )))
+                    }),
+                    Value::ZonedDatetime(zdt) => Some(Value::Duration(
+                        grafeo_common::types::Duration::from_seconds(i64::from(
+                            zdt.offset_seconds(),
+                        )),
+                    )),
+                    _ => None,
+                }
+            }
+
+            // TZ - extract timezone as string ("+05:00", "Z", "")
+            "TZ" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::Time(t) => {
+                        if let Some(offset) = t.offset_seconds() {
+                            Some(Value::String(format_tz_offset(offset).into()))
+                        } else {
+                            Some(Value::String(String::new().into()))
+                        }
+                    }
+                    Value::ZonedDatetime(zdt) => {
+                        Some(Value::String(format_tz_offset(zdt.offset_seconds()).into()))
+                    }
+                    _ => Some(Value::String(String::new().into())),
+                }
+            }
+
+            // ================================================================
+            // Hash Functions (SPARQL 1.1 Section 17.4.4)
+            // ================================================================
+            "MD5" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let s = value_to_string(&val);
+                let digest = md5::compute(s.as_bytes());
+                Some(Value::String(format!("{digest:x}").into()))
+            }
+
+            "SHA1" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let s = value_to_string(&val);
+                use sha1::Digest as _;
+                let hash = sha1::Sha1::digest(s.as_bytes());
+                Some(Value::String(format!("{hash:x}").into()))
+            }
+
+            "SHA256" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let s = value_to_string(&val);
+                use sha2::Digest as _;
+                let hash = sha2::Sha256::digest(s.as_bytes());
+                Some(Value::String(format!("{hash:x}").into()))
+            }
+
+            "SHA384" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let s = value_to_string(&val);
+                use sha2::Digest as _;
+                let hash = sha2::Sha384::digest(s.as_bytes());
+                Some(Value::String(format!("{hash:x}").into()))
+            }
+
+            "SHA512" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let s = value_to_string(&val);
+                use sha2::Digest as _;
+                let hash = sha2::Sha512::digest(s.as_bytes());
+                Some(Value::String(format!("{hash:x}").into()))
+            }
+
+            // ================================================================
+            // RDF Term Functions (SPARQL 1.1 Section 17.4.2)
+            // ================================================================
+
+            // LANG - language tag of a literal
+            "LANG" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                // In RDF execution, language-tagged literals are stored as strings
+                // with the language tag in metadata. For now, return empty string.
+                match val {
+                    Value::String(_) => Some(Value::String(String::new().into())),
+                    _ => Some(Value::String(String::new().into())),
+                }
+            }
+
+            // DATATYPE - datatype IRI of a literal
+            "DATATYPE" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                let dt = match &val {
+                    Value::String(_) => "http://www.w3.org/2001/XMLSchema#string",
+                    Value::Int64(_) => "http://www.w3.org/2001/XMLSchema#integer",
+                    Value::Float64(_) => "http://www.w3.org/2001/XMLSchema#double",
+                    Value::Bool(_) => "http://www.w3.org/2001/XMLSchema#boolean",
+                    Value::Date(_) => "http://www.w3.org/2001/XMLSchema#date",
+                    Value::Time(_) => "http://www.w3.org/2001/XMLSchema#time",
+                    Value::Timestamp(_) => "http://www.w3.org/2001/XMLSchema#dateTime",
+                    Value::Duration(_) => "http://www.w3.org/2001/XMLSchema#duration",
+                    _ => return None,
+                };
+                Some(Value::String(dt.to_string().into()))
+            }
+
+            // IRI / URI - construct an IRI
+            "IRI" | "URI" => {
+                let val = self.eval_expr(args.first()?, chunk, row)?;
+                match val {
+                    Value::String(s) => Some(Value::String(s)),
+                    v => Some(Value::String(value_to_string(&v).into())),
+                }
+            }
+
+            // BNODE - construct or retrieve a blank node
+            "BNODE" => {
+                if args.is_empty() {
+                    // Generate a unique blank node ID
+                    use std::sync::atomic::{AtomicU64, Ordering};
+                    static BNODE_COUNTER: AtomicU64 = AtomicU64::new(0);
+                    let id = BNODE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    Some(Value::String(format!("_:b{id}").into()))
+                } else {
+                    let val = self.eval_expr(&args[0], chunk, row)?;
+                    let label = value_to_string(&val);
+                    Some(Value::String(format!("_:b{label}").into()))
+                }
+            }
+
+            // STRDT - construct a typed literal
+            "STRDT" => {
+                if args.len() < 2 {
+                    return None;
+                }
+                // Return the string value (type information is metadata)
+                self.eval_expr(&args[0], chunk, row)
+            }
+
+            // STRLANG - construct a language-tagged literal
+            "STRLANG" => {
+                if args.len() < 2 {
+                    return None;
+                }
+                // Return the string value (language tag is metadata)
+                self.eval_expr(&args[0], chunk, row)
+            }
+
+            // UUID - generate a UUID IRI
+            "UUID" => {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static UUID_COUNTER: AtomicU64 = AtomicU64::new(0);
+                let id = UUID_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos());
+                Some(Value::String(format!("urn:uuid:{ts:032x}-{id:04x}").into()))
+            }
+
+            // STRUUID - generate a UUID string (no urn: prefix)
+            "STRUUID" => {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static STRUUID_COUNTER: AtomicU64 = AtomicU64::new(0);
+                let id = STRUUID_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos());
+                Some(Value::String(format!("{ts:032x}-{id:04x}").into()))
+            }
+
+            // sameTerm - strict RDF term equality
+            "SAMETERM" => {
+                if args.len() < 2 {
+                    return None;
+                }
+                let a = self.eval_expr(&args[0], chunk, row)?;
+                let b = self.eval_expr(&args[1], chunk, row)?;
+                Some(Value::Bool(a == b))
+            }
+
+            // ================================================================
+            // Numeric Functions (SPARQL 1.1 Section 17.4.4)
+            // ================================================================
+
+            // RAND - random double in [0, 1)
+            "RAND" => {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static RAND_STATE: AtomicU64 = AtomicU64::new(0);
+                let state = RAND_STATE.fetch_add(1, Ordering::Relaxed);
+                let mut hasher = DefaultHasher::new();
+                state.hash(&mut hasher);
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0u64, |d| d.as_nanos() as u64)
+                    .hash(&mut hasher);
+                let bits = hasher.finish();
+                let value = (bits >> 11) as f64 / (1u64 << 53) as f64;
+                Some(Value::Float64(value))
+            }
+
             // Unknown function
             _ => None,
         }
     }
+}
+
+/// Formats a timezone offset in seconds as "+HH:MM" or "Z".
+fn format_tz_offset(offset_secs: i32) -> String {
+    if offset_secs == 0 {
+        return "Z".to_string();
+    }
+    let sign = if offset_secs >= 0 { '+' } else { '-' };
+    let abs = offset_secs.unsigned_abs();
+    let hours = abs / 3600;
+    let minutes = (abs % 3600) / 60;
+    format!("{sign}{hours:02}:{minutes:02}")
 }
 
 impl Predicate for RdfExpressionPredicate {
@@ -3086,9 +3415,9 @@ mod tests {
         let store = Arc::new(RdfStore::new());
 
         store.insert(Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
+            Term::literal("Alix"),
         ));
 
         let planner = RdfPlanner::new(store);
@@ -3112,17 +3441,17 @@ mod tests {
         let store = Arc::new(RdfStore::new());
 
         store.insert(Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Alice"),
+            Term::literal("Alix"),
         ));
         store.insert(Triple::new(
-            Term::iri("http://example.org/bob"),
+            Term::iri("http://example.org/gus"),
             Term::iri("http://xmlns.com/foaf/0.1/name"),
-            Term::literal("Bob"),
+            Term::literal("Gus"),
         ));
         store.insert(Triple::new(
-            Term::iri("http://example.org/alice"),
+            Term::iri("http://example.org/alix"),
             Term::iri("http://xmlns.com/foaf/0.1/age"),
             Term::typed_literal("30", "http://www.w3.org/2001/XMLSchema#integer"),
         ));

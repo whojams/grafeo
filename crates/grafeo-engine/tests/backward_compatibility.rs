@@ -9,8 +9,8 @@ use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
 /// Pinned v1 snapshot containing:
-/// - 3 nodes: Alice (Person), Bob (Person+Employee), Acme Corp (Company)
-/// - 2 edges: Alice -[KNOWS {since: 2020}]-> Bob, Bob -[WORKS_AT {role: "Engineer"}]-> Acme Corp
+/// - 3 nodes: Alix (Person), Gus (Person+Employee), Acme Corp (Company)
+/// - 2 edges: Alix -[KNOWS {since: 2020}]-> Gus, Gus -[WORKS_AT {role: "Engineer"}]-> Acme Corp
 const V1_SNAPSHOT: &[u8] = include_bytes!("fixtures/snapshot_v1.bin");
 
 #[test]
@@ -34,8 +34,8 @@ fn read_v1_snapshot_preserves_labels() {
         .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
         .unwrap();
     assert_eq!(persons.rows.len(), 2);
-    assert_eq!(persons.rows[0][0], Value::String("Alice".into()));
-    assert_eq!(persons.rows[1][0], Value::String("Bob".into()));
+    assert_eq!(persons.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(persons.rows[1][0], Value::String("Gus".into()));
 
     let companies = session.execute("MATCH (c:Company) RETURN c.name").unwrap();
     assert_eq!(companies.rows.len(), 1);
@@ -48,7 +48,7 @@ fn read_v1_snapshot_preserves_node_properties() {
     let session = db.session();
 
     let result = session
-        .execute("MATCH (p:Person) WHERE p.name = 'Alice' RETURN p.age")
+        .execute("MATCH (p:Person) WHERE p.name = 'Alix' RETURN p.age")
         .unwrap();
     assert_eq!(result.rows.len(), 1);
     assert_eq!(result.rows[0][0], Value::Int64(30));
@@ -79,7 +79,7 @@ fn read_v1_snapshot_preserves_multi_labels() {
 
     let employees = session.execute("MATCH (e:Employee) RETURN e.name").unwrap();
     assert_eq!(employees.rows.len(), 1);
-    assert_eq!(employees.rows[0][0], Value::String("Bob".into()));
+    assert_eq!(employees.rows[0][0], Value::String("Gus".into()));
 }
 
 #[test]
@@ -87,14 +87,14 @@ fn read_v1_snapshot_preserves_edge_traversal() {
     let db = GrafeoDB::import_snapshot(V1_SNAPSHOT).unwrap();
     let session = db.session();
 
-    // Two-hop traversal: Alice -> Bob -> Acme Corp
+    // Two-hop traversal: Alix -> Gus -> Acme Corp
     let result = session
         .execute(
             "MATCH (a:Person)-[:KNOWS]->(b:Person)-[:WORKS_AT]->(c:Company) RETURN a.name, c.name",
         )
         .unwrap();
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     assert_eq!(result.rows[0][1], Value::String("Acme Corp".into()));
 }
 
@@ -112,7 +112,7 @@ fn v1_snapshot_round_trip_preserves_data() {
 
     let session = db2.session();
     let result = session
-        .execute("MATCH (p:Person) WHERE p.name = 'Alice' RETURN p.age")
+        .execute("MATCH (p:Person) WHERE p.name = 'Alix' RETURN p.age")
         .unwrap();
     assert_eq!(result.rows[0][0], Value::Int64(30));
 }

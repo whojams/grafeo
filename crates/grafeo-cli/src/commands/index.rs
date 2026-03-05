@@ -1,48 +1,80 @@
 //! Index management commands.
 
 use anyhow::Result;
-use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
 use crate::output::{self, Format};
 use crate::{IndexCommands, OutputFormat};
 
-/// Index statistics output.
+/// Index information for serialization.
 #[derive(Serialize)]
-struct IndexStatsOutput {
-    total_indexes: usize,
+struct IndexOutput {
+    name: String,
+    index_type: String,
+    target: String,
+    unique: bool,
 }
 
 /// Run index commands.
 pub fn run(cmd: IndexCommands, format: OutputFormat, quiet: bool) -> Result<()> {
     match cmd {
         IndexCommands::List { path } => {
-            let db = GrafeoDB::open(&path)?;
-            let stats = db.detailed_stats();
+            let db = super::open_existing(&path)?;
+            let indexes = db.list_indexes();
 
             let fmt: Format = format.into();
             match fmt {
                 Format::Json => {
                     if !quiet {
-                        let output = IndexStatsOutput {
-                            total_indexes: stats.index_count,
-                        };
+                        let output: Vec<IndexOutput> = indexes
+                            .iter()
+                            .map(|idx| IndexOutput {
+                                name: idx.name.clone(),
+                                index_type: idx.index_type.clone(),
+                                target: idx.target.clone(),
+                                unique: idx.unique,
+                            })
+                            .collect();
                         println!("{}", serde_json::to_string_pretty(&output)?);
                     }
                 }
                 Format::Table | Format::Csv => {
-                    if !quiet {
-                        println!("Total indexes: {}", stats.index_count);
-                        println!(
-                            "\nNote: detailed index listing is not yet available. \
-                             Use `grafeo index stats` for aggregate index statistics."
-                        );
+                    if indexes.is_empty() {
+                        if !quiet {
+                            println!("No indexes.");
+                        }
+                    } else {
+                        let headers = vec![
+                            "Name".to_string(),
+                            "Type".to_string(),
+                            "Target".to_string(),
+                            "Unique".to_string(),
+                        ];
+                        let rows: Vec<Vec<String>> = indexes
+                            .iter()
+                            .map(|idx| {
+                                vec![
+                                    idx.name.clone(),
+                                    idx.index_type.clone(),
+                                    idx.target.clone(),
+                                    if idx.unique { "yes" } else { "no" }.to_string(),
+                                ]
+                            })
+                            .collect();
+                        output::print_result_table(&headers, &rows, fmt, quiet);
+                        if !quiet {
+                            println!(
+                                "{} index{}",
+                                indexes.len(),
+                                if indexes.len() == 1 { "" } else { "es" }
+                            );
+                        }
                     }
                 }
             }
         }
         IndexCommands::Stats { path } => {
-            let db = GrafeoDB::open(&path)?;
+            let db = super::open_existing(&path)?;
             let stats = db.detailed_stats();
 
             let fmt: Format = format.into();

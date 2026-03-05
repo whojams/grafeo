@@ -125,6 +125,62 @@ impl<'a> RingIterator<'a> {
         }
     }
 
+    /// Returns the term ID at the current position for a given component.
+    ///
+    /// Used by the leapfrog algorithm to compare term IDs across iterators.
+    #[must_use]
+    pub fn current_term_id(&self, component: u8) -> Option<u32> {
+        if self.pos >= self.end {
+            return None;
+        }
+        let wt = match component {
+            0 => self.ring.subjects_wt(),
+            1 => self.ring.predicates_wt(),
+            _ => self.ring.objects_wt(),
+        };
+        Some(wt.access(self.pos) as u32)
+    }
+
+    /// Seeks to the next position where the given component's term ID >= target_id.
+    ///
+    /// Returns true if such a position was found.
+    pub fn seek_term(&mut self, component: u8, target_id: u32) -> bool {
+        while self.pos < self.end {
+            if let Some(current_id) = self.current_term_id(component)
+                && current_id >= target_id
+            {
+                return true;
+            }
+            // Advance to next position
+            if self.iterate_all {
+                self.pos += 1;
+            } else if self.bound_id.is_some() {
+                self.rank += 1;
+                if !self.has_next() {
+                    return false;
+                }
+                let wt = match self.component {
+                    0 => self.ring.subjects_wt(),
+                    1 => self.ring.predicates_wt(),
+                    _ => self.ring.objects_wt(),
+                };
+                if let Some(next_pos) = wt.select(
+                    self.bound_id
+                        .expect("bound_id confirmed Some by outer check")
+                        as u64,
+                    self.rank,
+                ) {
+                    self.pos = next_pos;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
     /// Seeks to the first position >= target.
     ///
     /// For leapfrog join, this is the key operation.
@@ -141,7 +197,12 @@ impl<'a> RingIterator<'a> {
                     _ => self.ring.objects_wt(),
                 };
 
-                if let Some(next_pos) = wt.select(self.bound_id.unwrap() as u64, self.rank) {
+                if let Some(next_pos) = wt.select(
+                    self.bound_id
+                        .expect("bound_id confirmed Some by outer check")
+                        as u64,
+                    self.rank,
+                ) {
                     if next_pos >= target {
                         self.pos = next_pos;
                         return;
@@ -158,7 +219,7 @@ impl<'a> RingIterator<'a> {
     }
 }
 
-impl<'a> Iterator for RingIterator<'a> {
+impl Iterator for RingIterator<'_> {
     type Item = Triple;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -192,14 +253,48 @@ impl<'a> Iterator for RingIterator<'a> {
     }
 }
 
+/// A triple pattern annotated with variable names for each position.
+///
+/// Variable positions use `Some("var_name")`, bound positions use `None`.
+#[derive(Debug, Clone)]
+pub struct AnnotatedPattern {
+    /// The underlying triple pattern (bound terms).
+    pub pattern: TriplePattern,
+    /// Variable name for subject position (None if bound).
+    pub subject_var: Option<String>,
+    /// Variable name for predicate position (None if bound).
+    pub predicate_var: Option<String>,
+    /// Variable name for object position (None if bound).
+    pub object_var: Option<String>,
+}
+
+impl AnnotatedPattern {
+    /// Returns the variable name at the given component (0=subject, 1=predicate, 2=object).
+    fn var_at(&self, component: u8) -> Option<&str> {
+        match component {
+            0 => self.subject_var.as_deref(),
+            1 => self.predicate_var.as_deref(),
+            2 => self.object_var.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 /// Leapfrog join over multiple Ring iterators.
 ///
 /// Implements the leapfrog triejoin algorithm for worst-case optimal joins
-/// over RDF triple patterns.
+/// over RDF triple patterns. Supports variable binding propagation across
+/// patterns for proper multi-pattern joins.
 pub struct LeapfrogRing<'a> {
     ring: &'a TripleRing,
     /// Patterns to join.
     patterns: Vec<TriplePattern>,
+    /// Annotated patterns with variable names (used by `with_variables`).
+    annotated: Option<Vec<AnnotatedPattern>>,
+    /// Pre-computed results (eagerly materialized on first next() call).
+    results: Vec<Vec<Triple>>,
+    /// Index into results for iteration.
+    result_idx: usize,
     /// Whether the join is exhausted.
     exhausted: bool,
 }
@@ -211,6 +306,23 @@ impl<'a> LeapfrogRing<'a> {
         Self {
             ring,
             patterns,
+            annotated: None,
+            results: Vec::new(),
+            result_idx: 0,
+            exhausted,
+        }
+    }
+
+    /// Creates a leapfrog join with variable annotations for proper binding propagation.
+    pub fn with_variables(ring: &'a TripleRing, annotated: Vec<AnnotatedPattern>) -> Self {
+        let exhausted = annotated.is_empty() || ring.is_empty();
+        let patterns = annotated.iter().map(|a| a.pattern.clone()).collect();
+        Self {
+            ring,
+            patterns,
+            annotated: Some(annotated),
+            results: Vec::new(),
+            result_idx: 0,
             exhausted,
         }
     }
@@ -226,9 +338,157 @@ impl<'a> LeapfrogRing<'a> {
     pub fn is_exhausted(&self) -> bool {
         self.exhausted
     }
+
+    /// Materializes all results using variable binding propagation.
+    ///
+    /// For each triple matching the first pattern, binds its variables and
+    /// filters subsequent patterns to only match consistent bindings.
+    fn materialize_results(&mut self) {
+        use std::collections::HashMap;
+
+        if self.patterns.is_empty() {
+            return;
+        }
+
+        let annotated = match &self.annotated {
+            Some(a) => a.clone(),
+            None => {
+                // No variable annotations: fall back to simple pattern matching
+                self.materialize_simple();
+                return;
+            }
+        };
+
+        // Find all triples matching the first pattern
+        let first_triples: Vec<Triple> = self.ring.find(&annotated[0].pattern).collect();
+
+        for first_triple in &first_triples {
+            // Build initial bindings from first triple
+            let mut bindings: HashMap<String, Term> = HashMap::new();
+            Self::bind_triple(&annotated[0], first_triple, &mut bindings);
+
+            let mut matched = vec![first_triple.clone()];
+            let mut all_match = true;
+
+            // For each subsequent pattern, apply bindings and find matches
+            for ann_pattern in &annotated[1..] {
+                let refined = Self::refine_pattern(ann_pattern, &bindings);
+                let mut found_match = false;
+
+                for triple in self.ring.find(&refined) {
+                    // Verify that all shared variables are consistent
+                    if Self::is_consistent(ann_pattern, &triple, &bindings) {
+                        // Add new bindings from this triple
+                        Self::bind_triple(ann_pattern, &triple, &mut bindings);
+                        matched.push(triple);
+                        found_match = true;
+                        break;
+                    }
+                }
+
+                if !found_match {
+                    all_match = false;
+                    break;
+                }
+            }
+
+            if all_match {
+                self.results.push(matched);
+            }
+        }
+    }
+
+    /// Simple materialization without variable annotations (backward compatible).
+    fn materialize_simple(&mut self) {
+        for triple in self.ring.find(&self.patterns[0]) {
+            let mut matched = vec![triple.clone()];
+            let mut all_match = true;
+
+            for pattern in &self.patterns[1..] {
+                if let Some(t) = self.ring.find(pattern).next() {
+                    matched.push(t);
+                } else {
+                    all_match = false;
+                    break;
+                }
+            }
+
+            if all_match {
+                self.results.push(matched);
+            }
+        }
+    }
+
+    /// Binds variable positions of a triple into the binding map.
+    fn bind_triple(
+        ann: &AnnotatedPattern,
+        triple: &Triple,
+        bindings: &mut std::collections::HashMap<String, Term>,
+    ) {
+        if let Some(ref var) = ann.subject_var {
+            bindings
+                .entry(var.clone())
+                .or_insert_with(|| triple.subject().clone());
+        }
+        if let Some(ref var) = ann.predicate_var {
+            bindings
+                .entry(var.clone())
+                .or_insert_with(|| triple.predicate().clone());
+        }
+        if let Some(ref var) = ann.object_var {
+            bindings
+                .entry(var.clone())
+                .or_insert_with(|| triple.object().clone());
+        }
+    }
+
+    /// Refines a pattern by substituting known variable bindings as bound terms.
+    fn refine_pattern(
+        ann: &AnnotatedPattern,
+        bindings: &std::collections::HashMap<String, Term>,
+    ) -> TriplePattern {
+        let mut refined = ann.pattern.clone();
+        if let Some(ref var) = ann.subject_var
+            && let Some(term) = bindings.get(var)
+        {
+            refined.subject = Some(term.clone());
+        }
+        if let Some(ref var) = ann.predicate_var
+            && let Some(term) = bindings.get(var)
+        {
+            refined.predicate = Some(term.clone());
+        }
+        if let Some(ref var) = ann.object_var
+            && let Some(term) = bindings.get(var)
+        {
+            refined.object = Some(term.clone());
+        }
+        refined
+    }
+
+    /// Checks if a triple is consistent with existing variable bindings.
+    fn is_consistent(
+        ann: &AnnotatedPattern,
+        triple: &Triple,
+        bindings: &std::collections::HashMap<String, Term>,
+    ) -> bool {
+        for (component, term) in [
+            (0u8, triple.subject()),
+            (1, triple.predicate()),
+            (2, triple.object()),
+        ] {
+            if let Some(var_name) = ann.var_at(component)
+                && let Some(bound_term) = bindings.get(var_name)
+                && bound_term != term
+            {
+                return false;
+            }
+        }
+        true
+    }
 }
 
-impl<'a> Iterator for LeapfrogRing<'a> {
+impl Iterator for LeapfrogRing<'_> {
     type Item = Vec<Triple>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -236,47 +496,18 @@ impl<'a> Iterator for LeapfrogRing<'a> {
             return None;
         }
 
-        // For now, simple nested loop join
-        // TODO: Implement proper leapfrog algorithm with seek operations
-
-        // Simple implementation: find all triples matching first pattern,
-        // then filter by remaining patterns
-        if self.patterns.is_empty() {
-            self.exhausted = true;
-            return None;
+        // Materialize all results on first call
+        if self.result_idx == 0 && self.results.is_empty() {
+            self.materialize_results();
         }
 
-        // Use iteration over first pattern and filter by rest
-        self.exhausted = true;
-
-        // Collect all matching tuples
-        let mut results = Vec::new();
-
-        for triple in self.ring.find(&self.patterns[0]) {
-            let mut matches_all = true;
-            let mut matching_triples = vec![triple.clone()];
-
-            // For remaining patterns, find matches that are consistent
-            // (This is a simplified implementation)
-            for pattern in &self.patterns[1..] {
-                if let Some(t) = self.ring.find(pattern).next() {
-                    // In a full implementation, we'd check variable bindings
-                    matching_triples.push(t);
-                } else {
-                    matches_all = false;
-                    break;
-                }
-            }
-
-            if matches_all {
-                results.push(matching_triples);
-            }
-        }
-
-        if results.is_empty() {
-            None
+        if self.result_idx < self.results.len() {
+            let result = self.results[self.result_idx].clone();
+            self.result_idx += 1;
+            Some(result)
         } else {
-            Some(results.remove(0))
+            self.exhausted = true;
+            None
         }
     }
 }
@@ -302,13 +533,13 @@ mod tests {
     #[test]
     fn test_ring_iterator_with_subject() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("alice", "knows", "carol"),
-            make_triple("bob", "knows", "carol"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("alix", "knows", "carol"),
+            make_triple("gus", "knows", "carol"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let iter = RingIterator::with_subject(&ring, &Term::iri("alice"));
+        let iter = RingIterator::with_subject(&ring, &Term::iri("alix"));
         let results: Vec<Triple> = iter.collect();
         assert_eq!(results.len(), 2);
     }
@@ -318,7 +549,7 @@ mod tests {
         let triples = vec![
             make_triple("s1", "type", "Person"),
             make_triple("s2", "type", "Place"),
-            make_triple("s1", "name", "Alice"),
+            make_triple("s1", "name", "Alix"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -347,37 +578,37 @@ mod tests {
     #[test]
     fn test_leapfrog_single_pattern() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("bob", "knows", "carol"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("gus", "knows", "carol"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let pattern = TriplePattern::with_subject(Term::iri("alice"));
+        let pattern = TriplePattern::with_subject(Term::iri("alix"));
         let mut lf = LeapfrogRing::new(&ring, vec![pattern]);
 
         let result = lf.next();
         assert!(result.is_some());
         let triples = result.unwrap();
         assert_eq!(triples.len(), 1);
-        assert_eq!(triples[0].subject(), &Term::iri("alice"));
+        assert_eq!(triples[0].subject(), &Term::iri("alix"));
     }
 
     #[test]
     fn test_ring_iterator_with_object() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("carol", "knows", "bob"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("carol", "knows", "gus"),
             make_triple("dave", "likes", "eve"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let iter = RingIterator::with_object(&ring, &Term::iri("bob"));
+        let iter = RingIterator::with_object(&ring, &Term::iri("gus"));
         let results: Vec<Triple> = iter.collect();
         assert_eq!(results.len(), 2);
 
-        // Verify all results have bob as object
+        // Verify all results have gus as object
         for triple in &results {
-            assert_eq!(triple.object(), &Term::iri("bob"));
+            assert_eq!(triple.object(), &Term::iri("gus"));
         }
     }
 
@@ -449,14 +680,14 @@ mod tests {
     #[test]
     fn test_ring_iterator_seek_bound() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
+            make_triple("alix", "knows", "gus"),
             make_triple("carol", "knows", "dave"),
-            make_triple("alice", "likes", "eve"),
-            make_triple("frank", "knows", "alice"),
+            make_triple("alix", "likes", "eve"),
+            make_triple("frank", "knows", "alix"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let mut iter = RingIterator::with_subject(&ring, &Term::iri("alice"));
+        let mut iter = RingIterator::with_subject(&ring, &Term::iri("alix"));
 
         // Verify initial state
         assert!(iter.has_next());
@@ -466,9 +697,9 @@ mod tests {
 
         // The iterator should still be usable
         let results: Vec<Triple> = iter.collect();
-        // All remaining results should have alice as subject
+        // All remaining results should have alix as subject
         for triple in &results {
-            assert_eq!(triple.subject(), &Term::iri("alice"));
+            assert_eq!(triple.subject(), &Term::iri("alix"));
         }
     }
 
@@ -495,12 +726,12 @@ mod tests {
     #[test]
     fn test_leapfrog_patterns_accessor() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("bob", "knows", "carol"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("gus", "knows", "carol"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let pattern1 = TriplePattern::with_subject(Term::iri("alice"));
+        let pattern1 = TriplePattern::with_subject(Term::iri("alix"));
         let pattern2 = TriplePattern::with_predicate(Term::iri("knows"));
         let lf = LeapfrogRing::new(&ring, vec![pattern1.clone(), pattern2.clone()]);
 
@@ -511,14 +742,14 @@ mod tests {
     #[test]
     fn test_leapfrog_multi_pattern() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("bob", "knows", "carol"),
-            make_triple("carol", "likes", "alice"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("gus", "knows", "carol"),
+            make_triple("carol", "likes", "alix"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
         // Create patterns that should both match
-        let pattern1 = TriplePattern::with_subject(Term::iri("alice"));
+        let pattern1 = TriplePattern::with_subject(Term::iri("alix"));
         let pattern2 = TriplePattern::with_predicate(Term::iri("knows"));
         let mut lf = LeapfrogRing::new(&ring, vec![pattern1, pattern2]);
 
@@ -532,8 +763,8 @@ mod tests {
     #[test]
     fn test_leapfrog_no_match() {
         let triples = vec![
-            make_triple("alice", "knows", "bob"),
-            make_triple("bob", "knows", "carol"),
+            make_triple("alix", "knows", "gus"),
+            make_triple("gus", "knows", "carol"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -548,25 +779,26 @@ mod tests {
 
     #[test]
     fn test_leapfrog_exhausted_after_iteration() {
-        let triples = vec![make_triple("alice", "knows", "bob")];
+        let triples = vec![make_triple("alix", "knows", "gus")];
         let ring = TripleRing::from_triples(triples.into_iter());
 
-        let pattern = TriplePattern::with_subject(Term::iri("alice"));
+        let pattern = TriplePattern::with_subject(Term::iri("alix"));
         let mut lf = LeapfrogRing::new(&ring, vec![pattern]);
 
         assert!(!lf.is_exhausted());
-        let _result = lf.next();
-        assert!(lf.is_exhausted());
+        let result = lf.next();
+        assert!(result.is_some());
 
-        // Second call should return None
+        // After consuming all results, next returns None and marks exhausted
         let second_result = lf.next();
         assert!(second_result.is_none());
+        assert!(lf.is_exhausted());
     }
 
     #[test]
     fn test_leapfrog_empty_ring_with_patterns() {
         let ring = TripleRing::from_triples(std::iter::empty());
-        let pattern = TriplePattern::with_subject(Term::iri("alice"));
+        let pattern = TriplePattern::with_subject(Term::iri("alix"));
         let lf = LeapfrogRing::new(&ring, vec![pattern]);
 
         // Should be exhausted immediately when ring is empty
@@ -611,5 +843,163 @@ mod tests {
 
         let results: Vec<Triple> = iter.collect();
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_leapfrog_shared_subject() {
+        // (?x knows bob) AND (?x knows carol) -> find subjects knowing both
+        let triples = vec![
+            make_triple("alix", "knows", "bob"),
+            make_triple("alix", "knows", "carol"),
+            make_triple("dave", "knows", "bob"),
+            make_triple("eve", "knows", "carol"),
+        ];
+        let ring = TripleRing::from_triples(triples.into_iter());
+
+        let annotated = vec![
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: Some(Term::iri("bob")),
+                },
+                subject_var: Some("x".to_string()),
+                predicate_var: None,
+                object_var: None,
+            },
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: Some(Term::iri("carol")),
+                },
+                subject_var: Some("x".to_string()),
+                predicate_var: None,
+                object_var: None,
+            },
+        ];
+
+        let lf = LeapfrogRing::with_variables(&ring, annotated);
+        let results: Vec<Vec<Triple>> = lf.collect();
+
+        // Only alix knows both bob and carol
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0][0].subject(), &Term::iri("alix"));
+        assert_eq!(results[0][1].subject(), &Term::iri("alix"));
+    }
+
+    #[test]
+    fn test_leapfrog_triangle() {
+        // (?x knows ?y) AND (?y knows ?z) AND (?z knows ?x) -> find triangles
+        let triples = vec![
+            make_triple("alix", "knows", "bob"),
+            make_triple("bob", "knows", "carol"),
+            make_triple("carol", "knows", "alix"),
+            make_triple("dave", "knows", "eve"),
+        ];
+        let ring = TripleRing::from_triples(triples.into_iter());
+
+        let annotated = vec![
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: None,
+                },
+                subject_var: Some("x".to_string()),
+                predicate_var: None,
+                object_var: Some("y".to_string()),
+            },
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: None,
+                },
+                subject_var: Some("y".to_string()),
+                predicate_var: None,
+                object_var: Some("z".to_string()),
+            },
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: None,
+                },
+                subject_var: Some("z".to_string()),
+                predicate_var: None,
+                object_var: Some("x".to_string()),
+            },
+        ];
+
+        let lf = LeapfrogRing::with_variables(&ring, annotated);
+        let results: Vec<Vec<Triple>> = lf.collect();
+
+        // Should find the triangle in 3 rotations: alix->bob->carol->alix
+        assert_eq!(results.len(), 3, "Expected three rotations of the triangle");
+        assert_eq!(results[0].len(), 3);
+    }
+
+    #[test]
+    fn test_leapfrog_empty_intersection() {
+        // (?x knows bob) AND (?x knows dave) -> no one knows both
+        let triples = vec![
+            make_triple("alix", "knows", "bob"),
+            make_triple("carol", "knows", "dave"),
+        ];
+        let ring = TripleRing::from_triples(triples.into_iter());
+
+        let annotated = vec![
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: Some(Term::iri("bob")),
+                },
+                subject_var: Some("x".to_string()),
+                predicate_var: None,
+                object_var: None,
+            },
+            AnnotatedPattern {
+                pattern: TriplePattern {
+                    subject: None,
+                    predicate: Some(Term::iri("knows")),
+                    object: Some(Term::iri("dave")),
+                },
+                subject_var: Some("x".to_string()),
+                predicate_var: None,
+                object_var: None,
+            },
+        ];
+
+        let lf = LeapfrogRing::with_variables(&ring, annotated);
+        let results: Vec<Vec<Triple>> = lf.collect();
+
+        assert!(results.is_empty(), "Expected no matches");
+    }
+
+    #[test]
+    fn test_ring_iterator_current_term_id() {
+        let triples = vec![
+            make_triple("alix", "knows", "bob"),
+            make_triple("carol", "likes", "dave"),
+        ];
+        let ring = TripleRing::from_triples(triples.into_iter());
+
+        let iter = RingIterator::all(&ring);
+        // Should return Some for valid positions
+        let id = iter.current_term_id(0);
+        assert!(id.is_some());
+    }
+
+    #[test]
+    fn test_ring_iterator_current_term_id_past_end() {
+        let triples = vec![make_triple("s", "p", "o")];
+        let ring = TripleRing::from_triples(triples.into_iter());
+
+        let mut iter = RingIterator::all(&ring);
+        iter.next(); // consume the only triple
+        let id = iter.current_term_id(0);
+        assert!(id.is_none());
     }
 }

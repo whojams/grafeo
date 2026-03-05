@@ -106,6 +106,16 @@ impl AsyncQueryResultIter {
 /// Create one with `GrafeoDB()` for in-memory storage (fast, temporary) or
 /// `GrafeoDB("path/to/db")` for persistent storage (survives restarts).
 /// Then use [`execute()`](Self::execute) to run GQL queries.
+///
+/// Unlike the Rust API (which uses `db.session()` for query execution),
+/// Python calls `db.execute()` directly. For transactions, use
+/// `db.begin_transaction()` as a context manager:
+///
+/// ```python
+/// with db.begin_transaction() as tx:
+///     tx.execute("INSERT (:Person {name: 'Alix'})")
+///     tx.commit()
+/// ```
 #[pyclass(name = "GrafeoDB")]
 pub struct PyGrafeoDB {
     inner: Arc<RwLock<GrafeoDB>>,
@@ -200,7 +210,7 @@ impl PyGrafeoDB {
     /// Runs a GQL query and returns the results.
     ///
     /// Use params for parameterized queries to avoid injection:
-    ///     result = db.execute("MATCH (p:Person {name: $name}) RETURN p", {"name": "Alice"})
+    ///     result = db.execute("MATCH (p:Person {name: $name}) RETURN p", {"name": "Alix"})
     ///
     /// Query performance metrics are available via `result.execution_time_ms`
     /// and `result.rows_scanned` properties.
@@ -595,7 +605,7 @@ impl PyGrafeoDB {
     ///
     /// Example:
     /// ```python
-    /// db.set_node_property(node_id, "name", "Alice")
+    /// db.set_node_property(node_id, "name", "Alix")
     /// db.set_node_property(node_id, "age", 30)
     /// ```
     fn set_node_property(
@@ -617,8 +627,8 @@ impl PyGrafeoDB {
     ///
     /// Example:
     /// ```python
-    /// alice = db.create_node(["Person"], {"name": "Alice"})
-    /// db.add_node_label(alice.id, "Employee")  # Now has Person and Employee
+    /// alix = db.create_node(["Person"], {"name": "Alix"})
+    /// db.add_node_label(alix.id, "Employee")  # Now has Person and Employee
     /// ```
     fn add_node_label(&self, node_id: u64, label: &str) -> PyResult<bool> {
         let db = self.inner.read();
@@ -632,7 +642,7 @@ impl PyGrafeoDB {
     ///
     /// Example:
     /// ```python
-    /// db.remove_node_label(alice.id, "Contractor")  # Remove Contractor label
+    /// db.remove_node_label(alix.id, "Contractor")  # Remove Contractor label
     /// ```
     fn remove_node_label(&self, node_id: u64, label: &str) -> PyResult<bool> {
         let db = self.inner.read();
@@ -645,9 +655,9 @@ impl PyGrafeoDB {
     ///
     /// Example:
     /// ```python
-    /// labels = db.get_node_labels(alice.id)
+    /// labels = db.get_node_labels(alix.id)
     /// if labels:
-    ///     print(f"Alice has labels: {labels}")
+    ///     print(f"Alix has labels: {labels}")
     /// ```
     fn get_node_labels(&self, node_id: u64) -> PyResult<Option<Vec<String>>> {
         let db = self.inner.read();
@@ -717,7 +727,7 @@ impl PyGrafeoDB {
     /// db.create_property_index("email")
     ///
     /// # Now lookups by email are O(1) instead of O(n)
-    /// nodes = db.find_nodes_by_property("email", "alice@example.com")
+    /// nodes = db.find_nodes_by_property("email", "alix@example.com")
     /// ```
     fn create_property_index(&self, property: &str) -> PyResult<()> {
         let db = self.inner.read();
@@ -1239,7 +1249,7 @@ impl PyGrafeoDB {
     /// db.create_property_index("email")
     ///
     /// # Find nodes by property value
-    /// alice_ids = db.find_nodes_by_property("email", "alice@example.com")
+    /// alice_ids = db.find_nodes_by_property("email", "alix@example.com")
     /// for node_id in alice_ids:
     ///     node = db.get_node(node_id)
     ///     print(f"Found: {node}")
@@ -1264,8 +1274,8 @@ impl PyGrafeoDB {
     /// Example:
     /// ```python
     /// with db.begin_transaction() as tx:
-    ///     tx.execute("CREATE (n:Person {name: 'Alice'})")
-    ///     tx.execute("CREATE (n:Person {name: 'Bob'})")
+    ///     tx.execute("CREATE (n:Person {name: 'Alix'})")
+    ///     tx.execute("CREATE (n:Person {name: 'Gus'})")
     ///     tx.commit()  # Both nodes created atomically
     ///
     /// # With explicit isolation level
@@ -1471,7 +1481,7 @@ impl PyGrafeoDB {
     ///
     /// Example:
     ///     db = GrafeoDB()  # in-memory
-    ///     db.create_node(["Person"], {"name": "Alice"})
+    ///     db.create_node(["Person"], {"name": "Alix"})
     ///     db.save("./mydb")  # save to file
     fn save(&self, path: String) -> PyResult<()> {
         let db = self.inner.read();
@@ -1710,8 +1720,8 @@ impl PyGrafeoDB {
 ///
 /// ```python
 /// with db.begin_transaction() as tx:
-///     tx.execute("INSERT (:Person {name: 'Alice'})")
-///     tx.execute("INSERT (:Person {name: 'Bob'})")
+///     tx.execute("INSERT (:Person {name: 'Alix'})")
+///     tx.execute("INSERT (:Person {name: 'Gus'})")
 ///     tx.commit()  # Both or neither
 /// ```
 ///
@@ -2021,7 +2031,11 @@ fn change_event_to_dict(
     // entity_id and entity_type
     map.insert(
         "entity_id".to_string(),
-        event.entity_id.as_u64().into_py_any(py).unwrap(),
+        event
+            .entity_id
+            .as_u64()
+            .into_py_any(py)
+            .expect("u64 to Python conversion"),
     );
     let entity_type = if event.entity_id.is_node() {
         "node"
@@ -2030,7 +2044,9 @@ fn change_event_to_dict(
     };
     map.insert(
         "entity_type".to_string(),
-        entity_type.into_py_any(py).unwrap(),
+        entity_type
+            .into_py_any(py)
+            .expect("str to Python conversion"),
     );
 
     // kind
@@ -2039,13 +2055,26 @@ fn change_event_to_dict(
         grafeo_engine::cdc::ChangeKind::Update => "update",
         grafeo_engine::cdc::ChangeKind::Delete => "delete",
     };
-    map.insert("kind".to_string(), kind.into_py_any(py).unwrap());
+    map.insert(
+        "kind".to_string(),
+        kind.into_py_any(py).expect("str to Python conversion"),
+    );
 
     // epoch and timestamp
-    map.insert("epoch".to_string(), event.epoch.0.into_py_any(py).unwrap());
+    map.insert(
+        "epoch".to_string(),
+        event
+            .epoch
+            .0
+            .into_py_any(py)
+            .expect("u64 to Python conversion"),
+    );
     map.insert(
         "timestamp".to_string(),
-        event.timestamp.into_py_any(py).unwrap(),
+        event
+            .timestamp
+            .into_py_any(py)
+            .expect("u64 to Python conversion"),
     );
 
     // before (Option<HashMap<String, Value>> -> dict or None)
@@ -2055,7 +2084,7 @@ fn change_event_to_dict(
                 .iter()
                 .map(|(k, v)| (k.clone(), PyValue::to_py(v, py)))
                 .collect();
-            d.into_py_any(py).unwrap()
+            d.into_py_any(py).expect("dict to Python conversion")
         }
         None => py.None(),
     };
@@ -2068,7 +2097,7 @@ fn change_event_to_dict(
                 .iter()
                 .map(|(k, v)| (k.clone(), PyValue::to_py(v, py)))
                 .collect();
-            d.into_py_any(py).unwrap()
+            d.into_py_any(py).expect("dict to Python conversion")
         }
         None => py.None(),
     };

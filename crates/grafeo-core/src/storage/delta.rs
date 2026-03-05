@@ -220,8 +220,16 @@ impl DeltaEncoding {
             ));
         }
 
-        let base = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-        let count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+        let base = u64::from_le_bytes(
+            bytes[0..8]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        );
+        let count = u32::from_le_bytes(
+            bytes[8..12]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        ) as usize;
 
         let expected_len = 12 + (count.saturating_sub(1)) * 8;
         if bytes.len() < expected_len {
@@ -234,7 +242,11 @@ impl DeltaEncoding {
         let mut deltas = Vec::with_capacity(count.saturating_sub(1));
         let mut offset = 12;
         for _ in 1..count {
-            let delta = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            let delta = u64::from_le_bytes(
+                bytes[offset..offset + 8]
+                    .try_into()
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            );
             deltas.push(delta);
             offset += 8;
         }

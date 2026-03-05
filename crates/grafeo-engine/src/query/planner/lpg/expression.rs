@@ -237,15 +237,15 @@ impl super::Planner {
                     expression: Box::new(body),
                 })
             }
-            LogicalExpression::PatternComprehension { projection, .. } => {
-                // For now, pattern comprehension is translated as a collect of the
-                // projection expression. Full correlated execution requires the Apply
-                // operator wiring at the operator level.
-                let proj = self.convert_expression(projection)?;
-                Ok(FilterExpression::FunctionCall {
-                    name: "collect".to_string(),
-                    args: vec![proj],
-                })
+            LogicalExpression::PatternComprehension { .. } => {
+                // Pattern comprehensions should be rewritten by the Cypher translator
+                // into Apply + Aggregate(Collect) + ParameterScan before reaching the
+                // planner. If we get here, the rewrite was skipped.
+                Err(Error::Internal(
+                    "PatternComprehension reached the planner without being rewritten; \
+                     this is a bug in the Cypher translator"
+                        .to_string(),
+                ))
             }
         }
     }

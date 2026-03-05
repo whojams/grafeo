@@ -19,6 +19,8 @@ mod index;
 mod persistence;
 mod query;
 mod search;
+#[cfg(feature = "wal")]
+pub(crate) mod wal_store;
 
 #[cfg(feature = "wal")]
 use std::path::Path;
@@ -114,7 +116,7 @@ impl GrafeoDB {
     ///
     /// let db = GrafeoDB::new_in_memory();
     /// let session = db.session();
-    /// session.execute("INSERT (:Person {name: 'Alice'})")?;
+    /// session.execute("INSERT (:Person {name: 'Alix'})")?;
     /// # Ok::<(), grafeo_common::utils::error::Error>(())
     /// ```
     #[must_use]
@@ -174,7 +176,7 @@ impl GrafeoDB {
             .validate()
             .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
 
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new()?);
         #[cfg(feature = "rdf")]
         let rdf_store = Arc::new(RdfStore::new());
         let tx_manager = Arc::new(TransactionManager::new());
@@ -292,7 +294,7 @@ impl GrafeoDB {
             .validate()
             .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
 
-        let dummy_store = Arc::new(LpgStore::new());
+        let dummy_store = Arc::new(LpgStore::new()?);
         let tx_manager = Arc::new(TransactionManager::new());
 
         let buffer_config = BufferManagerConfig {
@@ -365,6 +367,12 @@ impl GrafeoDB {
                 }
                 WalRecord::RemoveNodeLabel { id, label } => {
                     store.remove_label(*id, label);
+                }
+                WalRecord::RemoveNodeProperty { id, key } => {
+                    store.remove_node_property(*id, key);
+                }
+                WalRecord::RemoveEdgeProperty { id, key } => {
+                    store.remove_edge_property(*id, key);
                 }
 
                 // Schema DDL replay
@@ -677,8 +685,12 @@ impl GrafeoDB {
     // === Named Graph Management ===
 
     /// Creates a named graph. Returns `true` if created, `false` if it already exists.
-    pub fn create_graph(&self, name: &str) -> bool {
-        self.store.create_graph(name)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if arena allocation fails.
+    pub fn create_graph(&self, name: &str) -> Result<bool> {
+        Ok(self.store.create_graph(name)?)
     }
 
     /// Drops a named graph. Returns `true` if dropped, `false` if it did not exist.
@@ -1081,13 +1093,13 @@ mod tests {
         {
             let db = GrafeoDB::open(&db_path).unwrap();
 
-            let alice = db.create_node(&["Person"]);
-            db.set_node_property(alice, "name", Value::from("Alice"));
+            let alix = db.create_node(&["Person"]);
+            db.set_node_property(alix, "name", Value::from("Alix"));
 
-            let bob = db.create_node(&["Person"]);
-            db.set_node_property(bob, "name", Value::from("Bob"));
+            let gus = db.create_node(&["Person"]);
+            db.set_node_property(gus, "name", Value::from("Gus"));
 
-            let _edge = db.create_edge(alice, bob, "KNOWS");
+            let _edge = db.create_edge(alix, gus, "KNOWS");
 
             // Explicitly close to flush WAL
             db.close().unwrap();
@@ -1144,8 +1156,8 @@ mod tests {
         // Session 1: Create initial data
         {
             let db = GrafeoDB::open(&db_path).unwrap();
-            let alice = db.create_node(&["Person"]);
-            db.set_node_property(alice, "name", Value::from("Alice"));
+            let alix = db.create_node(&["Person"]);
+            db.set_node_property(alix, "name", Value::from("Alix"));
             db.close().unwrap();
         }
 
@@ -1153,8 +1165,8 @@ mod tests {
         {
             let db = GrafeoDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 1); // Previous data recovered
-            let bob = db.create_node(&["Person"]);
-            db.set_node_property(bob, "name", Value::from("Bob"));
+            let gus = db.create_node(&["Person"]);
+            db.set_node_property(gus, "name", Value::from("Gus"));
             db.close().unwrap();
         }
 
@@ -1290,8 +1302,8 @@ mod tests {
             // Create
             let id = db.create_node(&["Person"]);
             // Update
-            db.set_node_property(id, "name", "Alice".into());
-            db.set_node_property(id, "name", "Bob".into());
+            db.set_node_property(id, "name", "Alix".into());
+            db.set_node_property(id, "name", "Gus".into());
             // Delete
             db.delete_node(id);
 
@@ -1301,7 +1313,7 @@ mod tests {
             assert_eq!(history[1].kind, crate::cdc::ChangeKind::Update);
             assert!(history[1].before.is_none()); // first set_node_property has no prior value
             assert_eq!(history[2].kind, crate::cdc::ChangeKind::Update);
-            assert!(history[2].before.is_some()); // second update has prior "Alice"
+            assert!(history[2].before.is_some()); // second update has prior "Alix"
             assert_eq!(history[3].kind, crate::cdc::ChangeKind::Delete);
         }
 
@@ -1309,9 +1321,9 @@ mod tests {
         fn test_edge_lifecycle_history() {
             let db = GrafeoDB::new_in_memory();
 
-            let alice = db.create_node(&["Person"]);
-            let bob = db.create_node(&["Person"]);
-            let edge = db.create_edge(alice, bob, "KNOWS");
+            let alix = db.create_node(&["Person"]);
+            let gus = db.create_node(&["Person"]);
+            let edge = db.create_edge(alix, gus, "KNOWS");
             db.set_edge_property(edge, "since", 2024i64.into());
             db.delete_edge(edge);
 
@@ -1329,7 +1341,7 @@ mod tests {
             let id = db.create_node_with_props(
                 &["Person"],
                 vec![
-                    ("name", grafeo_common::types::Value::from("Alice")),
+                    ("name", grafeo_common::types::Value::from("Alix")),
                     ("age", grafeo_common::types::Value::from(30i64)),
                 ],
             );
@@ -1365,9 +1377,9 @@ mod tests {
     fn test_with_store_basic() {
         use grafeo_core::graph::lpg::LpgStore;
 
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let n1 = store.create_node(&["Person"]);
-        store.set_node_property(n1, "name", "Alice".into());
+        store.set_node_property(n1, "name", "Alix".into());
 
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = GrafeoDB::with_store(graph_store, Config::in_memory()).unwrap();
@@ -1380,7 +1392,7 @@ mod tests {
     fn test_with_store_session() {
         use grafeo_core::graph::lpg::LpgStore;
 
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = GrafeoDB::with_store(graph_store, Config::in_memory()).unwrap();
 
@@ -1393,12 +1405,12 @@ mod tests {
     fn test_with_store_mutations() {
         use grafeo_core::graph::lpg::LpgStore;
 
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = GrafeoDB::with_store(graph_store, Config::in_memory()).unwrap();
 
         let session = db.session();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();
         assert_eq!(result.rows.len(), 1);

@@ -166,13 +166,13 @@ mod tests {
     #[test]
     fn insert_and_get() {
         let mut map = PropertyMap::new();
-        map.insert(PropertyKey::new("name"), Value::from("Alice"));
+        map.insert(PropertyKey::new("name"), Value::from("Alix"));
         map.insert(PropertyKey::new("age"), Value::from(30i64));
 
         assert_eq!(map.len(), 2);
         assert_eq!(
             map.get(&PropertyKey::new("name")).and_then(Value::as_str),
-            Some("Alice")
+            Some("Alix")
         );
         assert_eq!(
             map.get(&PropertyKey::new("age")).and_then(Value::as_int64),
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let mut map = PropertyMap::new();
-        map.insert(PropertyKey::new("name"), Value::from("Alice"));
+        map.insert(PropertyKey::new("name"), Value::from("Alix"));
         let dbg = format!("{map:?}");
         assert!(dbg.contains("name"));
     }

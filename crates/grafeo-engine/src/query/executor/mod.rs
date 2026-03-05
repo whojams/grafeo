@@ -69,6 +69,7 @@ impl Executor {
 
     /// Checks whether the deadline has been exceeded.
     fn check_deadline(&self) -> Result<()> {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(deadline) = self.deadline
             && Instant::now() >= deadline
         {

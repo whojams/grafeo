@@ -75,7 +75,7 @@ impl AsRef<str> for PropertyKey {
 /// ```
 /// use grafeo_common::types::Value;
 ///
-/// let name = Value::from("Alice");
+/// let name = Value::from("Alix");
 /// let age = Value::from(30i64);
 /// let active = Value::from(true);
 ///

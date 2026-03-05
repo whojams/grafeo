@@ -344,14 +344,14 @@ mod tests {
 
     #[test]
     fn test_merge_creates_new_node() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // MERGE should create a new node since none exists
         let mut merge = MergeOperator::new(
             Arc::clone(&store),
             "n".to_string(),
             vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Alice".into()))],
+            vec![("name".to_string(), Value::String("Alix".into()))],
             vec![], // no on_create
             vec![], // no on_match
         );
@@ -367,18 +367,18 @@ mod tests {
         assert!(node.has_label("Person"));
         assert_eq!(
             node.properties.get(&PropertyKey::new("name")),
-            Some(&Value::String("Alice".into()))
+            Some(&Value::String("Alix".into()))
         );
     }
 
     #[test]
     fn test_merge_matches_existing_node() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Create an existing node
         store.create_node_with_props(
             &["Person"],
-            &[(PropertyKey::new("name"), Value::String("Bob".into()))],
+            &[(PropertyKey::new("name"), Value::String("Gus".into()))],
         );
 
         // MERGE should find the existing node
@@ -386,7 +386,7 @@ mod tests {
             Arc::clone(&store),
             "n".to_string(),
             vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Bob".into()))],
+            vec![("name".to_string(), Value::String("Gus".into()))],
             vec![], // no on_create
             vec![], // no on_match
         );
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_merge_with_on_create() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // MERGE with ON CREATE SET
         let mut merge = MergeOperator::new(
@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_merge_with_on_match() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Create an existing node
         let node_id = store.create_node_with_props(

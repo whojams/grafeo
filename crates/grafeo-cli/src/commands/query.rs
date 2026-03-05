@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
 
 use crate::output::{self, Format, format_duration_ms};
 use crate::{OutputFormat, QueryLanguage};
@@ -43,8 +42,7 @@ pub fn run(
     // Parse parameters
     let param_map = parse_params(params)?;
 
-    let db = GrafeoDB::open(path)
-        .with_context(|| format!("Failed to open database at {}", path.display()))?;
+    let db = super::open_existing(path)?;
     let session = db.session();
 
     let result = if param_map.is_empty() {
@@ -300,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_parse_params_valid() {
-        let params = vec!["name=Alice".to_string(), "age=30".to_string()];
+        let params = vec!["name=Alix".to_string(), "age=30".to_string()];
         let map = parse_params(&params).unwrap();
         assert_eq!(map.len(), 2);
         assert!(matches!(map.get("age"), Some(Value::Int64(30))));

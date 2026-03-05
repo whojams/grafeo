@@ -4,7 +4,8 @@
 
 use crate::query::plan::{
     AggregateOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LimitOp,
-    LogicalOperator, NodeScanOp, ProjectOp, ReturnOp, SkipOp, SortOp, VectorJoinOp, VectorScanOp,
+    LogicalOperator, MultiWayJoinOp, NodeScanOp, ProjectOp, ReturnOp, SkipOp, SortOp, VectorJoinOp,
+    VectorScanOp,
 };
 
 /// Cost of an operation.
@@ -189,6 +190,7 @@ impl CostModel {
             LogicalOperator::Empty => Cost::zero(),
             LogicalOperator::VectorScan(scan) => self.vector_scan_cost(scan, cardinality),
             LogicalOperator::VectorJoin(join) => self.vector_join_cost(join, cardinality),
+            LogicalOperator::MultiWayJoin(mwj) => self.multi_way_join_cost(mwj, cardinality),
             _ => Cost::cpu(cardinality * self.cpu_tuple_cost),
         }
     }
@@ -263,6 +265,22 @@ impl CostModel {
                     .with_memory(build_cardinality * self.avg_tuple_size)
             }
         }
+    }
+
+    /// Estimates the cost of a multi-way (leapfrog) join.
+    ///
+    /// Delegates to `leapfrog_join_cost` using per-input cardinality estimates
+    /// derived from the output cardinality divided equally among inputs.
+    fn multi_way_join_cost(&self, mwj: &MultiWayJoinOp, cardinality: f64) -> Cost {
+        let n = mwj.inputs.len();
+        if n == 0 {
+            return Cost::zero();
+        }
+        // Approximate per-input cardinalities: assume each input contributes
+        // cardinality^(1/n) rows (AGM-style uniform assumption)
+        let per_input = cardinality.powf(1.0 / n as f64).max(1.0);
+        let cardinalities: Vec<f64> = (0..n).map(|_| per_input).collect();
+        self.leapfrog_join_cost(n, &cardinalities, cardinality)
     }
 
     /// Estimates the cost of an aggregation.
@@ -820,6 +838,7 @@ mod tests {
                 AggregateExpr {
                     function: AggregateFunction::Count,
                     expression: None,
+                    expression2: None,
                     distinct: false,
                     alias: Some("cnt".to_string()),
                     percentile: None,
@@ -827,6 +846,7 @@ mod tests {
                 AggregateExpr {
                     function: AggregateFunction::Sum,
                     expression: Some(LogicalExpression::Variable("x".to_string())),
+                    expression2: None,
                     distinct: false,
                     alias: Some("total".to_string()),
                     percentile: None,
@@ -939,6 +959,7 @@ mod tests {
             keys: vec![crate::query::plan::SortKey {
                 expression: LogicalExpression::Variable("a".to_string()),
                 order: SortOrder::Ascending,
+                nulls: None,
             }],
             input: Box::new(LogicalOperator::Empty),
         };
@@ -947,10 +968,12 @@ mod tests {
                 crate::query::plan::SortKey {
                     expression: LogicalExpression::Variable("a".to_string()),
                     order: SortOrder::Ascending,
+                    nulls: None,
                 },
                 crate::query::plan::SortKey {
                     expression: LogicalExpression::Variable("b".to_string()),
                     order: SortOrder::Descending,
+                    nulls: None,
                 },
             ],
             input: Box::new(LogicalOperator::Empty),

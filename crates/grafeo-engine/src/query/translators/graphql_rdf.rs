@@ -10,11 +10,11 @@
 //! - Nested selections → Predicate-object traversals
 //! - Scalar fields → Select variables from triple bindings
 
+use super::common::{VarGen, capitalize_first, wrap_filter};
 use crate::query::plan::{
     BinaryOp, JoinOp, JoinType, LogicalExpression, LogicalOperator, LogicalPlan, ProjectOp,
     Projection, TripleComponent, TripleScanOp,
 };
-use crate::query::translator_common::{VarGen, capitalize_first, wrap_filter};
 use grafeo_adapters::query::graphql::{self, ast};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
@@ -425,7 +425,7 @@ mod tests {
     fn test_reject_mutation() {
         let query = r#"
             mutation {
-                createUser(name: "Alice") {
+                createUser(name: "Alix") {
                     id
                 }
             }
@@ -463,5 +463,333 @@ mod tests {
         }
 
         assert!(find_type_scan(&plan.root));
+    }
+
+    // === Projection Tests ===
+
+    #[test]
+    fn test_scalar_fields_produce_projections() {
+        let query = r#"
+            query {
+                user {
+                    id
+                    name
+                    email
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        // 3 scalar fields should produce a Project with 3 projections
+        fn find_project(op: &LogicalOperator) -> Option<&ProjectOp> {
+            match op {
+                LogicalOperator::Project(p) => Some(p),
+                LogicalOperator::Filter(f) => find_project(&f.input),
+                _ => None,
+            }
+        }
+        let project = find_project(&plan.root).expect("Expected Project for scalar fields");
+        assert_eq!(
+            project.projections.len(),
+            3,
+            "3 scalar fields should produce 3 projections"
+        );
+    }
+
+    #[test]
+    fn test_field_alias() {
+        let query = r#"
+            query {
+                user {
+                    fullName: name
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        fn find_project(op: &LogicalOperator) -> Option<&ProjectOp> {
+            match op {
+                LogicalOperator::Project(p) => Some(p),
+                LogicalOperator::Filter(f) => find_project(&f.input),
+                _ => None,
+            }
+        }
+        let project = find_project(&plan.root).expect("Expected Project");
+        assert_eq!(project.projections.len(), 1);
+        assert_eq!(
+            project.projections[0].alias.as_deref(),
+            Some("fullName"),
+            "Alias should be 'fullName' not 'name'"
+        );
+    }
+
+    // === Argument Filter Tests ===
+
+    #[test]
+    fn test_argument_creates_filter() {
+        let query = r#"
+            query {
+                user(id: 42) {
+                    name
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        fn has_filter(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Filter(_) => true,
+                LogicalOperator::Join(j) => has_filter(&j.left) || has_filter(&j.right),
+                LogicalOperator::Project(p) => has_filter(&p.input),
+                _ => false,
+            }
+        }
+        assert!(has_filter(&plan.root), "Argument should produce a Filter");
+    }
+
+    #[test]
+    fn test_multiple_arguments() {
+        let query = r#"
+            query {
+                user(id: 42, active: true) {
+                    name
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        fn count_filters(op: &LogicalOperator) -> usize {
+            match op {
+                LogicalOperator::Filter(f) => 1 + count_filters(&f.input),
+                LogicalOperator::Join(j) => count_filters(&j.left) + count_filters(&j.right),
+                LogicalOperator::Project(p) => count_filters(&p.input),
+                _ => 0,
+            }
+        }
+        assert!(
+            count_filters(&plan.root) >= 2,
+            "Two arguments should produce at least 2 filters"
+        );
+    }
+
+    // === Nested Fields ===
+
+    #[test]
+    fn test_nested_field_creates_join() {
+        let query = r#"
+            query {
+                user {
+                    name
+                    friends {
+                        email
+                    }
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        fn count_joins(op: &LogicalOperator) -> usize {
+            match op {
+                LogicalOperator::Join(j) => 1 + count_joins(&j.left) + count_joins(&j.right),
+                LogicalOperator::Project(p) => count_joins(&p.input),
+                LogicalOperator::Filter(f) => count_joins(&f.input),
+                _ => 0,
+            }
+        }
+        // At minimum: type scan joined with name, joined with friends traversal, joined with email
+        assert!(
+            count_joins(&plan.root) >= 3,
+            "Nested field should produce multiple joins"
+        );
+    }
+
+    #[test]
+    fn test_deep_nesting() {
+        let query = r#"
+            query {
+                user {
+                    friends {
+                        posts {
+                            title
+                        }
+                    }
+                }
+            }
+        "#;
+        let result = translate(query, TEST_NS);
+        assert!(result.is_ok(), "3-level nesting should parse");
+    }
+
+    // === Fragment Tests ===
+
+    #[test]
+    fn test_fragment_spread() {
+        let query = r#"
+            query {
+                user {
+                    ...UserFields
+                }
+            }
+            fragment UserFields on User {
+                name
+                email
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        // Fragment should expand into projections
+        fn find_project(op: &LogicalOperator) -> Option<&ProjectOp> {
+            match op {
+                LogicalOperator::Project(p) => Some(p),
+                LogicalOperator::Filter(f) => find_project(&f.input),
+                _ => None,
+            }
+        }
+        let project = find_project(&plan.root).expect("Expected Project from fragment");
+        assert_eq!(
+            project.projections.len(),
+            2,
+            "Fragment with 2 fields should produce 2 projections"
+        );
+    }
+
+    #[test]
+    fn test_inline_fragment_with_type_condition() {
+        let query = r#"
+            query {
+                user {
+                    name
+                    ... on Admin {
+                        role
+                    }
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        // Should produce type check for Admin
+        fn count_type_scans(op: &LogicalOperator) -> usize {
+            match op {
+                LogicalOperator::TripleScan(scan) => usize::from(
+                    matches!(&scan.predicate, TripleComponent::Iri(iri) if iri == RDF_TYPE),
+                ),
+                LogicalOperator::Join(j) => count_type_scans(&j.left) + count_type_scans(&j.right),
+                LogicalOperator::Filter(f) => count_type_scans(&f.input),
+                LogicalOperator::Project(p) => count_type_scans(&p.input),
+                _ => 0,
+            }
+        }
+        // Should have 2 type scans: one for User, one for Admin
+        assert!(
+            count_type_scans(&plan.root) >= 2,
+            "Inline fragment type condition should add extra rdf:type scan"
+        );
+    }
+
+    // === Error Handling ===
+
+    #[test]
+    fn test_reject_empty_selection() {
+        let query = r#"
+            query {
+            }
+        "#;
+        let result = translate(query, TEST_NS);
+        assert!(result.is_err(), "Empty selection should be rejected");
+    }
+
+    // === Namespace and IRI Tests ===
+
+    #[test]
+    fn test_type_iri_capitalization() {
+        let query = r#"
+            query {
+                person {
+                    name
+                }
+            }
+        "#;
+        let plan = translate(query, "http://schema.org/").unwrap();
+        fn find_type_iri(op: &LogicalOperator) -> Option<String> {
+            match op {
+                LogicalOperator::TripleScan(scan) => {
+                    if matches!(&scan.predicate, TripleComponent::Iri(iri) if iri == RDF_TYPE)
+                        && let TripleComponent::Iri(iri) = &scan.object
+                    {
+                        return Some(iri.clone());
+                    }
+                    None
+                }
+                LogicalOperator::Join(j) => {
+                    find_type_iri(&j.left).or_else(|| find_type_iri(&j.right))
+                }
+                LogicalOperator::Filter(f) => find_type_iri(&f.input),
+                LogicalOperator::Project(p) => find_type_iri(&p.input),
+                _ => None,
+            }
+        }
+        let type_iri = find_type_iri(&plan.root).expect("Should find type IRI");
+        assert_eq!(
+            type_iri, "http://schema.org/Person",
+            "Root field 'person' should become type IRI 'Person' (capitalized)"
+        );
+    }
+
+    #[test]
+    fn test_predicate_iri_from_field_name() {
+        let query = r#"
+            query {
+                user {
+                    name
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        fn find_predicate_iris(op: &LogicalOperator) -> Vec<String> {
+            match op {
+                LogicalOperator::TripleScan(scan) => {
+                    if let TripleComponent::Iri(iri) = &scan.predicate
+                        && iri != RDF_TYPE
+                    {
+                        return vec![iri.clone()];
+                    }
+                    Vec::new()
+                }
+                LogicalOperator::Join(j) => {
+                    let mut v = find_predicate_iris(&j.left);
+                    v.extend(find_predicate_iris(&j.right));
+                    v
+                }
+                LogicalOperator::Filter(f) => find_predicate_iris(&f.input),
+                LogicalOperator::Project(p) => find_predicate_iris(&p.input),
+                _ => Vec::new(),
+            }
+        }
+        let iris = find_predicate_iris(&plan.root);
+        assert!(
+            iris.contains(&format!("{TEST_NS}name")),
+            "Field 'name' should produce predicate IRI '{TEST_NS}name'"
+        );
+    }
+
+    // === Nested Arguments ===
+
+    #[test]
+    fn test_nested_field_with_argument() {
+        let query = r#"
+            query {
+                user {
+                    friends(active: true) {
+                        name
+                    }
+                }
+            }
+        "#;
+        let plan = translate(query, TEST_NS).unwrap();
+        fn has_filter(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Filter(_) => true,
+                LogicalOperator::Join(j) => has_filter(&j.left) || has_filter(&j.right),
+                LogicalOperator::Project(p) => has_filter(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            has_filter(&plan.root),
+            "Nested field argument should produce Filter"
+        );
     }
 }

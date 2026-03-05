@@ -2,20 +2,22 @@
 //!
 //! Translates GQL AST to the common logical plan representation.
 
+use std::collections::HashMap;
+
+use super::common::{
+    combine_with_and, is_aggregate_function, is_binary_set_function, to_aggregate_function,
+    wrap_distinct, wrap_filter, wrap_limit, wrap_return, wrap_skip, wrap_sort,
+};
 use crate::query::plan::{
     self as plan, AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp,
-    CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExceptOp, ExpandDirection, ExpandOp,
-    IntersectOp, JoinOp, JoinType, LeftJoinOp, LogicalExpression, LogicalOperator, LogicalPlan,
-    MergeOp, MergeRelationshipOp, NodeScanOp, OtherwiseOp, PathMode, ProcedureYield, ProjectOp,
-    Projection, RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder,
-    UnaryOp, UnionOp, UnwindOp,
+    CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, EntityKind, ExceptOp,
+    ExpandDirection, ExpandOp, HorizontalAggregateOp, IntersectOp, JoinOp, JoinType, LeftJoinOp,
+    LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, MergeRelationshipOp, NodeScanOp,
+    NullsOrdering, OtherwiseOp, PathMode, ProcedureYield, ProjectOp, Projection, RemoveLabelOp,
+    ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
 #[cfg(test)]
 use crate::query::plan::{FilterOp, LimitOp, SkipOp};
-use crate::query::translator_common::{
-    combine_with_and, is_aggregate_function, to_aggregate_function, wrap_distinct, wrap_filter,
-    wrap_limit, wrap_return, wrap_skip, wrap_sort,
-};
 use grafeo_adapters::query::gql::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -65,11 +67,17 @@ pub fn translate_full(query: &str) -> Result<GqlTranslationResult> {
 }
 
 /// Translator from GQL AST to LogicalPlan.
-struct GqlTranslator;
+struct GqlTranslator {
+    /// Edge variables from variable-length expand patterns (group-list variables).
+    /// Maps edge variable name to the path alias used for `_path_edges_{alias}` lookup.
+    group_list_variables: std::cell::RefCell<HashMap<String, String>>,
+}
 
 impl GqlTranslator {
     fn new() -> Self {
-        Self
+        Self {
+            group_list_variables: std::cell::RefCell::new(HashMap::new()),
+        }
     }
 
     fn translate_statement_full(&self, stmt: &ast::Statement) -> Result<GqlTranslationResult> {
@@ -161,6 +169,7 @@ impl GqlTranslator {
                 let root = LogicalOperator::Apply(ApplyOp {
                     input: Box::new(left_plan.root),
                     subplan: Box::new(right_plan.root),
+                    shared_variables: Vec::new(),
                 });
                 Ok(LogicalPlan::new(root))
             }
@@ -228,6 +237,10 @@ impl GqlTranslator {
                                 ast::SortOrder::Asc => SortOrder::Ascending,
                                 ast::SortOrder::Desc => SortOrder::Descending,
                             },
+                            nulls: item.nulls.map(|n| match n {
+                                ast::NullsOrdering::First => NullsOrdering::First,
+                                ast::NullsOrdering::Last => NullsOrdering::Last,
+                            }),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -326,13 +339,11 @@ impl GqlTranslator {
                         plan = self.translate_create_patterns(&create_clause.patterns, plan)?;
                     }
                     ast::QueryClause::Delete(delete_clause) => {
-                        for variable in &delete_clause.variables {
-                            plan = LogicalOperator::DeleteNode(DeleteNodeOp {
-                                variable: variable.clone(),
-                                detach: delete_clause.detach,
-                                input: Box::new(plan),
-                            });
-                        }
+                        plan = self.translate_delete_targets(
+                            &delete_clause.targets,
+                            delete_clause.detach,
+                            plan,
+                        )?;
                     }
                     ast::QueryClause::Set(set_clause) => {
                         for assignment in &set_clause.assignments {
@@ -397,6 +408,7 @@ impl GqlTranslator {
                             plan = LogicalOperator::Apply(ApplyOp {
                                 input: Box::new(plan),
                                 subplan: Box::new(subplan),
+                                shared_variables: Vec::new(),
                             });
                         }
                     }
@@ -409,6 +421,7 @@ impl GqlTranslator {
                             plan = LogicalOperator::Apply(ApplyOp {
                                 input: Box::new(plan),
                                 subplan: Box::new(call_plan),
+                                shared_variables: Vec::new(),
                             });
                         }
                     }
@@ -496,13 +509,11 @@ impl GqlTranslator {
             }
 
             for delete_clause in &query.delete_clauses {
-                for variable in &delete_clause.variables {
-                    plan = LogicalOperator::DeleteNode(DeleteNodeOp {
-                        variable: variable.clone(),
-                        detach: delete_clause.detach,
-                        input: Box::new(plan),
-                    });
-                }
+                plan = self.translate_delete_targets(
+                    &delete_clause.targets,
+                    delete_clause.detach,
+                    plan,
+                )?;
             }
         }
 
@@ -597,6 +608,32 @@ impl GqlTranslator {
             let (aggregates, auto_group_by, post_return) =
                 self.extract_aggregates_and_groups(&query.return_clause.items)?;
 
+            // Separate horizontal aggregates (over group-list variables from
+            // variable-length paths) from regular aggregates.
+            let glv = self.group_list_variables.borrow();
+            let mut regular_aggregates = Vec::new();
+            for agg_expr in aggregates {
+                if let Some(ref expr) = agg_expr.expression
+                    && let LogicalExpression::Property { variable, property } = expr
+                    && let Some(path_alias) = glv.get(variable)
+                {
+                    let alias = agg_expr.alias.clone().unwrap_or_else(|| {
+                        format!("{:?}_{}", agg_expr.function, property).to_lowercase()
+                    });
+                    plan = LogicalOperator::HorizontalAggregate(HorizontalAggregateOp {
+                        list_column: format!("_path_edges_{}", path_alias),
+                        entity_kind: EntityKind::Edge,
+                        function: agg_expr.function,
+                        property: property.clone(),
+                        alias,
+                        input: Box::new(plan),
+                    });
+                    continue;
+                }
+                regular_aggregates.push(agg_expr);
+            }
+            drop(glv);
+
             // Use explicit GROUP BY if provided, otherwise use auto-detected
             let group_by = if query.return_clause.group_by.is_empty() {
                 auto_group_by
@@ -616,12 +653,17 @@ impl GqlTranslator {
                 None
             };
 
-            let agg_op = LogicalOperator::Aggregate(AggregateOp {
-                group_by,
-                aggregates,
-                input: Box::new(plan),
-                having,
-            });
+            let agg_op = if regular_aggregates.is_empty() && group_by.is_empty() {
+                // All aggregates were horizontal, no need for a HashAggregate
+                plan
+            } else {
+                LogicalOperator::Aggregate(AggregateOp {
+                    group_by,
+                    aggregates: regular_aggregates,
+                    input: Box::new(plan),
+                    having,
+                })
+            };
 
             if let Some(return_items) = post_return {
                 plan = wrap_return(agg_op, return_items, query.return_clause.distinct);
@@ -630,7 +672,7 @@ impl GqlTranslator {
             }
 
             // Apply ORDER BY for aggregate queries
-            // Note: ORDER BY sort keys reference aggregate output columns (aliases)
+            // Note: ORDER BY sort keys reference aggregate output columns (aliases).
             if let Some(order_by) = &query.return_clause.order_by {
                 let keys = order_by
                     .items
@@ -642,6 +684,10 @@ impl GqlTranslator {
                                 ast::SortOrder::Asc => SortOrder::Ascending,
                                 ast::SortOrder::Desc => SortOrder::Descending,
                             },
+                            nulls: item.nulls.map(|n| match n {
+                                ast::NullsOrdering::First => NullsOrdering::First,
+                                ast::NullsOrdering::Last => NullsOrdering::Last,
+                            }),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -688,6 +734,10 @@ impl GqlTranslator {
                                 ast::SortOrder::Asc => SortOrder::Ascending,
                                 ast::SortOrder::Desc => SortOrder::Descending,
                             },
+                            nulls: item.nulls.map(|n| match n {
+                                ast::NullsOrdering::First => NullsOrdering::First,
+                                ast::NullsOrdering::Last => NullsOrdering::Last,
+                            }),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -816,7 +866,10 @@ impl GqlTranslator {
                         });
                 (&path.source, target_node, edge_types, direction)
             }
-            ast::Pattern::Node(_) | ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+            ast::Pattern::Node(_)
+            | ast::Pattern::Quantified { .. }
+            | ast::Pattern::Union(_)
+            | ast::Pattern::MultisetUnion(_) => {
                 return Err(Error::Query(QueryError::new(
                     QueryErrorKind::Semantic,
                     "shortestPath requires a simple path pattern",
@@ -867,11 +920,26 @@ impl GqlTranslator {
             ast::Pattern::Path(path) => {
                 self.translate_path_pattern_with_alias(path, input, path_alias, path_mode)
             }
-            ast::Pattern::Quantified { pattern, min, max } => {
+            ast::Pattern::Quantified {
+                pattern,
+                min,
+                max,
+                subpath_var: _,
+                path_mode: inner_path_mode,
+                where_clause,
+            } => {
+                // G049: Inner path mode overrides the outer path mode if set.
+                let effective_mode = inner_path_mode.as_ref().map_or(path_mode, |m| match m {
+                    ast::PathMode::Walk => PathMode::Walk,
+                    ast::PathMode::Trail => PathMode::Trail,
+                    ast::PathMode::Simple => PathMode::Simple,
+                    ast::PathMode::Acyclic => PathMode::Acyclic,
+                });
+
                 // Quantified path pattern: repeat the inner pattern min..max times.
                 // For now, translate as a variable-length expansion if the inner
                 // pattern is a simple single-edge path.
-                match pattern.as_ref() {
+                let mut result = match pattern.as_ref() {
                     ast::Pattern::Path(path) if path.edges.len() == 1 => {
                         // Single-edge quantified: equivalent to variable-length edge
                         let mut modified_path = path.clone();
@@ -882,18 +950,45 @@ impl GqlTranslator {
                             &modified_path,
                             input,
                             path_alias,
-                            path_mode,
+                            effective_mode,
                         )
                     }
                     _ => {
                         // Multi-edge or complex quantified patterns: translate the
                         // inner pattern once (future: iterate with backtracking).
-                        self.translate_pattern_with_alias(pattern, input, path_alias, path_mode)
+                        self.translate_pattern_with_alias(
+                            pattern,
+                            input,
+                            path_alias,
+                            effective_mode,
+                        )
                     }
+                }?;
+
+                // G050: Apply WHERE clause as a filter on the quantified pattern output
+                if let Some(where_expr) = where_clause {
+                    let filter_expr = self.translate_expression(where_expr)?;
+                    result = wrap_filter(result, filter_expr);
                 }
+
+                // G048: subpath_var is stored in AST for downstream use (e.g., path
+                // value construction). Currently the translator does not bind path
+                // values, so it is acknowledged but not yet wired into the plan.
+
+                Ok(result)
             }
             ast::Pattern::Union(patterns) => {
                 // Union of alternative patterns: UNION ALL of each translated pattern
+                let inputs: Vec<LogicalOperator> = patterns
+                    .iter()
+                    .map(|p| {
+                        self.translate_pattern_with_alias(p, input.clone(), path_alias, path_mode)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(LogicalOperator::Union(UnionOp { inputs }))
+            }
+            ast::Pattern::MultisetUnion(patterns) => {
+                // G030: Multiset (bag) union preserves duplicates
                 let inputs: Vec<LogicalOperator> = patterns
                     .iter()
                     .map(|p| {
@@ -944,7 +1039,9 @@ impl GqlTranslator {
                     .collect::<Result<_>>()?;
                 (var, labels, props)
             }
-            ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+            ast::Pattern::Quantified { .. }
+            | ast::Pattern::Union(_)
+            | ast::Pattern::MultisetUnion(_) => {
                 return Err(Error::Query(QueryError::new(
                     QueryErrorKind::Semantic,
                     "MERGE does not support quantified or union patterns",
@@ -1177,7 +1274,9 @@ impl GqlTranslator {
                         });
                     }
                 }
-                ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+                ast::Pattern::Quantified { .. }
+                | ast::Pattern::Union(_)
+                | ast::Pattern::MultisetUnion(_) => {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
                         "CREATE does not support quantified or union patterns",
@@ -1225,7 +1324,7 @@ impl GqlTranslator {
             }
         }
 
-        // Add filter for node pattern properties (e.g., {name: 'Alice'})
+        // Add filter for node pattern properties (e.g., {name: 'Alix'})
         if !node.properties.is_empty() {
             let predicate = self.build_property_predicate(&variable, &node.properties)?;
             plan = wrap_filter(plan, predicate);
@@ -1256,7 +1355,10 @@ impl GqlTranslator {
             },
             ast::LabelExpression::Conjunction(operands) => {
                 let mut iter = operands.iter();
-                let first = Self::translate_label_expression(variable, iter.next().unwrap());
+                let first = Self::translate_label_expression(
+                    variable,
+                    iter.next().expect("conjunction has at least one operand"),
+                );
                 iter.fold(first, |acc, op| LogicalExpression::Binary {
                     left: Box::new(acc),
                     op: BinaryOp::And,
@@ -1265,7 +1367,10 @@ impl GqlTranslator {
             }
             ast::LabelExpression::Disjunction(operands) => {
                 let mut iter = operands.iter();
-                let first = Self::translate_label_expression(variable, iter.next().unwrap());
+                let first = Self::translate_label_expression(
+                    variable,
+                    iter.next().expect("disjunction has at least one operand"),
+                );
                 iter.fold(first, |acc, op| LogicalExpression::Binary {
                     left: Box::new(acc),
                     op: BinaryOp::Or,
@@ -1280,7 +1385,7 @@ impl GqlTranslator {
         }
     }
 
-    /// Builds a predicate expression for property filters like {name: 'Alice', age: 30}.
+    /// Builds a predicate expression for property filters like {name: 'Alix', age: 30}.
     fn build_property_predicate(
         &self,
         variable: &str,
@@ -1368,20 +1473,44 @@ impl GqlTranslator {
                 None
             };
 
+            let min_hops = edge.min_hops.unwrap_or(1);
+            let max_hops = if edge.min_hops.is_none() && edge.max_hops.is_none() {
+                Some(1)
+            } else {
+                edge.max_hops
+            };
+
+            let is_variable_length = min_hops != 1 || max_hops.is_none() || max_hops != Some(1);
+
+            // For variable-length edges with a named edge variable, auto-generate
+            // a path alias if none exists, so path detail columns are available
+            // for horizontal aggregation (GE09).
+            let expand_path_alias = if is_variable_length
+                && edge_var_for_filter.is_some()
+                && expand_path_alias.is_none()
+            {
+                Some(format!("_auto_path_{}", rand_id()))
+            } else {
+                expand_path_alias
+            };
+
+            // Track group-list variables for horizontal aggregation detection
+            if is_variable_length
+                && let (Some(ev), Some(pa)) = (&edge_var_for_filter, &expand_path_alias)
+            {
+                self.group_list_variables
+                    .borrow_mut()
+                    .insert(ev.clone(), pa.clone());
+            }
+
             plan = LogicalOperator::Expand(ExpandOp {
                 from_variable: current_source,
                 to_variable: target_var.clone(),
                 edge_variable: edge_var,
                 direction,
                 edge_types,
-                min_hops: edge.min_hops.unwrap_or(1),
-                // Default to single-hop only when no quantifier at all (both None),
-                // preserve None (unbounded) when the quantifier explicitly omits max
-                max_hops: if edge.min_hops.is_none() && edge.max_hops.is_none() {
-                    Some(1)
-                } else {
-                    edge.max_hops
-                },
+                min_hops,
+                max_hops,
                 input: Box::new(plan),
                 path_alias: expand_path_alias,
                 path_mode,
@@ -1478,16 +1607,18 @@ impl GqlTranslator {
         // For standalone DELETE, we need to scan and delete the specified variables.
         // This is typically used as: MATCH (n:Label) DELETE n
 
-        if delete.variables.is_empty() {
+        if delete.targets.is_empty() {
             return Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
-                "DELETE requires at least one variable",
+                "DELETE requires at least one target",
             )));
         }
 
-        // For now, we only support deleting nodes (not edges directly)
-        // Build a chain of delete operators
-        let first_var = &delete.variables[0];
+        // Extract the first variable name for the scan
+        let first_var = match &delete.targets[0] {
+            ast::DeleteTarget::Variable(name) => name.clone(),
+            ast::DeleteTarget::Expression(_) => "__delete_expr_0".to_string(),
+        };
 
         // Create a scan to find the entities to delete
         let scan = LogicalOperator::NodeScan(NodeScanOp {
@@ -1496,23 +1627,50 @@ impl GqlTranslator {
             input: None,
         });
 
-        // Delete the first variable
-        let mut plan = LogicalOperator::DeleteNode(DeleteNodeOp {
-            variable: first_var.clone(),
-            detach: delete.detach,
-            input: Box::new(scan),
-        });
-
-        // Chain additional deletes
-        for var in delete.variables.iter().skip(1) {
-            plan = LogicalOperator::DeleteNode(DeleteNodeOp {
-                variable: var.clone(),
-                detach: delete.detach,
-                input: Box::new(plan),
-            });
-        }
-
+        let plan = self.translate_delete_targets(&delete.targets, delete.detach, scan)?;
         Ok(LogicalPlan::new(plan))
+    }
+
+    /// Translates a list of delete targets into a chain of delete operators.
+    /// For `DeleteTarget::Variable`, emits a `DeleteNodeOp` directly.
+    /// For `DeleteTarget::Expression` (GD04), projects the expression into a
+    /// synthetic variable then deletes that variable.
+    fn translate_delete_targets(
+        &self,
+        targets: &[ast::DeleteTarget],
+        detach: bool,
+        mut plan: LogicalOperator,
+    ) -> Result<LogicalOperator> {
+        for (i, target) in targets.iter().enumerate() {
+            match target {
+                ast::DeleteTarget::Variable(name) => {
+                    plan = LogicalOperator::DeleteNode(DeleteNodeOp {
+                        variable: name.clone(),
+                        detach,
+                        input: Box::new(plan),
+                    });
+                }
+                ast::DeleteTarget::Expression(expr) => {
+                    // GD04: evaluate the expression, bind to a synthetic variable,
+                    // then delete that variable.
+                    let synthetic_var = format!("__delete_expr_{i}");
+                    let logical_expr = self.translate_expression(expr)?;
+                    plan = LogicalOperator::Project(ProjectOp {
+                        projections: vec![Projection {
+                            expression: logical_expr,
+                            alias: Some(synthetic_var.clone()),
+                        }],
+                        input: Box::new(plan),
+                    });
+                    plan = LogicalOperator::DeleteNode(DeleteNodeOp {
+                        variable: synthetic_var,
+                        detach,
+                        input: Box::new(plan),
+                    });
+                }
+            }
+        }
+        Ok(plan)
     }
 
     fn translate_set(&self, set: &ast::SetStatement) -> Result<LogicalPlan> {
@@ -1661,7 +1819,9 @@ impl GqlTranslator {
                         current_src = target_var;
                     }
                 }
-                ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+                ast::Pattern::Quantified { .. }
+                | ast::Pattern::Union(_)
+                | ast::Pattern::MultisetUnion(_) => {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
                         "INSERT does not support quantified or union patterns",
@@ -1671,7 +1831,7 @@ impl GqlTranslator {
         }
 
         let ret = wrap_return(
-            plan.unwrap(),
+            plan.expect("plan initialized by non-empty patterns"),
             vec![ReturnItem {
                 expression: LogicalExpression::Variable(last_variable),
                 alias: None,
@@ -2153,6 +2313,9 @@ impl GqlTranslator {
         }
     }
 
+    /// Resolves an ORDER BY expression in the context of an aggregate query.
+    ///
+    /// If the sort key is an aggregate function call, finds the matching RETURN
     /// Tries to extract an aggregate expression from an AST expression.
     fn try_extract_aggregate(
         &self,
@@ -2171,6 +2334,7 @@ impl GqlTranslator {
                         AggregateExpr {
                             function: func,
                             expression: None,
+                            expression2: None,
                             distinct: *distinct,
                             alias: alias.clone(),
                             percentile: None,
@@ -2202,9 +2366,17 @@ impl GqlTranslator {
                         } else {
                             None
                         };
+                        // Extract second argument for binary set functions
+                        let expression2 = if is_binary_set_function(actual_func) && args.len() >= 2
+                        {
+                            Some(self.translate_expression(&args[1])?)
+                        } else {
+                            None
+                        };
                         AggregateExpr {
                             function: actual_func,
                             expression: Some(self.translate_expression(&args[0])?),
+                            expression2,
                             distinct: *distinct,
                             alias: alias.clone(),
                             percentile,
@@ -2319,7 +2491,7 @@ mod tests {
 
     #[test]
     fn test_translate_filter_equality() {
-        let query = "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n";
+        let query = "MATCH (n:Person) WHERE n.name = 'Alix' RETURN n";
         let result = translate(query);
         assert!(result.is_ok());
 
@@ -2362,7 +2534,7 @@ mod tests {
 
     #[test]
     fn test_translate_filter_or() {
-        let query = "MATCH (n:Person) WHERE n.name = 'Alice' OR n.name = 'Bob' RETURN n";
+        let query = "MATCH (n:Person) WHERE n.name = 'Alix' OR n.name = 'Gus' RETURN n";
         let result = translate(query);
         assert!(result.is_ok());
 
@@ -2582,7 +2754,7 @@ mod tests {
 
     #[test]
     fn test_translate_insert_node() {
-        let query = "INSERT (n:Person {name: 'Alice', age: 30})";
+        let query = "INSERT (n:Person {name: 'Alix', age: 30})";
         let result = translate(query);
         assert!(result.is_ok());
 
@@ -2621,7 +2793,7 @@ mod tests {
             assignments: vec![ast::PropertyAssignment {
                 variable: "n".to_string(),
                 property: "name".to_string(),
-                value: ast::Expression::Literal(ast::Literal::String("Bob".to_string())),
+                value: ast::Expression::Literal(ast::Literal::String("Gus".to_string())),
             }],
             span: None,
         };
@@ -2680,7 +2852,7 @@ mod tests {
         // Create translator directly to test empty delete
         let translator = GqlTranslator::new();
         let delete = ast::DeleteStatement {
-            variables: vec![],
+            targets: vec![],
             detach: false,
             span: None,
         };
@@ -2927,7 +3099,7 @@ mod tests {
 
     #[test]
     fn test_translate_merge() {
-        let query = "MERGE (n:Person {name: 'Alice'}) RETURN n";
+        let query = "MERGE (n:Person {name: 'Alix'}) RETURN n";
         let result = translate(query);
         assert!(result.is_ok(), "MERGE should translate: {:?}", result.err());
         let plan = result.unwrap();
@@ -2944,7 +3116,7 @@ mod tests {
 
     #[test]
     fn test_translate_merge_with_on_create() {
-        let query = "MERGE (n:Person {name: 'Alice'}) ON CREATE SET n.created = true RETURN n";
+        let query = "MERGE (n:Person {name: 'Alix'}) ON CREATE SET n.created = true RETURN n";
         let result = translate(query);
         assert!(
             result.is_ok(),
@@ -2957,7 +3129,7 @@ mod tests {
 
     #[test]
     fn test_translate_with_clause() {
-        let query = "MATCH (n:Person) WITH n.name AS name WHERE name = 'Alice' RETURN name";
+        let query = "MATCH (n:Person) WITH n.name AS name WHERE name = 'Alix' RETURN name";
         let result = translate(query);
         assert!(
             result.is_ok(),

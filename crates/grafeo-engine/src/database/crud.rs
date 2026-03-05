@@ -17,7 +17,7 @@ impl super::GrafeoDB {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
-    /// let alice = db.create_node(&["Person"]);
+    /// let alix = db.create_node(&["Person"]);
     /// let company = db.create_node(&["Company", "Startup"]);
     /// ```
     pub fn create_node(&self, labels: &[&str]) -> grafeo_common::types::NodeId {
@@ -375,10 +375,10 @@ impl super::GrafeoDB {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
-    /// let alice = db.create_node(&["Person"]);
+    /// let alix = db.create_node(&["Person"]);
     ///
-    /// // Promote Alice to Employee
-    /// let added = db.add_node_label(alice, "Employee");
+    /// // Promote Alix to Employee
+    /// let added = db.add_node_label(alix, "Employee");
     /// assert!(added);
     /// ```
     pub fn add_node_label(&self, id: grafeo_common::types::NodeId, label: &str) -> bool {
@@ -443,10 +443,10 @@ impl super::GrafeoDB {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
-    /// let alice = db.create_node(&["Person", "Employee"]);
+    /// let alix = db.create_node(&["Person", "Employee"]);
     ///
     /// // Remove Employee status
-    /// let removed = db.remove_node_label(alice, "Employee");
+    /// let removed = db.remove_node_label(alix, "Employee");
     /// assert!(removed);
     /// ```
     pub fn remove_node_label(&self, id: grafeo_common::types::NodeId, label: &str) -> bool {
@@ -498,9 +498,9 @@ impl super::GrafeoDB {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
-    /// let alice = db.create_node(&["Person", "Employee"]);
+    /// let alix = db.create_node(&["Person", "Employee"]);
     ///
-    /// let labels = db.get_node_labels(alice).unwrap();
+    /// let labels = db.get_node_labels(alix).unwrap();
     /// assert!(labels.contains(&"Person".to_string()));
     /// assert!(labels.contains(&"Employee".to_string()));
     /// ```
@@ -524,11 +524,11 @@ impl super::GrafeoDB {
     /// use grafeo_engine::GrafeoDB;
     ///
     /// let db = GrafeoDB::new_in_memory();
-    /// let alice = db.create_node(&["Person"]);
-    /// let bob = db.create_node(&["Person"]);
+    /// let alix = db.create_node(&["Person"]);
+    /// let gus = db.create_node(&["Person"]);
     ///
-    /// // Alice knows Bob (directed: Alice -> Bob)
-    /// let edge = db.create_edge(alice, bob, "KNOWS");
+    /// // Alix knows Gus (directed: Alix -> Gus)
+    /// let edge = db.create_edge(alix, gus, "KNOWS");
     /// ```
     pub fn create_edge(
         &self,
@@ -716,8 +716,17 @@ impl super::GrafeoDB {
     ///
     /// Returns true if the property existed and was removed, false otherwise.
     pub fn remove_node_property(&self, id: grafeo_common::types::NodeId, key: &str) -> bool {
-        // Note: RemoveProperty WAL records not yet implemented, but operation works in memory
         let removed = self.store.remove_node_property(id, key).is_some();
+
+        #[cfg(feature = "wal")]
+        if removed
+            && let Err(e) = self.log_wal(&WalRecord::RemoveNodeProperty {
+                id,
+                key: key.to_string(),
+            })
+        {
+            tracing::warn!("WAL log for RemoveNodeProperty failed: {e}");
+        }
 
         // Remove from matching text indexes
         #[cfg(feature = "text-index")]
@@ -736,8 +745,19 @@ impl super::GrafeoDB {
     ///
     /// Returns true if the property existed and was removed, false otherwise.
     pub fn remove_edge_property(&self, id: grafeo_common::types::EdgeId, key: &str) -> bool {
-        // Note: RemoveProperty WAL records not yet implemented, but operation works in memory
-        self.store.remove_edge_property(id, key).is_some()
+        let removed = self.store.remove_edge_property(id, key).is_some();
+
+        #[cfg(feature = "wal")]
+        if removed
+            && let Err(e) = self.log_wal(&WalRecord::RemoveEdgeProperty {
+                id,
+                key: key.to_string(),
+            })
+        {
+            tracing::warn!("WAL log for RemoveEdgeProperty failed: {e}");
+        }
+
+        removed
     }
 
     /// Creates multiple nodes in bulk, each with a single vector property.

@@ -30,8 +30,7 @@ pub fn run(
     quiet: bool,
     timing: bool,
 ) -> Result<()> {
-    let db = GrafeoDB::open(path)
-        .with_context(|| format!("Failed to open database at {}", path.display()))?;
+    let db = crate::commands::open_existing(path)?;
 
     // In REPL, always use table format unless explicitly set
     let fmt = if matches!(format, OutputFormat::Auto) {

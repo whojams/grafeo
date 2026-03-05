@@ -64,8 +64,16 @@ impl ValidityTs {
     /// Returns `(entity_id, ValidityTs)`.
     #[must_use]
     pub fn from_versioned_key(key: &[u8; 16]) -> (u64, Self) {
-        let entity_id = u64::from_be_bytes(key[..8].try_into().unwrap());
-        let ts = i64::from_be_bytes(key[8..].try_into().unwrap());
+        let entity_id = u64::from_be_bytes(
+            key[..8]
+                .try_into()
+                .expect("first 8 bytes of a [u8; 16] are always a valid [u8; 8]"),
+        );
+        let ts = i64::from_be_bytes(
+            key[8..]
+                .try_into()
+                .expect("last 8 bytes of a [u8; 16] are always a valid [u8; 8]"),
+        );
         (entity_id, Self::new(ts))
     }
 }

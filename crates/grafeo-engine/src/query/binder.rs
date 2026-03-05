@@ -531,7 +531,8 @@ impl Binder {
             | LogicalOperator::LoadGraph(_)
             | LogicalOperator::CopyGraph(_)
             | LogicalOperator::MoveGraph(_)
-            | LogicalOperator::AddGraph(_) => Ok(()),
+            | LogicalOperator::AddGraph(_)
+            | LogicalOperator::HorizontalAggregate(_) => Ok(()),
             LogicalOperator::VectorScan(scan) => {
                 // VectorScan introduces a variable for matched nodes
                 if let Some(ref input) = scan.input {
@@ -610,6 +611,31 @@ impl Binder {
             LogicalOperator::Apply(apply) => {
                 self.bind_operator(&apply.input)?;
                 self.bind_operator(&apply.subplan)?;
+                Ok(())
+            }
+            LogicalOperator::MultiWayJoin(mwj) => {
+                for input in &mwj.inputs {
+                    self.bind_operator(input)?;
+                }
+                for cond in &mwj.conditions {
+                    self.validate_expression(&cond.left)?;
+                    self.validate_expression(&cond.right)?;
+                }
+                Ok(())
+            }
+            LogicalOperator::ParameterScan(param_scan) => {
+                // Register parameter columns as variables (injected by outer Apply)
+                for col in &param_scan.columns {
+                    self.context.add_variable(
+                        col.clone(),
+                        VariableInfo {
+                            name: col.clone(),
+                            data_type: LogicalType::Any,
+                            is_node: true,
+                            is_edge: false,
+                        },
+                    );
+                }
                 Ok(())
             }
             // DDL operators don't need binding — they're handled before the binder
@@ -975,8 +1001,13 @@ impl Binder {
                 let _ = subquery; // Would need recursive binding
                 Ok(())
             }
-            LogicalExpression::PatternComprehension { projection, .. } => {
-                // Subplan has its own scope; validate the projection expression
+            LogicalExpression::PatternComprehension {
+                subplan,
+                projection,
+            } => {
+                // Bind the subplan to register pattern variables (e.g., `f` in `(p)-[:KNOWS]->(f)`)
+                self.bind_operator(subplan)?;
+                // Now validate the projection expression (e.g., `f.name`)
                 self.validate_expression(projection)
             }
             LogicalExpression::MapProjection { base, entries } => {
@@ -1609,7 +1640,7 @@ mod tests {
             variable: "ghost".to_string(),
             properties: vec![(
                 "name".to_string(),
-                LogicalExpression::Literal(grafeo_common::types::Value::String("Alice".into())),
+                LogicalExpression::Literal(grafeo_common::types::Value::String("Alix".into())),
             )],
             replace: false,
             is_edge: false,
@@ -1770,7 +1801,7 @@ mod tests {
                 labels: vec!["Person".to_string()],
                 match_properties: vec![(
                     "name".to_string(),
-                    LogicalExpression::Literal(grafeo_common::types::Value::String("Alice".into())),
+                    LogicalExpression::Literal(grafeo_common::types::Value::String("Alix".into())),
                 )],
                 on_create: vec![(
                     "created".to_string(),
@@ -2160,6 +2191,7 @@ mod tests {
                     property: "name".to_string(),
                 },
                 order: SortOrder::Ascending,
+                nulls: None,
             }],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),

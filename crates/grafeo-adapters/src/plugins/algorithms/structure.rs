@@ -536,7 +536,7 @@ mod tests {
 
     fn create_simple_path() -> LpgStore {
         // Path: 0 - 1 - 2 - 3 (all are articulation points except endpoints)
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -558,7 +558,7 @@ mod tests {
         //          |   |
         //          +---2
         // No articulation points in a diamond
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -584,7 +584,7 @@ mod tests {
         //         1   2
         //        /
         //       3
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_articulation_points_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let ap = articulation_points(&store);
         assert!(ap.is_empty());
     }
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_bridges_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let br = bridges(&store);
         assert!(br.is_empty());
     }
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_kcore_triangle() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_kcore_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = kcore_decomposition(&store);
 
         assert!(result.core_numbers.is_empty());
@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn test_kcore_isolated() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);
 

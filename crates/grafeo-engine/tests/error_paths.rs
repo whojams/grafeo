@@ -397,19 +397,16 @@ fn test_gql_yield_nonexistent_column_error() {
 
 #[test]
 #[cfg(feature = "cypher")]
-fn test_cypher_unsupported_feature_error_is_query_error() {
+fn test_cypher_pattern_comprehension_works() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    // Pattern comprehension is not yet supported in Cypher translator
+    // Pattern comprehension is now supported after planner refactor
     let result = session.execute_cypher("MATCH (n) RETURN [(n)-[:KNOWS]->(m) | m.name] AS friends");
-    assert!(result.is_err());
-    let err_str = result.unwrap_err().to_string();
-    // Should be GRAFEO-Q (query error), not GRAFEO-X (internal error)
     assert!(
-        !err_str.contains("GRAFEO-X"),
-        "Unsupported Cypher feature should NOT be an internal error, got: {}",
-        err_str
+        result.is_ok(),
+        "Pattern comprehension should succeed, got: {:?}",
+        result.err()
     );
 }
 
@@ -462,7 +459,7 @@ fn test_insert_and_match_special_characters_in_properties() {
 fn test_match_with_multiple_labels() {
     let db = GrafeoDB::new_in_memory();
     let n = db.create_node(&["Person", "Employee"]);
-    db.set_node_property(n, "name", Value::String("Alice".into()));
+    db.set_node_property(n, "name", Value::String("Alix".into()));
 
     let session = db.session();
     let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();

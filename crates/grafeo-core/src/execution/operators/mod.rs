@@ -28,12 +28,14 @@ mod factorized_aggregate;
 mod factorized_expand;
 mod factorized_filter;
 mod filter;
+mod horizontal_aggregate;
 mod join;
 mod leapfrog_join;
 mod limit;
 mod map_collect;
 mod merge;
 mod mutation;
+mod parameter_scan;
 mod project;
 pub mod push;
 mod scan;
@@ -68,6 +70,7 @@ pub use filter::{
     BinaryFilterOp, ExpressionPredicate, FilterExpression, FilterOperator, ListPredicateKind,
     Predicate, UnaryFilterOp,
 };
+pub use horizontal_aggregate::{EntityKind, HorizontalAggregateOperator};
 pub use join::{
     EqualityCondition, HashJoinOperator, HashKey, JoinCondition, JoinType, NestedLoopJoinOperator,
 };
@@ -80,6 +83,7 @@ pub use mutation::{
     DeleteEdgeOperator, DeleteNodeOperator, PropertySource, RemoveLabelOperator,
     SetPropertyOperator,
 };
+pub use parameter_scan::{ParameterScanOperator, ParameterState};
 pub use project::{ProjectExpr, ProjectOperator};
 pub use push::{
     AggregatePushOperator, DistinctMaterializingOperator, DistinctPushOperator, FilterPushOperator,

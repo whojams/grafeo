@@ -11,7 +11,7 @@ use grafeo_engine::{Config, ConfigError, DurabilityMode, GrafeoDB, GraphModel};
 fn lpg_database_executes_gql() {
     let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
     let session = db.session();
-    session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
     let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
     assert_eq!(result.rows.len(), 1);
 }
@@ -59,7 +59,7 @@ fn lpg_database_allows_explicit_sparql() {
 fn lpg_database_executes_cypher() {
     let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
     let session = db.session();
-    session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
     let result = session.execute_cypher("MATCH (p:Person) RETURN p.name");
     assert!(result.is_ok());
 }
@@ -212,12 +212,12 @@ fn sparql_filter_equality_coerces_string_to_numeric() {
     let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
-    // Insert triples: :alice :age "30" ; :bob :age "25"
+    // Insert triples: :alix :age "30" ; :gus :age "25"
     session
         .execute_sparql(
             r#"INSERT DATA {
-                <http://ex.org/alice> <http://ex.org/age> "30" .
-                <http://ex.org/bob>   <http://ex.org/age> "25" .
+                <http://ex.org/alix> <http://ex.org/age> "30" .
+                <http://ex.org/gus>   <http://ex.org/age> "25" .
             }"#,
         )
         .unwrap();
@@ -256,13 +256,13 @@ fn sparql_filter_inequality_coerces_string_to_numeric() {
     session
         .execute_sparql(
             r#"INSERT DATA {
-                <http://ex.org/alice> <http://ex.org/age> "30" .
-                <http://ex.org/bob>   <http://ex.org/age> "25" .
+                <http://ex.org/alix> <http://ex.org/age> "30" .
+                <http://ex.org/gus>   <http://ex.org/age> "25" .
             }"#,
         )
         .unwrap();
 
-    // FILTER(?age != 30) should return only bob (age "25")
+    // FILTER(?age != 30) should return only gus (age "25")
     let result = session
         .execute_sparql(
             r#"SELECT ?s ?age WHERE {

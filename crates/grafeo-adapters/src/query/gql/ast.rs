@@ -391,9 +391,19 @@ pub enum Pattern {
         min: u32,
         /// Maximum repetitions (None = unbounded).
         max: Option<u32>,
+        /// G048: Subpath variable declaration, e.g. `(p = (a)-[e]->(b)){2,5}`.
+        subpath_var: Option<String>,
+        /// G049: Path mode prefix inside parenthesized pattern, e.g. `(TRAIL (a)-[]->(b)){2,5}`.
+        path_mode: Option<PathMode>,
+        /// G050: WHERE clause inside parenthesized pattern, e.g. `((a)-[e]->(b) WHERE e.w > 5){2,5}`.
+        where_clause: Option<Expression>,
     },
     /// A union of alternative path patterns: `(a)-[:T1]->(b) | (a)-[:T2]->(c)`.
+    /// Set semantics: duplicates are removed.
     Union(Vec<Pattern>),
+    /// A multiset union of alternative path patterns: `(a)-[:T1]->(b) |+| (a)-[:T2]->(c)`.
+    /// Bag semantics: duplicates are preserved (G030).
+    MultisetUnion(Vec<Pattern>),
 }
 
 /// A label expression for GQL IS syntax (e.g., `IS Person | Employee`, `IS Person & !Employee`).
@@ -534,6 +544,8 @@ pub struct OrderByItem {
     pub expression: Expression,
     /// Sort order.
     pub order: SortOrder,
+    /// Optional null ordering (NULLS FIRST / NULLS LAST).
+    pub nulls: Option<NullsOrdering>,
 }
 
 /// Sort order.
@@ -543,6 +555,15 @@ pub enum SortOrder {
     Asc,
     /// Descending order.
     Desc,
+}
+
+/// Null ordering for ORDER BY (ISO GQL feature GA03).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NullsOrdering {
+    /// Nulls sort before all non-null values.
+    First,
+    /// Nulls sort after all non-null values.
+    Last,
 }
 
 /// A data modification statement.
@@ -565,11 +586,20 @@ pub struct InsertStatement {
     pub span: Option<SourceSpan>,
 }
 
+/// A target for a DELETE statement: either a variable name or a general expression.
+#[derive(Debug, Clone)]
+pub enum DeleteTarget {
+    /// A simple variable reference (e.g., `DELETE n`).
+    Variable(String),
+    /// A general expression (e.g., `DELETE n.friend`, `DELETE head(collect(n))`).
+    Expression(Expression),
+}
+
 /// A DELETE statement.
 #[derive(Debug, Clone)]
 pub struct DeleteStatement {
-    /// Variables to delete.
-    pub variables: Vec<String>,
+    /// Targets to delete (variables or expressions).
+    pub targets: Vec<DeleteTarget>,
     /// Whether to use DETACH DELETE.
     pub detach: bool,
     /// Source span.
@@ -707,6 +737,29 @@ pub struct CreateEdgeTypeStatement {
     pub span: Option<SourceSpan>,
 }
 
+/// An inline element type definition within a graph type body.
+#[derive(Debug, Clone)]
+pub enum InlineElementType {
+    /// Inline node type: `NODE TYPE Name (prop1 TYPE, ...)`
+    Node {
+        /// Type name.
+        name: String,
+        /// Property definitions (may be empty).
+        properties: Vec<PropertyDefinition>,
+        /// Key label sets (GG21): labels that form the key for this type.
+        key_labels: Vec<String>,
+    },
+    /// Inline edge type: `EDGE TYPE Name (prop1 TYPE, ...)`
+    Edge {
+        /// Type name.
+        name: String,
+        /// Property definitions (may be empty).
+        properties: Vec<PropertyDefinition>,
+        /// Key label sets (GG21): labels that form the key for this type.
+        key_labels: Vec<String>,
+    },
+}
+
 /// A CREATE GRAPH TYPE statement.
 #[derive(Debug, Clone)]
 pub struct CreateGraphTypeStatement {
@@ -716,6 +769,10 @@ pub struct CreateGraphTypeStatement {
     pub node_types: Vec<String>,
     /// Allowed edge types (empty = open).
     pub edge_types: Vec<String>,
+    /// Inline element type definitions (GG03).
+    pub inline_types: Vec<InlineElementType>,
+    /// Copy type from existing graph (GG04): `LIKE <graph_name>`.
+    pub like_graph: Option<String>,
     /// Whether unlisted types are also allowed.
     pub open: bool,
     /// IF NOT EXISTS flag.
@@ -1078,7 +1135,7 @@ pub enum ListPredicateKind {
 }
 
 /// A literal value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     /// Null literal.
     Null,

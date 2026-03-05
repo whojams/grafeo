@@ -449,6 +449,92 @@ impl PyNetworkXAdapter {
         }
     }
 
+    /// Adjacency dict: `{node_id: {neighbor_id: {"type": edge_type, ...}}}`.
+    ///
+    /// Matches NetworkX's `G.adj` / `G[node]` access pattern.
+    #[getter]
+    fn adj(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let db = self.db.read();
+        let store = db.store();
+        let nodes = store.node_ids();
+
+        let outer = PyDict::new(py);
+        for node_id in &nodes {
+            let inner = PyDict::new(py);
+            for (neighbor, edge_id) in store.edges_from(*node_id, Direction::Outgoing) {
+                let attrs = PyDict::new(py);
+                if let Some(edge) = store.get_edge(edge_id) {
+                    attrs.set_item("type", edge.edge_type.to_string())?;
+                    for (key, value) in &edge.properties {
+                        attrs.set_item(key.as_str(), crate::types::PyValue::to_py(value, py))?;
+                    }
+                }
+                inner.set_item(neighbor.0, attrs)?;
+            }
+            outer.set_item(node_id.0, inner)?;
+        }
+
+        Ok(outer.into_any().unbind())
+    }
+
+    /// Extract a subgraph containing only the specified nodes.
+    ///
+    /// Returns a new NetworkX graph (requires networkx) with only the
+    /// given nodes and edges between them.
+    ///
+    /// Args:
+    ///     nodes: List of node IDs to include
+    ///
+    /// Returns:
+    ///     NetworkX DiGraph or Graph containing only the specified nodes
+    fn subgraph(&self, nodes: Vec<u64>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let nx = py.import("networkx")?;
+
+        let graph = if self.directed {
+            nx.call_method0("DiGraph")?
+        } else {
+            nx.call_method0("Graph")?
+        };
+
+        let db = self.db.read();
+        let store = db.store();
+
+        let node_set: std::collections::HashSet<u64> = nodes.iter().copied().collect();
+
+        // Add nodes with properties
+        for &node_id in &nodes {
+            let nid = NodeId::new(node_id);
+            if let Some(node) = store.get_node(nid) {
+                let attrs = PyDict::new(py);
+                let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
+                attrs.set_item("labels", labels)?;
+                for (key, value) in &node.properties {
+                    attrs.set_item(key.as_str(), crate::types::PyValue::to_py(value, py))?;
+                }
+                graph.call_method("add_node", (node_id,), Some(&attrs))?;
+            }
+        }
+
+        // Add edges between included nodes
+        for &node_id in &nodes {
+            let nid = NodeId::new(node_id);
+            for (neighbor, edge_id) in store.edges_from(nid, Direction::Outgoing) {
+                if node_set.contains(&neighbor.0)
+                    && let Some(edge) = store.get_edge(edge_id)
+                {
+                    let attrs = PyDict::new(py);
+                    attrs.set_item("type", edge.edge_type.to_string())?;
+                    for (key, value) in &edge.properties {
+                        attrs.set_item(key.as_str(), crate::types::PyValue::to_py(value, py))?;
+                    }
+                    graph.call_method("add_edge", (node_id, neighbor.0), Some(&attrs))?;
+                }
+            }
+        }
+
+        Ok(graph.into_any().unbind())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "NetworkXAdapter(directed={}, nodes={}, edges={})",

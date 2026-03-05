@@ -471,7 +471,7 @@ mod tests {
     use super::*;
 
     fn create_test_graph() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Create a simple graph:
         //   0 -> 1 -> 2
@@ -524,14 +524,14 @@ mod tests {
 
     #[test]
     fn test_bfs_nonexistent_start() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let visited = bfs(&store, NodeId::new(999));
         assert!(visited.is_empty());
     }
 
     #[test]
     fn test_dfs_nonexistent_start() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let finished = dfs(&store, NodeId::new(999));
         assert!(finished.is_empty());
     }
@@ -577,14 +577,14 @@ mod tests {
 
     #[test]
     fn test_bfs_layers_empty_graph() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let layers = bfs_layers(&store, NodeId::new(0));
         assert!(layers.is_empty());
     }
 
     #[test]
     fn test_bfs_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let visited = bfs(&store, n0);
         assert_eq!(visited, vec![n0]);
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_bfs_layers_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let layers = bfs_layers(&store, n0);
         assert_eq!(layers.len(), 1);
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn test_dfs_with_visitor_back_edge() {
         // Create a cycle: 0 -> 1 -> 2 -> 0
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn test_dfs_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let finished = dfs(&store, n0);
         assert_eq!(finished, vec![n0]);
@@ -731,7 +731,7 @@ mod tests {
 
     #[test]
     fn test_dfs_all_visits_all_components() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         // Component 1: 0 -> 1
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn test_dfs_all_empty_graph() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let finished = dfs_all(&store);
         assert!(finished.is_empty());
     }

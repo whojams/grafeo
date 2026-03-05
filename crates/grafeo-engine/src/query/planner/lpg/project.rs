@@ -399,7 +399,7 @@ impl super::Planner {
     pub(super) fn plan_limit(&self, limit: &LimitOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (input_op, columns) = self.plan_operator(&limit.input)?;
         let schema = self.derive_schema_from_columns(&columns);
-        Ok(super::common::build_limit(
+        Ok(crate::query::planner::common::build_limit(
             input_op,
             columns,
             limit.count,
@@ -411,7 +411,7 @@ impl super::Planner {
     pub(super) fn plan_skip(&self, skip: &SkipOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (input_op, columns) = self.plan_operator(&skip.input)?;
         let schema = self.derive_schema_from_columns(&columns);
-        Ok(super::common::build_skip(
+        Ok(crate::query::planner::common::build_skip(
             input_op, columns, skip.count, schema,
         ))
     }
@@ -582,7 +582,11 @@ impl super::Planner {
                         SortOrder::Ascending => SortDirection::Ascending,
                         SortOrder::Descending => SortDirection::Descending,
                     },
-                    null_order: NullOrder::NullsLast,
+                    null_order: match key.nulls {
+                        Some(crate::query::plan::NullsOrdering::First) => NullOrder::NullsFirst,
+                        Some(crate::query::plan::NullsOrdering::Last) => NullOrder::NullsLast,
+                        None => NullOrder::NullsLast, // default
+                    },
                 })
             })
             .collect::<Result<Vec<_>>>()?;

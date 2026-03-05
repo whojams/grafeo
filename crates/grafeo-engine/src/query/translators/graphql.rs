@@ -10,13 +10,13 @@
 //! - Nested selections → Expand (field name is relationship type)
 //! - Scalar fields → Return projections
 
+use super::common::{
+    VarGen, capitalize_first, wrap_filter, wrap_limit, wrap_return, wrap_skip, wrap_sort,
+};
 use crate::query::plan::{
     BinaryOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LogicalExpression,
     LogicalOperator, LogicalPlan, NodeScanOp, PathMode, ReturnItem, SetPropertyOp, SortKey,
     SortOrder,
-};
-use crate::query::translator_common::{
-    VarGen, capitalize_first, wrap_filter, wrap_limit, wrap_return, wrap_skip, wrap_sort,
 };
 use grafeo_adapters::query::graphql::{self, ast};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -448,6 +448,7 @@ impl GraphQLTranslator {
                                         property: field.clone(),
                                     },
                                     order,
+                                    nulls: None,
                                 }
                             })
                             .collect();
@@ -610,7 +611,7 @@ impl GraphQLTranslator {
 
     /// Translates filter arguments to a predicate expression.
     /// Supports:
-    /// - Direct arguments: `name: "Alice"` → `name = "Alice"`
+    /// - Direct arguments: `name: "Alix"` → `name = "Alix"`
     /// - Where clause: `where: { age_gt: 30 }` → `age > 30`
     /// - Operator suffixes: `_gt`, `_gte`, `_lt`, `_lte`, `_ne`, `_contains`, `_starts_with`, `_ends_with`, `_in`
     fn translate_filter_arguments(
@@ -639,7 +640,7 @@ impl GraphQLTranslator {
                     }
                 }
             } else {
-                // Direct argument: name: "Alice" → name = "Alice", age_gt: 30 → age > 30
+                // Direct argument: name: "Alix" → name = "Alix", age_gt: 30 → age > 30
                 let (property, op) = self.parse_field_operator(&arg.name);
                 let prop = LogicalExpression::Property {
                     variable: var.to_string(),
@@ -709,7 +710,7 @@ impl GraphQLTranslator {
                 op: BinaryOp::And,
                 right: Box::new(pred),
             })
-            .unwrap();
+            .expect("predicates non-empty after is_empty check");
 
         Ok(result)
     }
@@ -1045,7 +1046,7 @@ mod tests {
 
     #[test]
     fn test_create_mutation() {
-        let query = r#"mutation { createUser(name: "Alice", age: 30) { name } }"#;
+        let query = r#"mutation { createUser(name: "Alix", age: 30) { name } }"#;
         let result = translate(query);
         assert!(result.is_ok());
         let plan = result.unwrap();
@@ -1063,7 +1064,7 @@ mod tests {
 
     #[test]
     fn test_create_mutation_labels() {
-        let query = r#"mutation { createPerson(name: "Bob") { name } }"#;
+        let query = r#"mutation { createPerson(name: "Gus") { name } }"#;
         let result = translate(query);
         assert!(result.is_ok());
         let plan = result.unwrap();
@@ -1096,7 +1097,7 @@ mod tests {
     #[test]
     fn test_delete_mutation_by_property() {
         // Delete mutations can use any property as filter, not just id
-        let query = r#"mutation { deleteUser(name: "Alice") }"#;
+        let query = r#"mutation { deleteUser(name: "Alix") }"#;
         let result = translate(query);
         assert!(result.is_ok());
     }
@@ -1128,7 +1129,7 @@ mod tests {
 
     #[test]
     fn test_update_mutation() {
-        let query = r#"mutation { updateUser(id: 123, name: "Alice") { name } }"#;
+        let query = r#"mutation { updateUser(id: 123, name: "Alix") { name } }"#;
         let result = translate(query);
         assert!(
             result.is_ok(),
@@ -1154,7 +1155,7 @@ mod tests {
     #[test]
     fn test_update_mutation_requires_filter_and_property() {
         // Only one argument - need at least 2 (filter + property to update)
-        let query = r#"mutation { updateUser(name: "Alice") { name } }"#;
+        let query = r#"mutation { updateUser(name: "Alix") { name } }"#;
         let result = translate(query);
         assert!(result.is_err(), "Update with only 1 argument should fail");
     }
@@ -1162,7 +1163,7 @@ mod tests {
     #[test]
     fn test_update_mutation_without_selection_set() {
         // Update without specifying which fields to return
-        let query = r#"mutation { updateUser(id: 1, name: "Bob") }"#;
+        let query = r#"mutation { updateUser(id: 1, name: "Gus") }"#;
         let result = translate(query);
         assert!(
             result.is_ok(),
@@ -1174,7 +1175,7 @@ mod tests {
     #[test]
     fn test_update_mutation_property_filter() {
         // When no id, first argument becomes filter
-        let query = r#"mutation { updateUser(email: "alice@test.com", name: "Alice") { name } }"#;
+        let query = r#"mutation { updateUser(email: "alix@test.com", name: "Alix") { name } }"#;
         let result = translate(query);
         assert!(
             result.is_ok(),
@@ -1418,7 +1419,7 @@ mod tests {
     #[test]
     fn test_direct_arg_equality_unchanged() {
         // Plain direct args (no suffix) should still use Eq
-        let query = r#"{ user(name: "Alice") { age } }"#;
+        let query = r#"{ user(name: "Alix") { age } }"#;
         let result = translate(query);
         assert!(result.is_ok());
         let plan = result.unwrap();

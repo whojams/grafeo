@@ -12,12 +12,12 @@ use grafeo_engine::GrafeoDB;
 #[test]
 fn test_create_edge_with_props() {
     let db = GrafeoDB::new_in_memory();
-    let alice = db.create_node(&["Person"]);
-    let bob = db.create_node(&["Person"]);
+    let alix = db.create_node(&["Person"]);
+    let gus = db.create_node(&["Person"]);
 
     let eid = db.create_edge_with_props(
-        alice,
-        bob,
+        alix,
+        gus,
         "KNOWS",
         [
             ("since", Value::Int64(2020)),
@@ -27,8 +27,8 @@ fn test_create_edge_with_props() {
 
     let edge = db.get_edge(eid).expect("edge should exist");
     assert_eq!(edge.edge_type.as_str(), "KNOWS");
-    assert_eq!(edge.src, alice);
-    assert_eq!(edge.dst, bob);
+    assert_eq!(edge.src, alix);
+    assert_eq!(edge.dst, gus);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_get_node_labels_returns_none_for_invalid_id() {
 fn test_remove_node_property() {
     let db = GrafeoDB::new_in_memory();
     let n = db.create_node(&["Person"]);
-    db.set_node_property(n, "name", Value::String("Alice".into()));
+    db.set_node_property(n, "name", Value::String("Alix".into()));
 
     assert!(db.remove_node_property(n, "name"));
     let node = db.get_node(n).unwrap();
@@ -151,19 +151,19 @@ fn test_property_index_lifecycle() {
 
     // Create nodes with the property
     let n1 = db.create_node(&["Person"]);
-    db.set_node_property(n1, "name", Value::String("Alice".into()));
+    db.set_node_property(n1, "name", Value::String("Alix".into()));
     let n2 = db.create_node(&["Person"]);
-    db.set_node_property(n2, "name", Value::String("Bob".into()));
+    db.set_node_property(n2, "name", Value::String("Gus".into()));
     let n3 = db.create_node(&["Person"]);
-    db.set_node_property(n3, "name", Value::String("Alice".into()));
+    db.set_node_property(n3, "name", Value::String("Alix".into()));
 
     // Find by property
-    let results = db.find_nodes_by_property("name", &Value::String("Alice".into()));
+    let results = db.find_nodes_by_property("name", &Value::String("Alix".into()));
     assert_eq!(results.len(), 2);
     assert!(results.contains(&n1));
     assert!(results.contains(&n3));
 
-    let results = db.find_nodes_by_property("name", &Value::String("Bob".into()));
+    let results = db.find_nodes_by_property("name", &Value::String("Gus".into()));
     assert_eq!(results.len(), 1);
     assert!(results.contains(&n2));
 
@@ -237,7 +237,7 @@ fn test_validate_empty_database() {
 fn test_info() {
     let db = GrafeoDB::new_in_memory();
     let _n = db.create_node(&["Person"]);
-    db.set_node_property(_n, "name", Value::String("Alice".into()));
+    db.set_node_property(_n, "name", Value::String("Alix".into()));
 
     let info = db.info();
     assert_eq!(info.node_count, 1);
@@ -250,7 +250,7 @@ fn test_info() {
 fn test_detailed_stats() {
     let db = GrafeoDB::new_in_memory();
     let a = db.create_node(&["Person"]);
-    db.set_node_property(a, "name", Value::String("Alice".into()));
+    db.set_node_property(a, "name", Value::String("Alix".into()));
     let b = db.create_node(&["Company"]);
     db.set_node_property(b, "name", Value::String("Acme".into()));
     db.create_edge(a, b, "WORKS_AT");
@@ -283,9 +283,9 @@ fn test_graph_model_default() {
 fn test_to_memory_clones_data() {
     let db = GrafeoDB::new_in_memory();
     let a = db.create_node(&["Person"]);
-    db.set_node_property(a, "name", Value::String("Alice".into()));
+    db.set_node_property(a, "name", Value::String("Alix".into()));
     let b = db.create_node(&["Person"]);
-    db.set_node_property(b, "name", Value::String("Bob".into()));
+    db.set_node_property(b, "name", Value::String("Gus".into()));
     db.create_edge(a, b, "KNOWS");
 
     let clone = db.to_memory().expect("to_memory should succeed");
@@ -304,10 +304,10 @@ fn test_to_memory_clones_data() {
 fn test_snapshot_export_import_roundtrip() {
     let db = GrafeoDB::new_in_memory();
     let a = db.create_node(&["Person"]);
-    db.set_node_property(a, "name", Value::String("Alice".into()));
+    db.set_node_property(a, "name", Value::String("Alix".into()));
     db.set_node_property(a, "age", Value::Int64(30));
     let b = db.create_node(&["Person"]);
-    db.set_node_property(b, "name", Value::String("Bob".into()));
+    db.set_node_property(b, "name", Value::String("Gus".into()));
     db.create_edge(a, b, "KNOWS");
 
     // Export
@@ -322,7 +322,7 @@ fn test_snapshot_export_import_roundtrip() {
     // Verify data integrity
     let session = restored.session();
     let result = session
-        .execute("MATCH (n:Person {name: 'Alice'}) RETURN n.age")
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.age")
         .unwrap();
     assert_eq!(result.rows.len(), 1);
     assert_eq!(result.rows[0][0], Value::Int64(30));
@@ -342,7 +342,7 @@ fn test_schema_returns_labels_and_edge_types() {
 
     let db = GrafeoDB::new_in_memory();
     let a = db.create_node(&["Person"]);
-    db.set_node_property(a, "name", Value::String("Alice".into()));
+    db.set_node_property(a, "name", Value::String("Alix".into()));
     db.set_node_property(a, "age", Value::Int64(30));
     let b = db.create_node(&["Company"]);
     db.set_node_property(b, "name", Value::String("Acme".into()));
@@ -422,20 +422,20 @@ fn test_execute_with_params() {
     session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
         ],
     );
     session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
         ],
     );
 
     let params =
-        std::collections::HashMap::from([("name".to_string(), Value::String("Alice".into()))]);
+        std::collections::HashMap::from([("name".to_string(), Value::String("Alix".into()))]);
     let result = session
         .execute_with_params("MATCH (n:Person) WHERE n.name = $name RETURN n.age", params)
         .unwrap();
@@ -467,18 +467,18 @@ fn test_info_updates_after_operations() {
 #[test]
 fn test_complex_graph_with_multiple_edge_types() {
     let db = GrafeoDB::new_in_memory();
-    let alice = db.create_node(&["Person"]);
-    db.set_node_property(alice, "name", Value::String("Alice".into()));
+    let alix = db.create_node(&["Person"]);
+    db.set_node_property(alix, "name", Value::String("Alix".into()));
 
-    let bob = db.create_node(&["Person"]);
-    db.set_node_property(bob, "name", Value::String("Bob".into()));
+    let gus = db.create_node(&["Person"]);
+    db.set_node_property(gus, "name", Value::String("Gus".into()));
 
     let acme = db.create_node(&["Company"]);
     db.set_node_property(acme, "name", Value::String("Acme".into()));
 
-    db.create_edge(alice, bob, "KNOWS");
-    db.create_edge(alice, acme, "WORKS_AT");
-    db.create_edge(bob, acme, "WORKS_AT");
+    db.create_edge(alix, gus, "KNOWS");
+    db.create_edge(alix, acme, "WORKS_AT");
+    db.create_edge(gus, acme, "WORKS_AT");
 
     assert_eq!(db.node_count(), 3);
     assert_eq!(db.edge_count(), 3);

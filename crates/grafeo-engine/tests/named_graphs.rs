@@ -179,9 +179,9 @@ mod tests {
         {
             use grafeo_core::graph::rdf::{Literal, Term, Triple};
             g.insert(Triple::new(
-                Term::iri("http://ex.org/alice"),
+                Term::iri("http://ex.org/alix"),
                 Term::iri("http://ex.org/name"),
-                Term::Literal(Literal::simple("Alice")),
+                Term::Literal(Literal::simple("Alix")),
             ));
         }
 
@@ -205,7 +205,7 @@ mod tests {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/name> "Alice" .
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
                 }"#,
             )
             .unwrap();
@@ -216,9 +216,9 @@ mod tests {
             use grafeo_core::graph::rdf::{Literal, Term, Triple};
             let g1 = rdf.graph_or_create("http://ex.org/g1");
             g1.insert(Triple::new(
-                Term::iri("http://ex.org/bob"),
+                Term::iri("http://ex.org/gus"),
                 Term::iri("http://ex.org/name"),
-                Term::Literal(Literal::simple("Bob")),
+                Term::Literal(Literal::simple("Gus")),
             ));
             let g2 = rdf.graph_or_create("http://ex.org/g2");
             g2.insert(Triple::new(
@@ -256,7 +256,7 @@ mod tests {
             .execute_sparql(
                 r#"INSERT DATA {
                     GRAPH <http://ex.org/g1> {
-                        <http://ex.org/alice> <http://ex.org/name> "Alice" .
+                        <http://ex.org/alix> <http://ex.org/name> "Alix" .
                     }
                 }"#,
             )
@@ -277,7 +277,7 @@ mod tests {
             .execute_sparql(
                 r#"SELECT ?name WHERE {
                     GRAPH <http://ex.org/g1> {
-                        <http://ex.org/alice> <http://ex.org/name> ?name
+                        <http://ex.org/alix> <http://ex.org/name> ?name
                     }
                 }"#,
             )
@@ -299,8 +299,8 @@ mod tests {
             .execute_sparql(
                 r#"INSERT DATA {
                     GRAPH <http://ex.org/g1> {
-                        <http://ex.org/alice> <http://ex.org/name> "Alice" .
-                        <http://ex.org/bob> <http://ex.org/name> "Bob" .
+                        <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                        <http://ex.org/gus> <http://ex.org/name> "Gus" .
                     }
                 }"#,
             )
@@ -311,13 +311,13 @@ mod tests {
             .execute_sparql(
                 r#"DELETE DATA {
                     GRAPH <http://ex.org/g1> {
-                        <http://ex.org/alice> <http://ex.org/name> "Alice" .
+                        <http://ex.org/alix> <http://ex.org/name> "Alix" .
                     }
                 }"#,
             )
             .unwrap();
 
-        // Only Bob should remain
+        // Only Gus should remain
         let result = session
             .execute_sparql(
                 r#"SELECT ?name WHERE {
@@ -379,7 +379,7 @@ mod tests {
         session
             .execute_sparql(
                 r#"INSERT DATA {
-                    <http://ex.org/alice> <http://ex.org/name> "Alice" .
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
                 }"#,
             )
             .unwrap();
@@ -390,13 +390,13 @@ mod tests {
             use grafeo_core::graph::rdf::{Literal, Term, Triple};
             let g = rdf.graph_or_create("http://ex.org/g1");
             g.insert(Triple::new(
-                Term::iri("http://ex.org/bob"),
+                Term::iri("http://ex.org/gus"),
                 Term::iri("http://ex.org/name"),
-                Term::Literal(Literal::simple("Bob")),
+                Term::Literal(Literal::simple("Gus")),
             ));
         }
 
-        // Default graph: only Alice
+        // Default graph: only Alix
         let default_result = session
             .execute_sparql(r#"SELECT ?s WHERE { ?s <http://ex.org/name> ?name }"#)
             .unwrap();
@@ -406,7 +406,7 @@ mod tests {
             "Default graph should have 1 triple"
         );
 
-        // Named graph: only Bob
+        // Named graph: only Gus
         let named_result = session
             .execute_sparql(
                 r#"SELECT ?s WHERE {

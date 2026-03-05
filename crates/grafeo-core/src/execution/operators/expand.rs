@@ -293,7 +293,7 @@ mod tests {
     /// Creates a new `LpgStore` wrapped in an `Arc` and returns both the
     /// concrete handle (for mutation) and a trait-object handle (for operators).
     fn test_store() -> (Arc<LpgStore>, Arc<dyn GraphStore>) {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let dyn_store: Arc<dyn GraphStore> = Arc::clone(&store) as Arc<dyn GraphStore>;
         (store, dyn_store)
     }
@@ -303,15 +303,15 @@ mod tests {
         let (store, dyn_store) = test_store();
 
         // Create nodes
-        let alice = store.create_node(&["Person"]);
-        let bob = store.create_node(&["Person"]);
+        let alix = store.create_node(&["Person"]);
+        let gus = store.create_node(&["Person"]);
         let charlie = store.create_node(&["Person"]);
 
-        // Create edges: Alice -> Bob, Alice -> Charlie
-        store.create_edge(alice, bob, "KNOWS");
-        store.create_edge(alice, charlie, "KNOWS");
+        // Create edges: Alix -> Gus, Alix -> Charlie
+        store.create_edge(alix, gus, "KNOWS");
+        store.create_edge(alix, charlie, "KNOWS");
 
-        // Scan Alice only
+        // Scan Alix only
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
 
         let mut expand = ExpandOperator::new(
@@ -333,17 +333,17 @@ mod tests {
             }
         }
 
-        // Alice -> Bob, Alice -> Charlie
+        // Alix -> Gus, Alix -> Charlie
         assert_eq!(results.len(), 2);
 
-        // All source nodes should be Alice
+        // All source nodes should be Alix
         for (src, _, _) in &results {
-            assert_eq!(*src, alice);
+            assert_eq!(*src, alix);
         }
 
-        // Target nodes should be Bob and Charlie
+        // Target nodes should be Gus and Charlie
         let targets: Vec<NodeId> = results.iter().map(|(_, _, dst)| *dst).collect();
-        assert!(targets.contains(&bob));
+        assert!(targets.contains(&gus));
         assert!(targets.contains(&charlie));
     }
 
@@ -351,12 +351,12 @@ mod tests {
     fn test_expand_with_edge_type_filter() {
         let (store, dyn_store) = test_store();
 
-        let alice = store.create_node(&["Person"]);
-        let bob = store.create_node(&["Person"]);
+        let alix = store.create_node(&["Person"]);
+        let gus = store.create_node(&["Person"]);
         let company = store.create_node(&["Company"]);
 
-        store.create_edge(alice, bob, "KNOWS");
-        store.create_edge(alice, company, "WORKS_AT");
+        store.create_edge(alix, gus, "KNOWS");
+        store.create_edge(alix, company, "WORKS_AT");
 
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
 
@@ -378,19 +378,19 @@ mod tests {
 
         // Only KNOWS edges should be followed
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0], bob);
+        assert_eq!(results[0], gus);
     }
 
     #[test]
     fn test_expand_incoming() {
         let (store, dyn_store) = test_store();
 
-        let alice = store.create_node(&["Person"]);
-        let bob = store.create_node(&["Person"]);
+        let alix = store.create_node(&["Person"]);
+        let gus = store.create_node(&["Person"]);
 
-        store.create_edge(alice, bob, "KNOWS");
+        store.create_edge(alix, gus, "KNOWS");
 
-        // Scan Bob
+        // Scan Gus
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
 
         let mut expand =
@@ -405,10 +405,10 @@ mod tests {
             }
         }
 
-        // Bob <- Alice (Bob's incoming edge from Alice)
+        // Gus <- Alix (Gus's incoming edge from Alix)
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, bob); // source in the expand is Bob
-        assert_eq!(results[0].1, alice); // target is Alice (who points to Bob)
+        assert_eq!(results[0].0, gus); // source in the expand is Gus
+        assert_eq!(results[0].1, alix); // target is Alix (who points to Gus)
     }
 
     #[test]

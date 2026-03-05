@@ -34,7 +34,7 @@ use crate::index::vector::HnswIndex;
 /// use std::sync::Arc;
 ///
 /// # fn example() -> Result<(), grafeo_core::execution::operators::OperatorError> {
-/// let store = Arc::new(LpgStore::new());
+/// let store = Arc::new(LpgStore::new().unwrap());
 /// let query = vec![0.1f32, 0.2, 0.3];
 /// let mut scan = VectorScanOperator::brute_force(
 ///     store, "embedding", query, 10, DistanceMetric::Cosine,
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_brute_force() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes with vector embeddings
         let n1 = store.create_node(&["Document"]);
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_reset() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let n1 = store.create_node(&["Doc"]);
         store.set_node_property(n1, "vec", Value::Vector(vec![0.1, 0.2].into()));
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_with_distance_filter() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let n1 = store.create_node(&["Doc"]);
         let n2 = store.create_node(&["Doc"]);
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_empty_results() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // No nodes with vectors
         store.create_node(&["Doc"]);
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_name() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let brute_scan = VectorScanOperator::brute_force(
             Arc::clone(&store) as Arc<dyn GraphStore>,
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_with_min_similarity() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let n1 = store.create_node(&["Doc"]);
         let n2 = store.create_node(&["Doc"]);
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_with_ef() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let n1 = store.create_node(&["Doc"]);
         store.set_node_property(n1, "vec", Value::Vector(vec![0.1, 0.2].into()));
@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_with_chunk_capacity() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create many nodes
         for i in 0..10 {
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_vector_scan_no_label_filter() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes with different labels
         let n1 = store.create_node(&["TypeA"]);
@@ -596,7 +596,7 @@ mod tests {
     fn test_vector_scan_with_hnsw_index() {
         use crate::index::vector::{HnswConfig, HnswIndex, PropertyVectorAccessor};
 
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create nodes and set vector properties FIRST (so accessor can read them)
         let n1 = store.create_node(&["Doc"]);

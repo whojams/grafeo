@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_property_vector_accessor() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let id = store.create_node(&["Test"]);
         let vec_data: Arc<[f32]> = vec![1.0, 2.0, 3.0].into();
         store.set_node_property(id, "embedding", Value::Vector(vec_data.clone()));

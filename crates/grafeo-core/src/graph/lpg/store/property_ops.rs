@@ -113,7 +113,7 @@ impl LpgStore {
     /// ```
     /// # use grafeo_core::graph::lpg::LpgStore;
     /// # use grafeo_common::types::{PropertyKey, Value};
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     /// let node_id = store.create_node(&["Person"]);
     /// store.set_node_property(node_id, "age", Value::from(30i64));
     ///
@@ -149,7 +149,7 @@ impl LpgStore {
     /// use grafeo_core::graph::lpg::LpgStore;
     /// use grafeo_common::types::{NodeId, PropertyKey, Value};
     ///
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     /// let n1 = store.create_node(&["Person"]);
     /// let n2 = store.create_node(&["Person"]);
     /// store.set_node_property(n1, "age", Value::from(25i64));
@@ -187,11 +187,11 @@ impl LpgStore {
     /// use grafeo_core::graph::lpg::LpgStore;
     /// use grafeo_common::types::{PropertyKey, Value};
     ///
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     /// let n1 = store.create_node(&["Person"]);
-    /// store.set_node_property(n1, "name", Value::from("Alice"));
+    /// store.set_node_property(n1, "name", Value::from("Alix"));
     /// store.set_node_property(n1, "age", Value::from(30i64));
-    /// store.set_node_property(n1, "email", Value::from("alice@example.com"));
+    /// store.set_node_property(n1, "email", Value::from("alix@example.com"));
     ///
     /// // Only fetch name and age (faster than get_nodes_properties_batch)
     /// let keys = vec![PropertyKey::new("name"), PropertyKey::new("age")];

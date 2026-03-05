@@ -209,6 +209,8 @@ pub enum TokenKind {
     Concat,
     /// | pipe (label disjunction).
     Pipe,
+    /// |+| multiset alternation.
+    PipePlusPipe,
     /// & ampersand (label conjunction).
     Ampersand,
     /// ! exclamation (label negation).
@@ -389,6 +391,10 @@ impl<'a> Lexer<'a> {
                 if self.current_char() == '|' {
                     self.advance();
                     TokenKind::Concat
+                } else if self.current_char() == '+' && self.peek_char() == '|' {
+                    self.advance(); // '+'
+                    self.advance(); // '|'
+                    TokenKind::PipePlusPipe
                 } else {
                     TokenKind::Pipe
                 }
@@ -563,6 +569,16 @@ impl<'a> Lexer<'a> {
                 self.advance(); // '0'
                 self.advance(); // 'o'
                 while self.position < self.input.len() && ('0'..='7').contains(&self.current_char())
+                {
+                    self.advance();
+                }
+                return TokenKind::Integer;
+            }
+            if next == 'b' || next == 'B' {
+                self.advance(); // '0'
+                self.advance(); // 'b'
+                while self.position < self.input.len()
+                    && (self.current_char() == '0' || self.current_char() == '1')
                 {
                     self.advance();
                 }
@@ -1012,6 +1028,17 @@ mod tests {
     }
 
     #[test]
+    fn test_pipe_plus_pipe_token() {
+        let mut lexer = Lexer::new("|+| | || |+|");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::PipePlusPipe);
+        assert_eq!(lexer.next_token().kind, TokenKind::Pipe);
+        assert_eq!(lexer.next_token().kind, TokenKind::Concat);
+        assert_eq!(lexer.next_token().kind, TokenKind::PipePlusPipe);
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
     fn test_is_token_in_pattern() {
         let mut lexer = Lexer::new("(n IS Person)");
 
@@ -1103,6 +1130,29 @@ mod tests {
         let t4 = lexer.next_token();
         assert_eq!(t4.kind, TokenKind::Integer);
         assert_eq!(t4.text, "0o755");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_binary_integer_literals() {
+        let mut lexer = Lexer::new("0b1010 0B1111 0b0 0b11001100");
+
+        let t1 = lexer.next_token();
+        assert_eq!(t1.kind, TokenKind::Integer);
+        assert_eq!(t1.text, "0b1010");
+
+        let t2 = lexer.next_token();
+        assert_eq!(t2.kind, TokenKind::Integer);
+        assert_eq!(t2.text, "0B1111");
+
+        let t3 = lexer.next_token();
+        assert_eq!(t3.kind, TokenKind::Integer);
+        assert_eq!(t3.text, "0b0");
+
+        let t4 = lexer.next_token();
+        assert_eq!(t4.kind, TokenKind::Integer);
+        assert_eq!(t4.text, "0b11001100");
 
         assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }

@@ -1267,7 +1267,8 @@ impl<'a> Parser<'a> {
                             },
                         });
                     }
-                    expr = combined.unwrap();
+                    expr = combined
+                        .ok_or_else(|| self.error("expected at least one label after ':'"))?;
                     break;
                 }
                 _ => break,
@@ -1489,7 +1490,11 @@ impl<'a> Parser<'a> {
                     };
 
                     let mut args = Vec::new();
-                    if self.current.kind != TokenKind::RParen {
+                    // Handle count(*) special case
+                    if self.current.kind == TokenKind::Star {
+                        self.advance();
+                        args.push(Expression::Variable("*".to_string()));
+                    } else if self.current.kind != TokenKind::RParen {
                         args.push(self.parse_expression()?);
                         while self.current.kind == TokenKind::Comma {
                             self.advance();
@@ -1830,7 +1835,7 @@ mod tests {
 
     #[test]
     fn test_parse_match_with_properties() {
-        let stmt = parse_ok("MATCH (n:Person {name: 'Alice', age: 30}) RETURN n");
+        let stmt = parse_ok("MATCH (n:Person {name: 'Alix', age: 30}) RETURN n");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Match(MatchClause { patterns, .. }) = &clauses[0]
         {
@@ -1976,7 +1981,7 @@ mod tests {
 
     #[test]
     fn test_parse_where_and() {
-        let stmt = parse_ok("MATCH (n) WHERE n.age > 30 AND n.name = 'Alice' RETURN n");
+        let stmt = parse_ok("MATCH (n) WHERE n.age > 30 AND n.name = 'Alix' RETURN n");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Where(WhereClause { predicate, .. }) = &clauses[1]
         {
@@ -2157,7 +2162,7 @@ mod tests {
 
     #[test]
     fn test_parse_create_node() {
-        let stmt = parse_ok("CREATE (n:Person {name: 'Alice'})");
+        let stmt = parse_ok("CREATE (n:Person {name: 'Alix'})");
         if let Statement::Query(Query { clauses, .. }) = stmt {
             assert!(matches!(&clauses[0], Clause::Create(_)));
         }
@@ -2175,7 +2180,7 @@ mod tests {
 
     #[test]
     fn test_parse_merge() {
-        let stmt = parse_ok("MERGE (n:Person {name: 'Alice'})");
+        let stmt = parse_ok("MERGE (n:Person {name: 'Alix'})");
         if let Statement::Query(Query { clauses, .. }) = stmt {
             assert!(matches!(&clauses[0], Clause::Merge(_)));
         }
@@ -2184,7 +2189,7 @@ mod tests {
     #[test]
     fn test_parse_merge_on_create() {
         let stmt =
-            parse_ok("MERGE (n:Person {name: 'Alice'}) ON CREATE SET n.created = timestamp()");
+            parse_ok("MERGE (n:Person {name: 'Alix'}) ON CREATE SET n.created = timestamp()");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Merge(MergeClause { on_create, .. }) = &clauses[0]
         {
@@ -2194,7 +2199,7 @@ mod tests {
 
     #[test]
     fn test_parse_merge_on_match() {
-        let stmt = parse_ok("MERGE (n:Person {name: 'Alice'}) ON MATCH SET n.seen = true");
+        let stmt = parse_ok("MERGE (n:Person {name: 'Alix'}) ON MATCH SET n.seen = true");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Merge(MergeClause { on_match, .. }) = &clauses[0]
         {
@@ -2228,7 +2233,7 @@ mod tests {
 
     #[test]
     fn test_parse_set_property() {
-        let stmt = parse_ok("MATCH (n) SET n.name = 'Bob'");
+        let stmt = parse_ok("MATCH (n) SET n.name = 'Gus'");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Set(SetClause { items, .. }) = &clauses[1]
         {
@@ -2249,7 +2254,7 @@ mod tests {
 
     #[test]
     fn test_parse_set_all_properties() {
-        let stmt = parse_ok("MATCH (n) SET n = {name: 'Alice', age: 30}");
+        let stmt = parse_ok("MATCH (n) SET n = {name: 'Alix', age: 30}");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Set(SetClause { items, .. }) = &clauses[1]
         {
@@ -2500,7 +2505,7 @@ mod tests {
 
     #[test]
     fn test_parse_map_literal() {
-        let stmt = parse_ok("RETURN {name: 'Alice', age: 30}");
+        let stmt = parse_ok("RETURN {name: 'Alix', age: 30}");
         if let Statement::Query(Query { clauses, .. }) = stmt
             && let Clause::Return(ReturnClause {
                 items: ReturnItems::Explicit(items),

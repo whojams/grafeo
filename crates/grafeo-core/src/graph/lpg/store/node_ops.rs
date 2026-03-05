@@ -30,7 +30,7 @@ impl LpgStore {
         // Store labels in node_labels map and label_index
         let mut node_label_set = FxHashSet::default();
         for label in labels {
-            let label_id = self.get_or_create_label_id(*label);
+            let label_id = self.get_or_create_label_id(label);
             node_label_set.insert(label_id);
 
             // Update label index
@@ -64,7 +64,7 @@ impl LpgStore {
         // Store labels in node_labels map and label_index
         let mut node_label_set = FxHashSet::default();
         for label in labels {
-            let label_id = self.get_or_create_label_id(*label);
+            let label_id = self.get_or_create_label_id(label);
             node_label_set.insert(label_id);
 
             // Update label index

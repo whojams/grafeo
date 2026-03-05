@@ -255,7 +255,7 @@ fn test_grafeo_memory_pattern() {
 
     // Create nodes with properties at creation time (grafeo-memory pattern)
     for i in 0..10 {
-        let user = if i < 5 { "alice" } else { "bob" };
+        let user = if i < 5 { "alix" } else { "gus" };
         let id = db.create_node_with_props(
             &["Memory"],
             vec![
@@ -282,7 +282,7 @@ fn test_grafeo_memory_pattern() {
     assert_eq!(all_results.len(), 10, "should find all 10 Memory nodes");
 
     // Search WITH String-valued filter, NO property index (scan fallback)
-    let filters: HashMap<String, Value> = [("user_id".to_string(), Value::String("alice".into()))]
+    let filters: HashMap<String, Value> = [("user_id".to_string(), Value::String("alix".into()))]
         .into_iter()
         .collect();
 
@@ -297,16 +297,16 @@ fn test_grafeo_memory_pattern() {
         )
         .expect("filtered search should not error");
 
-    assert_eq!(results.len(), 5, "should find 5 alice nodes");
+    assert_eq!(results.len(), 5, "should find 5 alix nodes");
 
-    // Verify all results have user_id="alice"
+    // Verify all results have user_id="alix"
     for (id, _) in &results {
         let node = db.get_node(*id).expect("node exists");
         let uid = node
             .properties
             .get(&grafeo_common::types::PropertyKey::new("user_id"))
             .expect("has user_id");
-        assert_eq!(uid, &Value::String("alice".into()));
+        assert_eq!(uid, &Value::String("alix".into()));
     }
 }
 

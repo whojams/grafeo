@@ -155,7 +155,7 @@ pub enum PathFunction {
     AllShortestPaths,
 }
 
-/// A node pattern like (n:Person {name: 'Alice'}).
+/// A node pattern like (n:Person {name: 'Alix'}).
 #[derive(Debug, Clone)]
 pub struct NodePattern {
     /// Variable name (optional).

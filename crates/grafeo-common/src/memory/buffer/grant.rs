@@ -61,24 +61,25 @@ impl MemoryGrant {
     pub fn resize(&mut self, new_size: usize) -> bool {
         let current = self.size.load(Ordering::Relaxed);
 
-        if new_size > current {
-            // Need more memory - try to allocate the difference
-            let diff = new_size - current;
-            if self.releaser.try_allocate_raw(diff, self.region) {
+        match new_size.cmp(&current) {
+            std::cmp::Ordering::Greater => {
+                // Need more memory - try to allocate the difference
+                let diff = new_size - current;
+                if self.releaser.try_allocate_raw(diff, self.region) {
+                    self.size.store(new_size, Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            }
+            std::cmp::Ordering::Less => {
+                // Releasing memory
+                let diff = current - new_size;
+                self.releaser.release(diff, self.region);
                 self.size.store(new_size, Ordering::Relaxed);
                 true
-            } else {
-                false
             }
-        } else if new_size < current {
-            // Releasing memory
-            let diff = current - new_size;
-            self.releaser.release(diff, self.region);
-            self.size.store(new_size, Ordering::Relaxed);
-            true
-        } else {
-            // Same size, nothing to do
-            true
+            std::cmp::Ordering::Equal => true,
         }
     }
 

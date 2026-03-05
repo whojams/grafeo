@@ -1259,9 +1259,21 @@ impl<'a> Parser<'a> {
 
     fn parse_pattern(&mut self) -> Result<Pattern> {
         // Check for parenthesized (grouped) pattern: ((a)-[]->(b)){2,5}
-        // Detected by `(` followed by `(` (the inner pattern's first node)
-        if self.current.kind == TokenKind::LParen && self.peek_kind() == TokenKind::LParen {
-            return self.parse_parenthesized_pattern();
+        // Also handles G048 subpath var `(p = (a)-[]->(b)){2,5}`,
+        // G049 path mode prefix `(TRAIL (a)-[]->(b)){2,5}`,
+        // and G050 WHERE inside `((a)-[e]->(b) WHERE e.w > 5){2,5}`.
+        if self.current.kind == TokenKind::LParen {
+            let peek = self.peek_kind();
+            if matches!(
+                peek,
+                TokenKind::LParen
+                    | TokenKind::Walk
+                    | TokenKind::Trail
+                    | TokenKind::Simple
+                    | TokenKind::Acyclic
+            ) {
+                return self.parse_parenthesized_pattern();
+            }
         }
 
         let node = self.parse_node_pattern()?;
@@ -1302,22 +1314,73 @@ impl<'a> Parser<'a> {
     /// Parses a parenthesized path pattern with optional quantifier.
     ///
     /// ```text
-    /// ( pattern [| pattern]* ) [ {min,max} ]
+    /// ( [subpath_var =] [path_mode] pattern [| pattern]* [WHERE expr] ) [ {min,max} ]
     /// ```
+    ///
+    /// G048: subpath variable declaration `(p = (a)-[e]->(b)){2,5}`
+    /// G049: path mode prefix `(TRAIL (a)-[e]->(b)){2,5}`
+    /// G050: WHERE clause `((a)-[e]->(b) WHERE e.w > 5){2,5}`
     fn parse_parenthesized_pattern(&mut self) -> Result<Pattern> {
         self.expect(TokenKind::LParen)?;
 
-        // Parse the inner pattern(s), potentially with union via |
+        // G049: Check for optional path mode prefix (WALK, TRAIL, SIMPLE, ACYCLIC)
+        let path_mode = match self.current.kind {
+            TokenKind::Walk => {
+                self.advance();
+                Some(PathMode::Walk)
+            }
+            TokenKind::Trail => {
+                self.advance();
+                Some(PathMode::Trail)
+            }
+            TokenKind::Simple => {
+                self.advance();
+                Some(PathMode::Simple)
+            }
+            TokenKind::Acyclic => {
+                self.advance();
+                Some(PathMode::Acyclic)
+            }
+            _ => None,
+        };
+
+        // G048: Check for subpath variable declaration: `name = pattern`
+        // We detect this by checking if the current token is an identifier
+        // and the next token is `=` (assignment).
+        let subpath_var = if self.is_identifier() && self.peek_kind() == TokenKind::Eq {
+            let name = self.get_identifier_name();
+            self.advance(); // consume identifier
+            self.advance(); // consume `=`
+            Some(name)
+        } else {
+            None
+        };
+
+        // Parse the inner pattern(s), potentially with union via | or multiset union via |+|
         let mut patterns = vec![self.parse_pattern()?];
-        while self.current.kind == TokenKind::Pipe {
+        let mut is_multiset = false;
+        while self.current.kind == TokenKind::Pipe || self.current.kind == TokenKind::PipePlusPipe {
+            if self.current.kind == TokenKind::PipePlusPipe {
+                is_multiset = true;
+            }
             self.advance();
             patterns.push(self.parse_pattern()?);
         }
+
+        // G050: Check for optional WHERE clause inside the parenthesized pattern
+        let where_clause = if self.current.kind == TokenKind::Where {
+            self.advance();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
 
         self.expect(TokenKind::RParen)?;
 
         let inner = if patterns.len() == 1 {
             patterns.remove(0)
+        } else if is_multiset {
+            Pattern::MultisetUnion(patterns)
         } else {
             Pattern::Union(patterns)
         };
@@ -1329,9 +1392,22 @@ impl<'a> Parser<'a> {
                 pattern: Box::new(inner),
                 min: min.unwrap_or(1),
                 max,
+                subpath_var,
+                path_mode,
+                where_clause,
+            })
+        } else if subpath_var.is_some() || path_mode.is_some() || where_clause.is_some() {
+            // Has parenthesized-pattern features but no quantifier: treat as {1,1}
+            Ok(Pattern::Quantified {
+                pattern: Box::new(inner),
+                min: 1,
+                max: Some(1),
+                subpath_var,
+                path_mode,
+                where_clause,
             })
         } else {
-            // No quantifier: just a grouped pattern (or union)
+            // No quantifier, no extra features: just a grouped pattern (or union)
             Ok(inner)
         }
     }
@@ -1463,6 +1539,11 @@ impl<'a> Parser<'a> {
                 // Pattern: -[...]->(target) or -[...]-(target)
                 self.advance();
 
+                // G080: Simplified path pattern: -/:Label/-> desugars to -[:Label]->
+                if self.current.kind == TokenKind::Slash {
+                    return self.parse_simplified_edge(false);
+                }
+
                 // Parse [variable:TYPE*min..max {props}]
                 let (var, edge_types, min_h, max_h, props) =
                     if self.current.kind == TokenKind::LBracket {
@@ -1547,6 +1628,11 @@ impl<'a> Parser<'a> {
             } else if self.current.kind == TokenKind::LeftArrow {
                 // Pattern: <-[...]-(target)
                 self.advance();
+
+                // G080: Simplified path pattern: <-/:Label/- desugars to <-[:Label]-
+                if self.current.kind == TokenKind::Slash {
+                    return self.parse_simplified_edge(true);
+                }
 
                 let (var, edge_types, min_h, max_h, props) =
                     if self.current.kind == TokenKind::LBracket {
@@ -1655,6 +1741,11 @@ impl<'a> Parser<'a> {
                 // GQL undirected edge: ~[variable:TYPE*min..max {props}]~
                 self.advance();
 
+                // G080: Simplified undirected path: ~/:Label/~
+                if self.current.kind == TokenKind::Slash {
+                    return self.parse_simplified_edge_undirected();
+                }
+
                 let (var, edge_types, min_h, max_h, props) =
                     if self.current.kind == TokenKind::LBracket {
                         self.advance();
@@ -1754,6 +1845,120 @@ impl<'a> Parser<'a> {
             properties,
             where_clause: edge_where_clause,
             questioned,
+            span: None,
+        })
+    }
+
+    /// Parses a simplified path pattern (G080/G039/G082).
+    ///
+    /// Called after consuming `-` (outgoing) or `<-` (incoming). The current token
+    /// is `/`. Syntax: `/:Label1|Label2/->` or `/:Label/-` or `/:Label/->`.
+    ///
+    /// Desugars to a regular `EdgePattern` with the parsed label types.
+    fn parse_simplified_edge(&mut self, incoming: bool) -> Result<EdgePattern> {
+        self.expect(TokenKind::Slash)?; // consume opening /
+
+        // Parse label(s): `:Label` or `:Label1|Label2`
+        let mut types = Vec::new();
+        if self.current.kind == TokenKind::Colon {
+            self.advance();
+            if !self.is_label_or_type_name() {
+                return Err(self.error("Expected label in simplified path pattern"));
+            }
+            types.push(self.get_identifier_name());
+            self.advance();
+            // Support pipe-separated alternatives: :T1|T2
+            while self.current.kind == TokenKind::Pipe {
+                self.advance();
+                if !self.is_label_or_type_name() {
+                    return Err(self.error("Expected label after | in simplified path pattern"));
+                }
+                types.push(self.get_identifier_name());
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::Slash)?; // consume closing /
+
+        // Determine direction from trailing token
+        let direction = if incoming {
+            // <-/:Label/- form: consume trailing -
+            if self.current.kind == TokenKind::Minus {
+                self.advance();
+            }
+            EdgeDirection::Incoming
+        } else if self.current.kind == TokenKind::Arrow {
+            // -/:Label/-> form
+            self.advance();
+            EdgeDirection::Outgoing
+        } else if self.current.kind == TokenKind::Minus {
+            // -/:Label/- form (undirected)
+            self.advance();
+            EdgeDirection::Undirected
+        } else {
+            return Err(self.error("Expected ->, -, or end after simplified path pattern"));
+        };
+
+        let target = self.parse_node_pattern()?;
+
+        Ok(EdgePattern {
+            variable: None,
+            types,
+            direction,
+            target,
+            min_hops: None,
+            max_hops: None,
+            properties: Vec::new(),
+            where_clause: None,
+            questioned: false,
+            span: None,
+        })
+    }
+
+    /// Parses a simplified undirected path pattern with tilde syntax.
+    ///
+    /// Called after consuming `~`. The current token is `/`.
+    /// Syntax: `~/:Label/~` desugars to `~[:Label]~`.
+    fn parse_simplified_edge_undirected(&mut self) -> Result<EdgePattern> {
+        self.expect(TokenKind::Slash)?; // consume opening /
+
+        let mut types = Vec::new();
+        if self.current.kind == TokenKind::Colon {
+            self.advance();
+            if !self.is_label_or_type_name() {
+                return Err(self.error("Expected label in simplified path pattern"));
+            }
+            types.push(self.get_identifier_name());
+            self.advance();
+            while self.current.kind == TokenKind::Pipe {
+                self.advance();
+                if !self.is_label_or_type_name() {
+                    return Err(self.error("Expected label after | in simplified path pattern"));
+                }
+                types.push(self.get_identifier_name());
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::Slash)?; // consume closing /
+
+        // Consume trailing ~
+        if self.current.kind == TokenKind::Tilde {
+            self.advance();
+        }
+
+        let target = self.parse_node_pattern()?;
+
+        Ok(EdgePattern {
+            variable: None,
+            types,
+            direction: EdgeDirection::Undirected,
+            target,
+            min_hops: None,
+            max_hops: None,
+            properties: Vec::new(),
+            where_clause: None,
+            questioned: false,
             span: None,
         })
     }
@@ -2199,7 +2404,35 @@ impl<'a> Parser<'a> {
             _ => SortOrder::Asc,
         };
 
-        Ok(OrderByItem { expression, order })
+        // Parse optional NULLS FIRST / NULLS LAST (ISO GQL feature GA03)
+        let nulls =
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("NULLS") {
+                self.advance();
+                if self.is_identifier() {
+                    let kw = self.get_identifier_name().to_uppercase();
+                    match kw.as_str() {
+                        "FIRST" => {
+                            self.advance();
+                            Some(NullsOrdering::First)
+                        }
+                        "LAST" => {
+                            self.advance();
+                            Some(NullsOrdering::Last)
+                        }
+                        _ => return Err(self.error("Expected FIRST or LAST after NULLS")),
+                    }
+                } else {
+                    return Err(self.error("Expected FIRST or LAST after NULLS"));
+                }
+            } else {
+                None
+            };
+
+        Ok(OrderByItem {
+            expression,
+            order,
+            nulls,
+        })
     }
 
     fn parse_expression(&mut self) -> Result<Expression> {
@@ -2481,12 +2714,43 @@ impl<'a> Parser<'a> {
                                 call
                             }
                         }
-                        "NORMALIZED" => {
-                            // IS [NOT] NORMALIZED
+                        "NFC" | "NFD" | "NFKC" | "NFKD" => {
+                            // IS [NOT] NFC|NFD|NFKC|NFKD NORMALIZED
+                            let form = kw.clone();
+                            self.advance();
+                            if !(self.is_identifier()
+                                && self
+                                    .get_identifier_name()
+                                    .eq_ignore_ascii_case("NORMALIZED"))
+                            {
+                                return Err(
+                                    self.error(&format!("Expected NORMALIZED after IS {form}"))
+                                );
+                            }
                             self.advance();
                             let call = Expression::FunctionCall {
                                 name: "isNormalized".to_string(),
-                                args: vec![left],
+                                args: vec![left, Expression::Literal(Literal::String(form))],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
+                        "NORMALIZED" => {
+                            // IS [NOT] NORMALIZED (default NFC)
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "isNormalized".to_string(),
+                                args: vec![
+                                    left,
+                                    Expression::Literal(Literal::String("NFC".to_string())),
+                                ],
                                 distinct: false,
                             };
                             if negated {
@@ -2500,13 +2764,13 @@ impl<'a> Parser<'a> {
                         }
                         _ => {
                             return Err(self.error(
-                                "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, DESTINATION, or NORMALIZED after IS",
+                                "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, DESTINATION, NORMALIZED, or NFC/NFD/NFKC/NFKD after IS",
                             ));
                         }
                     }
                 } else {
                     return Err(self.error(
-                        "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, DESTINATION, or NORMALIZED after IS",
+                        "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, DESTINATION, NORMALIZED, or NFC/NFD/NFKC/NFKD after IS",
                     ));
                 };
 
@@ -2614,6 +2878,8 @@ impl<'a> Parser<'a> {
                     i64::from_str_radix(&text[2..], 16)
                 } else if text.starts_with("0o") || text.starts_with("0O") {
                     i64::from_str_radix(&text[2..], 8)
+                } else if text.starts_with("0b") || text.starts_with("0B") {
+                    i64::from_str_radix(&text[2..], 2)
                 } else {
                     text.parse()
                 }
@@ -2696,6 +2962,140 @@ impl<'a> Parser<'a> {
                     return Ok(Expression::FunctionCall {
                         name: "session_user".to_string(),
                         args: Vec::new(),
+                        distinct: false,
+                    });
+                }
+
+                // NULLIF(expr1, expr2) - ISO GQL keyword syntax (Section 20.7)
+                if name.eq_ignore_ascii_case("NULLIF") && self.peek_kind() == TokenKind::LParen {
+                    self.advance(); // consume NULLIF
+                    self.advance(); // consume (
+                    let expr1 = self.parse_expression()?;
+                    self.expect(TokenKind::Comma)?;
+                    let expr2 = self.parse_expression()?;
+                    self.expect(TokenKind::RParen)?;
+                    return Ok(Expression::FunctionCall {
+                        name: "nullif".to_string(),
+                        args: vec![expr1, expr2],
+                        distinct: false,
+                    });
+                }
+
+                // COALESCE(expr1, expr2, ...) - ISO GQL keyword syntax (Section 20.7)
+                if name.eq_ignore_ascii_case("COALESCE") && self.peek_kind() == TokenKind::LParen {
+                    self.advance(); // consume COALESCE
+                    self.advance(); // consume (
+                    let mut args = vec![self.parse_expression()?];
+                    while self.current.kind == TokenKind::Comma {
+                        self.advance();
+                        args.push(self.parse_expression()?);
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    return Ok(Expression::FunctionCall {
+                        name: "coalesce".to_string(),
+                        args,
+                        distinct: false,
+                    });
+                }
+
+                // TRIM(BOTH|LEADING|TRAILING 'chars' FROM string)
+                // ISO GQL enhanced TRIM with trim specification (GF05)
+                if name.eq_ignore_ascii_case("TRIM") && self.peek_kind() == TokenKind::LParen {
+                    self.advance(); // consume TRIM
+                    self.advance(); // consume (
+                    // Determine trim mode and characters
+                    let mut mode = 0i64; // 0=both, 1=leading, 2=trailing
+                    let mut trim_chars: Option<Expression> = None;
+
+                    // Check for BOTH/LEADING/TRAILING keyword
+                    if self.is_identifier() {
+                        let kw = self.get_identifier_name().to_uppercase();
+                        match kw.as_str() {
+                            "BOTH" => {
+                                self.advance();
+                            }
+                            "LEADING" => {
+                                mode = 1;
+                                self.advance();
+                            }
+                            "TRAILING" => {
+                                mode = 2;
+                                self.advance();
+                            }
+                            "FROM" => {
+                                // TRIM(FROM string) - default both, no trim chars
+                                self.advance();
+                                let string_expr = self.parse_expression()?;
+                                self.expect(TokenKind::RParen)?;
+                                return Ok(Expression::FunctionCall {
+                                    name: "trim".to_string(),
+                                    args: vec![string_expr],
+                                    distinct: false,
+                                });
+                            }
+                            _ => {
+                                // Not a keyword, parse as the only arg (simple trim(expr))
+                                let expr = self.parse_expression()?;
+                                self.expect(TokenKind::RParen)?;
+                                return Ok(Expression::FunctionCall {
+                                    name: "trim".to_string(),
+                                    args: vec![expr],
+                                    distinct: false,
+                                });
+                            }
+                        }
+                    }
+
+                    // After mode keyword, check for trim chars or FROM
+                    if self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("FROM")
+                    {
+                        // TRIM(BOTH FROM string) - no trim chars
+                        self.advance(); // consume FROM
+                        let string_expr = self.parse_expression()?;
+                        self.expect(TokenKind::RParen)?;
+                        return Ok(Expression::FunctionCall {
+                            name: "trim".to_string(),
+                            args: vec![
+                                string_expr,
+                                Expression::Literal(Literal::String(" ".into())),
+                                Expression::Literal(Literal::Integer(mode)),
+                            ],
+                            distinct: false,
+                        });
+                    }
+
+                    // Parse trim character expression
+                    if self.current.kind != TokenKind::RParen {
+                        trim_chars = Some(self.parse_expression()?);
+                    }
+
+                    // Check for FROM keyword
+                    if self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("FROM")
+                    {
+                        self.advance(); // consume FROM
+                        let string_expr = self.parse_expression()?;
+                        self.expect(TokenKind::RParen)?;
+                        let chars_expr =
+                            trim_chars.unwrap_or(Expression::Literal(Literal::String(" ".into())));
+                        return Ok(Expression::FunctionCall {
+                            name: "trim".to_string(),
+                            args: vec![
+                                string_expr,
+                                chars_expr,
+                                Expression::Literal(Literal::Integer(mode)),
+                            ],
+                            distinct: false,
+                        });
+                    }
+
+                    // Simple trim(expr) - single argument
+                    self.expect(TokenKind::RParen)?;
+                    let arg = trim_chars.unwrap_or(Expression::Literal(Literal::Null));
+                    return Ok(Expression::FunctionCall {
+                        name: "trim".to_string(),
+                        args: vec![arg],
                         distinct: false,
                     });
                 }
@@ -3138,8 +3538,21 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses DELETE clause within a query (e.g., MATCH ... DELETE ...).
-    fn parse_delete_clause_in_query(&mut self) -> Result<DeleteStatement> {
+    /// Parses a DELETE target: either a plain variable or a general expression (GD04).
+    fn parse_delete_target(&mut self) -> Result<DeleteTarget> {
+        // Try to parse a general expression (handles variables, property access,
+        // function calls, subqueries, etc.)
+        let expr = self.parse_expression()?;
+        // If it's a plain variable reference, store as Variable for backwards compat
+        if let Expression::Variable(name) = expr {
+            Ok(DeleteTarget::Variable(name))
+        } else {
+            Ok(DeleteTarget::Expression(expr))
+        }
+    }
+
+    /// Parses the DETACH / NODETACH prefix and DELETE keyword.
+    fn parse_delete_prefix(&mut self) -> Result<bool> {
         let detach = if self.current.kind == TokenKind::Detach {
             self.advance();
             true
@@ -3150,64 +3563,42 @@ impl<'a> Parser<'a> {
             }
             false
         };
-
         self.expect(TokenKind::Delete)?;
+        Ok(detach)
+    }
 
-        let mut variables = Vec::new();
-        if !self.is_identifier() {
-            return Err(self.error("Expected variable name in DELETE"));
-        }
-        variables.push(self.get_identifier_name());
-        self.advance();
+    /// Parses DELETE clause within a query (e.g., MATCH ... DELETE ...).
+    fn parse_delete_clause_in_query(&mut self) -> Result<DeleteStatement> {
+        let detach = self.parse_delete_prefix()?;
+
+        let mut targets = Vec::new();
+        targets.push(self.parse_delete_target()?);
 
         while self.current.kind == TokenKind::Comma {
             self.advance();
-            if !self.is_identifier() {
-                return Err(self.error("Expected variable name in DELETE"));
-            }
-            variables.push(self.get_identifier_name());
-            self.advance();
+            targets.push(self.parse_delete_target()?);
         }
 
         Ok(DeleteStatement {
-            variables,
+            targets,
             detach,
             span: None,
         })
     }
 
     fn parse_delete(&mut self) -> Result<DeleteStatement> {
-        let detach = if self.current.kind == TokenKind::Detach {
-            self.advance();
-            true
-        } else {
-            // NODETACH is explicit non-detach (same as bare DELETE)
-            if self.current.kind == TokenKind::Nodetach {
-                self.advance();
-            }
-            false
-        };
+        let detach = self.parse_delete_prefix()?;
 
-        self.expect(TokenKind::Delete)?;
-
-        let mut variables = Vec::new();
-        if self.current.kind != TokenKind::Identifier {
-            return Err(self.error("Expected variable name"));
-        }
-        variables.push(self.current.text.clone());
-        self.advance();
+        let mut targets = Vec::new();
+        targets.push(self.parse_delete_target()?);
 
         while self.current.kind == TokenKind::Comma {
             self.advance();
-            if self.current.kind != TokenKind::Identifier {
-                return Err(self.error("Expected variable name"));
-            }
-            variables.push(self.current.text.clone());
-            self.advance();
+            targets.push(self.parse_delete_target()?);
         }
 
         Ok(DeleteStatement {
-            variables,
+            targets,
             detach,
             span: None,
         })
@@ -3408,17 +3799,51 @@ impl<'a> Parser<'a> {
                 let name = self.get_identifier_name();
                 self.advance();
 
-                // Parse optional body: { node_types: [T1, T2], edge_types: [E1] }
-                let (node_types, edge_types, open) = if self.current.kind == TokenKind::LBrace {
-                    self.parse_graph_type_body()?
+                // GG04: LIKE <graph_name> clause
+                let like_graph = if self.current.kind == TokenKind::Like {
+                    self.advance();
+                    if !self.is_identifier() {
+                        return Err(self.error("Expected graph name after LIKE"));
+                    }
+                    let graph_name = self.get_identifier_name();
+                    self.advance();
+                    Some(graph_name)
                 } else {
-                    (Vec::new(), Vec::new(), true)
+                    None
                 };
+
+                // Parse optional body: ISO syntax or JSON-like syntax
+                let (node_types, edge_types, inline_types, open) =
+                    if self.current.kind == TokenKind::LBrace {
+                        let (nt, et, open) = self.parse_graph_type_body()?;
+                        (nt, et, Vec::new(), open)
+                    } else if self.current.kind == TokenKind::LParen {
+                        let inline = self.parse_graph_type_iso_body()?;
+                        let nt: Vec<String> = inline
+                            .iter()
+                            .filter_map(|t| match t {
+                                InlineElementType::Node { name, .. } => Some(name.clone()),
+                                InlineElementType::Edge { .. } => None,
+                            })
+                            .collect();
+                        let et: Vec<String> = inline
+                            .iter()
+                            .filter_map(|t| match t {
+                                InlineElementType::Edge { name, .. } => Some(name.clone()),
+                                InlineElementType::Node { .. } => None,
+                            })
+                            .collect();
+                        (nt, et, inline, false)
+                    } else {
+                        (Vec::new(), Vec::new(), Vec::new(), true)
+                    };
 
                 Ok(SchemaStatement::CreateGraphType(CreateGraphTypeStatement {
                     name,
                     node_types,
                     edge_types,
+                    inline_types,
+                    like_graph,
                     open,
                     if_not_exists,
                     or_replace,
@@ -3807,6 +4232,88 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::RBrace)?;
         Ok((node_types, edge_types, open))
+    }
+
+    /// Parses the ISO-syntax body of CREATE GRAPH TYPE:
+    /// `(NODE TYPE Name (props), EDGE TYPE Name (props), ...)`
+    ///
+    /// Returns a list of inline element type definitions.
+    fn parse_graph_type_iso_body(&mut self) -> Result<Vec<InlineElementType>> {
+        self.expect(TokenKind::LParen)?;
+
+        let mut types = Vec::new();
+
+        while self.current.kind != TokenKind::RParen && self.current.kind != TokenKind::Eof {
+            let is_node = if self.current.kind == TokenKind::Node {
+                self.advance();
+                self.expect(TokenKind::Type)?;
+                true
+            } else if self.current.kind == TokenKind::Edge {
+                self.advance();
+                self.expect(TokenKind::Type)?;
+                false
+            } else {
+                return Err(self.error("Expected NODE TYPE or EDGE TYPE in graph type body"));
+            };
+
+            if !self.is_identifier() && !self.is_label_or_type_name() {
+                return Err(self.error("Expected type name"));
+            }
+            let type_name = self.get_identifier_name();
+            self.advance();
+
+            // GG21: Optional KEY label set: KEY (Label1, Label2)
+            let key_labels =
+                if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("KEY") {
+                    self.advance();
+                    self.expect(TokenKind::LParen)?;
+                    let mut labels = Vec::new();
+                    loop {
+                        if !self.is_identifier() && !self.is_label_or_type_name() {
+                            return Err(self.error("Expected label name in KEY clause"));
+                        }
+                        labels.push(self.get_identifier_name());
+                        self.advance();
+                        if self.current.kind != TokenKind::Comma {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    labels
+                } else {
+                    Vec::new()
+                };
+
+            // Optional property definitions
+            let properties = if self.current.kind == TokenKind::LParen {
+                self.parse_property_definitions()?
+            } else {
+                Vec::new()
+            };
+
+            if is_node {
+                types.push(InlineElementType::Node {
+                    name: type_name,
+                    properties,
+                    key_labels,
+                });
+            } else {
+                types.push(InlineElementType::Edge {
+                    name: type_name,
+                    properties,
+                    key_labels,
+                });
+            }
+
+            // Optional comma separator
+            if self.current.kind == TokenKind::Comma {
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::RParen)?;
+        Ok(types)
     }
 
     /// Parses `[T1, T2, T3]`, returning a list of identifiers.
@@ -4225,7 +4732,10 @@ impl<'a> Parser<'a> {
         if self.peeked.is_none() {
             self.peeked = Some(self.lexer.next_token());
         }
-        self.peeked.as_ref().unwrap().kind
+        self.peeked
+            .as_ref()
+            .expect("peeked token was just populated")
+            .kind
     }
 
     /// Returns the uppercased text of the peeked token.
@@ -4253,7 +4763,10 @@ impl<'a> Parser<'a> {
         if text == "GRAPH" {
             // Need to check the token after GRAPH. If it's TYPE, this is GRAPH TYPE (schema).
             // Use a temporary lexer to peek 2 tokens ahead from the current source position.
-            let peeked_token = self.peeked.as_ref().unwrap();
+            let peeked_token = self
+                .peeked
+                .as_ref()
+                .expect("peek_kind guarantees peeked is Some");
             let remaining = &self.source[peeked_token.span.end..];
             let mut temp_lexer = Lexer::new(remaining);
             let next_after_graph = temp_lexer.next_token();
@@ -4735,7 +5248,7 @@ mod tests {
 
     #[test]
     fn test_parse_insert() {
-        let mut parser = Parser::new("INSERT (n:Person {name: 'Alice'})");
+        let mut parser = Parser::new("INSERT (n:Person {name: 'Alix'})");
         let result = parser.parse();
         assert!(result.is_ok());
     }
@@ -5012,7 +5525,7 @@ mod tests {
 
     #[test]
     fn test_parse_merge() {
-        let mut parser = Parser::new("MERGE (n:Person {name: 'Alice'}) RETURN n");
+        let mut parser = Parser::new("MERGE (n:Person {name: 'Alix'}) RETURN n");
         let result = parser.parse();
         assert!(result.is_ok(), "Parse error: {:?}", result.err());
 
@@ -5031,7 +5544,7 @@ mod tests {
     #[test]
     fn test_parse_merge_on_create() {
         let mut parser =
-            Parser::new("MERGE (n:Person {name: 'Alice'}) ON CREATE SET n.created = true RETURN n");
+            Parser::new("MERGE (n:Person {name: 'Alix'}) ON CREATE SET n.created = true RETURN n");
         let result = parser.parse();
         assert!(result.is_ok(), "Parse error: {:?}", result.err());
 
@@ -5210,7 +5723,7 @@ mod tests {
     #[test]
     fn test_in_operator_with_list() {
         let mut parser =
-            Parser::new("MATCH (n:Person) WHERE n.name IN ['Alice', 'Bob'] RETURN n.name");
+            Parser::new("MATCH (n:Person) WHERE n.name IN ['Alix', 'Gus'] RETURN n.name");
         let result = parser.parse();
         assert!(result.is_ok(), "Parse error: {:?}", result.err());
 
@@ -5345,7 +5858,7 @@ mod tests {
 
     #[test]
     fn test_parse_error_unclosed_property_map() {
-        let mut parser = Parser::new("MATCH (n:Person {name: 'Alice') RETURN n");
+        let mut parser = Parser::new("MATCH (n:Person {name: 'Alix') RETURN n");
         let result = parser.parse();
         assert!(result.is_err(), "Unclosed property map should fail");
     }
@@ -6695,5 +7208,586 @@ mod tests {
         let mut parser = Parser::new("USE SOMETHING");
         let result = parser.parse();
         assert!(result.is_err(), "USE SOMETHING should fail");
+    }
+
+    // -------------------------------------------------------------------
+    // ISO GQL Conformance: NULLS FIRST/LAST (GA03)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_order_by_nulls_first() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name ORDER BY n.age ASC NULLS FIRST");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            let order = q.return_clause.order_by.unwrap();
+            assert_eq!(order.items[0].nulls, Some(NullsOrdering::First));
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    #[test]
+    fn test_parse_order_by_nulls_last() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name ORDER BY n.age DESC NULLS LAST");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            let order = q.return_clause.order_by.unwrap();
+            assert_eq!(order.items[0].nulls, Some(NullsOrdering::Last));
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    #[test]
+    fn test_parse_order_by_no_nulls_clause() {
+        let mut parser = Parser::new("MATCH (n:Person) RETURN n.name ORDER BY n.age ASC");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            let order = q.return_clause.order_by.unwrap();
+            assert_eq!(order.items[0].nulls, None);
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // ISO GQL Conformance: NULLIF / COALESCE keyword syntax
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_nullif() {
+        let mut parser = Parser::new("MATCH (n:Person) RETURN NULLIF(n.age, 30) AS val");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            match &q.return_clause.items[0].expression {
+                Expression::FunctionCall { name, args, .. } => {
+                    assert_eq!(name, "nullif");
+                    assert_eq!(args.len(), 2);
+                }
+                other => panic!("Expected FunctionCall, got {other:?}"),
+            }
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    #[test]
+    fn test_parse_coalesce() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN COALESCE(null, n.name, 'default') AS val");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            match &q.return_clause.items[0].expression {
+                Expression::FunctionCall { name, args, .. } => {
+                    assert_eq!(name, "coalesce");
+                    assert_eq!(args.len(), 3);
+                }
+                other => panic!("Expected FunctionCall, got {other:?}"),
+            }
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // ISO GQL Conformance: IS [NFC|NFD|NFKC|NFKD] NORMALIZED
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_is_nfc_normalized() {
+        let mut parser = Parser::new("MATCH (n:Person) RETURN n.name IS NFC NORMALIZED AS norm");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            match &q.return_clause.items[0].expression {
+                Expression::FunctionCall { name, args, .. } => {
+                    assert_eq!(name, "isNormalized");
+                    assert_eq!(args.len(), 2);
+                    // Second arg should be the form string "NFC"
+                    match &args[1] {
+                        Expression::Literal(Literal::String(s)) => assert_eq!(s, "NFC"),
+                        other => panic!("Expected string literal, got {other:?}"),
+                    }
+                }
+                other => panic!("Expected FunctionCall, got {other:?}"),
+            }
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_not_nfkd_normalized() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) RETURN n.name IS NOT NFKD NORMALIZED AS norm");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            match &q.return_clause.items[0].expression {
+                Expression::Unary { op, operand } => {
+                    assert_eq!(*op, UnaryOp::Not);
+                    match operand.as_ref() {
+                        Expression::FunctionCall { name, args, .. } => {
+                            assert_eq!(name, "isNormalized");
+                            match &args[1] {
+                                Expression::Literal(Literal::String(s)) => {
+                                    assert_eq!(s, "NFKD");
+                                }
+                                other => panic!("Expected string literal, got {other:?}"),
+                            }
+                        }
+                        other => panic!("Expected FunctionCall, got {other:?}"),
+                    }
+                }
+                other => panic!("Expected Unary NOT, got {other:?}"),
+            }
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    #[test]
+    fn test_parse_is_normalized_default_form() {
+        let mut parser = Parser::new("MATCH (n:Person) RETURN n.name IS NORMALIZED AS norm");
+        let stmt = parser.parse().unwrap();
+        if let Statement::Query(q) = stmt {
+            match &q.return_clause.items[0].expression {
+                Expression::FunctionCall { name, args, .. } => {
+                    assert_eq!(name, "isNormalized");
+                    assert_eq!(args.len(), 2);
+                    match &args[1] {
+                        Expression::Literal(Literal::String(s)) => assert_eq!(s, "NFC"),
+                        other => panic!("Expected string literal NFC, got {other:?}"),
+                    }
+                }
+                other => panic!("Expected FunctionCall, got {other:?}"),
+            }
+        } else {
+            panic!("Expected query");
+        }
+    }
+
+    // --- Group 4: Parenthesized Path Enhancements ---
+
+    #[test]
+    fn test_parse_parenthesized_path_mode_prefix() {
+        // G049: Path mode prefix inside parenthesized pattern
+        let mut parser = Parser::new("MATCH (TRAIL (a)-[e]->(b)){2,5} RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Parenthesized path with mode prefix should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            let pat = &q.match_clauses[0].patterns[0].pattern;
+            if let Pattern::Quantified {
+                min,
+                max,
+                path_mode,
+                ..
+            } = pat
+            {
+                assert_eq!(*min, 2);
+                assert_eq!(*max, Some(5));
+                assert_eq!(*path_mode, Some(PathMode::Trail));
+            } else {
+                panic!("Expected Quantified pattern, got {pat:?}");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_parenthesized_where_clause() {
+        // G050: WHERE clause inside parenthesized pattern
+        let mut parser = Parser::new("MATCH ((a)-[e]->(b) WHERE e.weight > 5){1,3} RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Parenthesized path with WHERE should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            let pat = &q.match_clauses[0].patterns[0].pattern;
+            if let Pattern::Quantified {
+                min,
+                max,
+                where_clause,
+                ..
+            } = pat
+            {
+                assert_eq!(*min, 1);
+                assert_eq!(*max, Some(3));
+                assert!(where_clause.is_some(), "WHERE clause should be present");
+            } else {
+                panic!("Expected Quantified pattern, got {pat:?}");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_parenthesized_all_features() {
+        // All three: path mode + WHERE + quantifier
+        let mut parser =
+            Parser::new("MATCH (ACYCLIC (a)-[e]->(b) WHERE e.active = true){2,4} RETURN a, b");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Full parenthesized path should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            let pat = &q.match_clauses[0].patterns[0].pattern;
+            if let Pattern::Quantified {
+                min,
+                max,
+                path_mode,
+                where_clause,
+                subpath_var,
+                ..
+            } = pat
+            {
+                assert_eq!(*min, 2);
+                assert_eq!(*max, Some(4));
+                assert_eq!(*path_mode, Some(PathMode::Acyclic));
+                assert!(where_clause.is_some());
+                assert!(subpath_var.is_none());
+            } else {
+                panic!("Expected Quantified pattern, got {pat:?}");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    // --- Group 5: Simplified Path Patterns ---
+
+    #[test]
+    fn test_parse_simplified_outgoing() {
+        // G080: -/:KNOWS/-> desugars to -[:KNOWS]->
+        let mut parser = Parser::new("MATCH (a:Person)-/:KNOWS/->(b:Person) RETURN b.name");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Simplified outgoing path should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges.len(), 1);
+                assert_eq!(path.edges[0].types, vec!["KNOWS"]);
+                assert_eq!(path.edges[0].direction, EdgeDirection::Outgoing);
+            } else {
+                panic!("Expected Path pattern");
+            }
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_simplified_incoming() {
+        // G080: <-/:KNOWS/- desugars to <-[:KNOWS]-
+        let mut parser = Parser::new("MATCH (a:Person)<-/:KNOWS/-(b:Person) RETURN b.name");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Simplified incoming path should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges.len(), 1);
+                assert_eq!(path.edges[0].types, vec!["KNOWS"]);
+                assert_eq!(path.edges[0].direction, EdgeDirection::Incoming);
+            } else {
+                panic!("Expected Path pattern");
+            }
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_simplified_undirected() {
+        // G080: -/:KNOWS/- desugars to -[:KNOWS]-
+        let mut parser = Parser::new("MATCH (a:Person)-/:KNOWS/-(b:Person) RETURN b.name");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Simplified undirected path should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges.len(), 1);
+                assert_eq!(path.edges[0].types, vec!["KNOWS"]);
+                assert_eq!(path.edges[0].direction, EdgeDirection::Undirected);
+            } else {
+                panic!("Expected Path pattern");
+            }
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_simplified_multi_label() {
+        // G039: -/:KNOWS|WORKS_WITH/-> with multiple label alternatives
+        let mut parser =
+            Parser::new("MATCH (a:Person)-/:KNOWS|WORKS_WITH/->(b:Person) RETURN b.name");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Simplified multi-label path should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges[0].types, vec!["KNOWS", "WORKS_WITH"]);
+                assert_eq!(path.edges[0].direction, EdgeDirection::Outgoing);
+            } else {
+                panic!("Expected Path pattern");
+            }
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_simplified_tilde() {
+        // G080: ~/:KNOWS/~ desugars to ~[:KNOWS]~
+        let mut parser = Parser::new("MATCH (a:Person)~/:KNOWS/~(b:Person) RETURN b.name");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Simplified tilde path should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            if let Pattern::Path(path) = &q.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.edges[0].types, vec!["KNOWS"]);
+                assert_eq!(path.edges[0].direction, EdgeDirection::Undirected);
+            } else {
+                panic!("Expected Path pattern");
+            }
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    // --- Group 6: Multiset Alternation ---
+
+    #[test]
+    fn test_parse_multiset_alternation() {
+        // G030: |+| operator creates MultisetUnion
+        let mut parser = Parser::new(
+            "MATCH ((a)-[:KNOWS]->(b) |+| (a)-[:WORKS_WITH]->(b)) RETURN a.name, b.name",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Multiset alternation should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            let pattern = &q.match_clauses[0].patterns[0].pattern;
+            assert!(
+                matches!(pattern, Pattern::MultisetUnion(_)),
+                "Expected MultisetUnion pattern, got {:?}",
+                pattern
+            );
+            if let Pattern::MultisetUnion(alternatives) = pattern {
+                assert_eq!(alternatives.len(), 2);
+            }
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_set_alternation() {
+        // Set union uses | and produces Pattern::Union
+        let mut parser =
+            Parser::new("MATCH ((a)-[:KNOWS]->(b) | (a)-[:WORKS_WITH]->(b)) RETURN a.name");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Set alternation should parse: {:?}",
+            result.err()
+        );
+
+        if let Statement::Query(q) = result.unwrap() {
+            let pattern = &q.match_clauses[0].patterns[0].pattern;
+            assert!(
+                matches!(pattern, Pattern::Union(_)),
+                "Expected Union pattern, got {:?}",
+                pattern
+            );
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_delete_variable() {
+        // Basic DELETE with variable (existing behavior)
+        let mut parser = Parser::new("MATCH (n:Person) DELETE n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "DELETE variable should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.delete_clauses.len(), 1);
+            assert_eq!(q.delete_clauses[0].targets.len(), 1);
+            assert!(
+                matches!(&q.delete_clauses[0].targets[0], DeleteTarget::Variable(name) if name == "n"),
+                "Expected Variable target"
+            );
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_delete_expression() {
+        // GD04: DELETE with property access expression
+        let mut parser = Parser::new("MATCH (n:Person) DELETE n.friend");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "DELETE expression should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.delete_clauses.len(), 1);
+            assert_eq!(q.delete_clauses[0].targets.len(), 1);
+            assert!(
+                matches!(&q.delete_clauses[0].targets[0], DeleteTarget::Expression(_)),
+                "Expected Expression target, got {:?}",
+                q.delete_clauses[0].targets[0]
+            );
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_delete_multiple_mixed_targets() {
+        // GD04: DELETE with both variable and expression targets
+        let mut parser = Parser::new("MATCH (n:Person)-[r:KNOWS]->(m) DELETE n, r");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "DELETE mixed targets should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            assert_eq!(q.delete_clauses[0].targets.len(), 2);
+            assert!(matches!(
+                &q.delete_clauses[0].targets[0],
+                DeleteTarget::Variable(name) if name == "n"
+            ));
+            assert!(matches!(
+                &q.delete_clauses[0].targets[1],
+                DeleteTarget::Variable(name) if name == "r"
+            ));
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_detach_delete_expression() {
+        // GD04: DETACH DELETE with expression
+        let mut parser = Parser::new("MATCH (n:Person) DETACH DELETE n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "DETACH DELETE should parse: {:?}",
+            result.err()
+        );
+        if let Statement::Query(q) = result.unwrap() {
+            assert!(q.delete_clauses[0].detach);
+            assert_eq!(q.delete_clauses[0].targets.len(), 1);
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    // =========================================================================
+    // Group 13: Graph Type Advanced Features (GG03, GG04, GG21)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_create_graph_type_iso_syntax() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE social (\
+                NODE TYPE Person (name STRING NOT NULL, age INTEGER),\
+                EDGE TYPE KNOWS (since INTEGER)\
+            )",
+        );
+        let result = parser.parse();
+        assert!(result.is_ok(), "Failed to parse ISO graph type: {result:?}");
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            assert_eq!(stmt.name, "social");
+            assert_eq!(stmt.inline_types.len(), 2);
+            assert!(stmt.node_types.contains(&"Person".to_string()));
+            assert!(stmt.edge_types.contains(&"KNOWS".to_string()));
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_graph_type_like() {
+        let mut parser = Parser::new("CREATE GRAPH TYPE cloned LIKE original_graph");
+        let result = parser.parse();
+        assert!(result.is_ok(), "Failed to parse LIKE: {result:?}");
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            assert_eq!(stmt.name, "cloned");
+            assert_eq!(stmt.like_graph, Some("original_graph".to_string()));
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_graph_type_key_labels() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE keyed (\
+                NODE TYPE Person KEY (PersonLabel, NamedEntity) (name STRING NOT NULL)\
+            )",
+        );
+        let result = parser.parse();
+        assert!(result.is_ok(), "Failed to parse key labels: {result:?}");
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            assert_eq!(stmt.inline_types.len(), 1);
+            match &stmt.inline_types[0] {
+                InlineElementType::Node { key_labels, .. } => {
+                    assert_eq!(key_labels.len(), 2);
+                    assert_eq!(key_labels[0], "PersonLabel");
+                    assert_eq!(key_labels[1], "NamedEntity");
+                }
+                _ => panic!("Expected Node"),
+            }
+        } else {
+            panic!("Expected CreateGraphType");
+        }
     }
 }

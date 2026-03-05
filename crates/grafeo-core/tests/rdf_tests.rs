@@ -78,8 +78,8 @@ mod statistics_tests {
 
         // Add triples with repeated subjects and objects
         collector.record_triple("alix", "knows", "gus");
-        collector.record_triple("alix", "knows", "charlie");
-        collector.record_triple("gus", "knows", "charlie");
+        collector.record_triple("alix", "knows", "vincent");
+        collector.record_triple("gus", "knows", "vincent");
         collector.record_triple("gus", "knows", "alix");
 
         let stats = collector.build();
@@ -87,7 +87,7 @@ mod statistics_tests {
         // Should have 2 distinct subjects
         assert_eq!(stats.subject_count, 2); // alix, gus
         // Should have 3 distinct objects
-        assert_eq!(stats.object_count, 3); // gus, charlie, alix
+        assert_eq!(stats.object_count, 3); // gus, vincent, alix
     }
 }
 
@@ -148,7 +148,7 @@ mod parallel_tests {
             (
                 Value::String("gus".into()),
                 Value::String("knows".into()),
-                Value::String("charlie".into()),
+                Value::String("vincent".into()),
             ),
         ];
 

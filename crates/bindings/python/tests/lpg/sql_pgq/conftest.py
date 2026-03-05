@@ -42,29 +42,29 @@ def social_db(db):
 
     Structure:
     - Alix (Person, age 30, city NYC) -KNOWS-> Gus (since 2020)
-    - Gus (Person, age 25, city LA) -KNOWS-> Charlie (since 2021)
-    - Alix -KNOWS-> Charlie (since 2019)
-    - Charlie (Person, age 35, city NYC)
+    - Gus (Person, age 25, city LA) -KNOWS-> Vincent (since 2021)
+    - Alix -KNOWS-> Vincent (since 2019)
+    - Vincent (Person, age 35, city NYC)
     - Acme Corp (Company, founded 2010)
     - Globex Inc (Company, founded 2015)
     - Alix -WORKS_AT-> Acme Corp (role Engineer)
     - Gus -WORKS_AT-> Globex Inc (role Manager)
-    - Charlie -WORKS_AT-> Acme Corp (role Director)
+    - Vincent -WORKS_AT-> Acme Corp (role Director)
     """
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
     gus = db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-    charlie = db.create_node(["Person"], {"name": "Charlie", "age": 35, "city": "NYC"})
+    vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "NYC"})
 
     acme = db.create_node(["Company"], {"name": "Acme Corp", "founded": 2010})
     globex = db.create_node(["Company"], {"name": "Globex Inc", "founded": 2015})
 
     db.create_edge(alix.id, gus.id, "KNOWS", {"since": 2020})
-    db.create_edge(gus.id, charlie.id, "KNOWS", {"since": 2021})
-    db.create_edge(alix.id, charlie.id, "KNOWS", {"since": 2019})
+    db.create_edge(gus.id, vincent.id, "KNOWS", {"since": 2021})
+    db.create_edge(alix.id, vincent.id, "KNOWS", {"since": 2019})
 
     db.create_edge(alix.id, acme.id, "WORKS_AT", {"role": "Engineer"})
     db.create_edge(gus.id, globex.id, "WORKS_AT", {"role": "Manager"})
-    db.create_edge(charlie.id, acme.id, "WORKS_AT", {"role": "Director"})
+    db.create_edge(vincent.id, acme.id, "WORKS_AT", {"role": "Director"})
 
     return db
 

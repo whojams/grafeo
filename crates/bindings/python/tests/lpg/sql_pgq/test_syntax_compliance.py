@@ -33,19 +33,19 @@ class TestBasicNodeQueries:
         """Create a social network graph."""
         self.alix = self.db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         self.gus = self.db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        self.charlie = self.db.create_node(
-            ["Person"], {"name": "Charlie", "age": 35, "city": "NYC"}
+        self.vincent = self.db.create_node(
+            ["Person"], {"name": "Vincent", "age": 35, "city": "NYC"}
         )
         self.acme = self.db.create_node(["Company"], {"name": "Acme Corp", "founded": 2010})
         self.globex = self.db.create_node(["Company"], {"name": "Globex Inc", "founded": 2015})
 
         self.db.create_edge(self.alix.id, self.gus.id, "KNOWS", {"since": 2020})
-        self.db.create_edge(self.gus.id, self.charlie.id, "KNOWS", {"since": 2021})
-        self.db.create_edge(self.alix.id, self.charlie.id, "KNOWS", {"since": 2019})
+        self.db.create_edge(self.gus.id, self.vincent.id, "KNOWS", {"since": 2021})
+        self.db.create_edge(self.alix.id, self.vincent.id, "KNOWS", {"since": 2019})
 
         self.db.create_edge(self.alix.id, self.acme.id, "WORKS_AT", {"role": "Engineer"})
         self.db.create_edge(self.gus.id, self.globex.id, "WORKS_AT", {"role": "Manager"})
-        self.db.create_edge(self.charlie.id, self.acme.id, "WORKS_AT", {"role": "Director"})
+        self.db.create_edge(self.vincent.id, self.acme.id, "WORKS_AT", {"role": "Director"})
 
     def _execute_sql(self, query: str):
         """Execute SQL/PGQ query, skip if not supported."""
@@ -151,7 +151,7 @@ class TestBasicNodeQueries:
             " WHERE g.age > 28"
         )
         rows = list(result)
-        # Alix (30) and Charlie (35)
+        # Alix (30) and Vincent (35)
         assert len(rows) == 2, "Should find 2 people with age > 28"
 
     def test_where_string_equality(self):
@@ -164,7 +164,7 @@ class TestBasicNodeQueries:
             " WHERE g.city = 'NYC'"
         )
         rows = list(result)
-        # Alix and Charlie are in NYC
+        # Alix and Vincent are in NYC
         assert len(rows) == 2, "Should find 2 people in NYC"
 
     def test_where_compound_condition(self):
@@ -177,7 +177,7 @@ class TestBasicNodeQueries:
             " WHERE g.city = 'NYC' AND g.age > 31"
         )
         rows = list(result)
-        # Only Charlie (35, NYC)
+        # Only Vincent (35, NYC)
         assert len(rows) == 1, "Should find 1 person in NYC older than 31"
 
     # =========================================================================
@@ -240,8 +240,8 @@ class TestBasicNodeQueries:
         )
         rows = list(result)
         assert len(rows) == 1, "LIMIT 1 should return exactly 1 row"
-        # Oldest person (Charlie, 35) should be first
-        assert rows[0].get("name") == "Charlie"
+        # Oldest person (Vincent, 35) should be first
+        assert rows[0].get("name") == "Vincent"
 
     def test_offset_with_limit(self):
         """SQL/PGQ: OFFSET skips rows before LIMIT applies."""
@@ -358,7 +358,7 @@ class TestAggregatesInColumns:
         self.db = GrafeoDB()
         self.db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         self.db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        self.db.create_node(["Person"], {"name": "Charlie", "age": 35, "city": "NYC"})
+        self.db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "NYC"})
 
     def _execute_sql(self, query: str):
         """Execute SQL/PGQ query, skip if not supported."""

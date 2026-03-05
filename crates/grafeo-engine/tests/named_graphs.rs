@@ -222,9 +222,9 @@ mod tests {
             ));
             let g2 = rdf.graph_or_create("http://ex.org/g2");
             g2.insert(Triple::new(
-                Term::iri("http://ex.org/carol"),
+                Term::iri("http://ex.org/harm"),
                 Term::iri("http://ex.org/name"),
-                Term::Literal(Literal::simple("Carol")),
+                Term::Literal(Literal::simple("Harm")),
             ));
         }
 

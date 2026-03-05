@@ -436,7 +436,7 @@ mod tests {
 
         // Modify
         session
-            .execute("INSERT (:Person {name: 'Charlie'})")
+            .execute("INSERT (:Person {name: 'Vincent'})")
             .unwrap();
         assert_eq!(db.store.node_count(), 3);
 
@@ -496,7 +496,7 @@ mod tests {
 
         // Modify: add more data
         session
-            .execute("INSERT (:Person {name: 'Charlie'})")
+            .execute("INSERT (:Person {name: 'Vincent'})")
             .unwrap();
 
         // Restore

@@ -168,7 +168,7 @@ fn test_property_index_lifecycle() {
     assert!(results.contains(&n2));
 
     // No matches
-    let results = db.find_nodes_by_property("name", &Value::String("Carol".into()));
+    let results = db.find_nodes_by_property("name", &Value::String("Harm".into()));
     assert!(results.is_empty());
 
     // Drop index

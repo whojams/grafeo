@@ -29,10 +29,10 @@ class TestCrossLanguageConsistency:
         """Create test data."""
         self.alix = self.db.create_node(["Person"], {"name": "Alix", "age": 30})
         self.gus = self.db.create_node(["Person"], {"name": "Gus", "age": 25})
-        self.charlie = self.db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        self.vincent = self.db.create_node(["Person"], {"name": "Vincent", "age": 35})
 
         self.db.create_edge(self.alix.id, self.gus.id, "KNOWS", {"since": 2020})
-        self.db.create_edge(self.gus.id, self.charlie.id, "KNOWS", {"since": 2021})
+        self.db.create_edge(self.gus.id, self.vincent.id, "KNOWS", {"since": 2021})
 
     def _has_gremlin(self):
         """Check if Gremlin support is available."""
@@ -81,14 +81,14 @@ class TestCrossLanguageConsistency:
 
         assert "Alix" in names
         assert "Gus" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
 
     def test_relationship_match_consistency(self):
         """All languages should return same relationship results."""
         # GQL/Cypher
         result = self.db.execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a.name, b.name")
         rows = list(result)
-        assert len(rows) == 2  # Alix->Gus, Gus->Charlie
+        assert len(rows) == 2  # Alix->Gus, Gus->Vincent
 
     def test_aggregation_consistency(self):
         """Aggregation results should match across languages."""
@@ -104,10 +104,10 @@ class TestCrossLanguageConsistency:
         rows = list(result)
         names = [r.get("n.name") for r in rows]
 
-        # Alix (30) and Charlie (35) match
+        # Alix (30) and Vincent (35) match
         assert len(rows) == 2
         assert "Alix" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
         assert "Gus" not in names
 
 

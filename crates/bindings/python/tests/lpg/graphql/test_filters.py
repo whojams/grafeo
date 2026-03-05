@@ -122,10 +122,10 @@ class TestGraphQLFilterVerification:
         """Test filtering with nested query."""
         alix = db.create_node(["User"], {"name": "Alix", "age": 30})
         gus = db.create_node(["User"], {"name": "Gus", "age": 25})
-        charlie = db.create_node(["User"], {"name": "Charlie", "age": 35})
+        vincent = db.create_node(["User"], {"name": "Vincent", "age": 35})
 
         db.create_edge(alix.id, gus.id, "friends", {})
-        db.create_edge(alix.id, charlie.id, "friends", {})
+        db.create_edge(alix.id, vincent.id, "friends", {})
 
         result = self._execute_graphql(
             db,

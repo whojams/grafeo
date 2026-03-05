@@ -46,7 +46,7 @@ def __():
     for name, age, city in [
         ("Alix", 30, "Utrecht"),
         ("Gus", 35, "Leiden"),
-        ("Carol", 28, "Utrecht"),
+        ("Harm", 28, "Utrecht"),
         ("Dave", 40, "Paris"),
         ("Eve", 32, "Leiden"),
         ("Jules", 45, "Utrecht"),
@@ -59,10 +59,10 @@ def __():
     # Create relationships
     connections = [
         ("Alix", "Gus"),
-        ("Alix", "Carol"),
-        ("Gus", "Carol"),
+        ("Alix", "Harm"),
+        ("Gus", "Harm"),
         ("Gus", "Dave"),
-        ("Carol", "Eve"),
+        ("Harm", "Eve"),
         ("Dave", "Eve"),
         ("Dave", "Jules"),
         ("Eve", "Greetje"),

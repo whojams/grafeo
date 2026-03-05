@@ -60,10 +60,10 @@ class TestGQLFilterVerification:
         # Create people and relationships
         alix = db.create_node(["Person"], {"name": "Alix", "age": 30})
         gus = db.create_node(["Person"], {"name": "Gus", "age": 25})
-        charlie = db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35})
 
         db.create_edge(alix.id, gus.id, "KNOWS", {})
-        db.create_edge(alix.id, charlie.id, "KNOWS", {})
+        db.create_edge(alix.id, vincent.id, "KNOWS", {})
 
         # Filter friends of Alix who are over 30
         result = db.execute(
@@ -78,7 +78,7 @@ class TestGQLFilterVerification:
         """Test OR filter condition."""
         db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35, "city": "Chicago"})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "Chicago"})
 
         # Filter by city = NYC OR age < 30
         result = db.execute("MATCH (p:Person) WHERE p.city = 'NYC' OR p.age < 30 RETURN p.name")

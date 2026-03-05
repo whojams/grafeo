@@ -87,10 +87,10 @@ class TestGremlinFilterVerification:
         """Test filtering with traversal steps."""
         alix = db.create_node(["Person"], {"name": "Alix", "age": 30})
         gus = db.create_node(["Person"], {"name": "Gus", "age": 25})
-        charlie = db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35})
 
         db.create_edge(alix.id, gus.id, "knows", {})
-        db.create_edge(alix.id, charlie.id, "knows", {})
+        db.create_edge(alix.id, vincent.id, "knows", {})
 
         # Find friends of Alix who are over 30
         result = self._execute_gremlin(
@@ -103,7 +103,7 @@ class TestGremlinFilterVerification:
         """Test Gremlin between predicate."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
         db.create_node(["Person"], {"name": "Gus", "age": 25})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35})
 
         result = self._execute_gremlin(db, "g.V().hasLabel('Person').has('age', between(26, 34))")
         matches = list(result)
@@ -113,7 +113,7 @@ class TestGremlinFilterVerification:
         """Test Gremlin within predicate."""
         db.create_node(["Person"], {"name": "Alix", "city": "NYC"})
         db.create_node(["Person"], {"name": "Gus", "city": "LA"})
-        db.create_node(["Person"], {"name": "Charlie", "city": "Chicago"})
+        db.create_node(["Person"], {"name": "Vincent", "city": "Chicago"})
 
         result = self._execute_gremlin(
             db, "g.V().hasLabel('Person').has('city', within('NYC', 'LA'))"

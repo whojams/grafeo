@@ -15,8 +15,8 @@ use grafeo_engine::GrafeoDB;
 // Fixtures
 // ============================================================================
 
-/// Social network: Alix(30,NYC), Gus(25,NYC), Carol(35,London)
-/// Alix-KNOWS->Gus, Alix-KNOWS->Carol, Gus-KNOWS->Carol
+/// Social network: Alix(30,NYC), Gus(25,NYC), Harm(35,London)
+/// Alix-KNOWS->Gus, Alix-KNOWS->Harm, Gus-KNOWS->Harm
 /// Alix-WORKS_AT->TechCorp, Gus-WORKS_AT->TechCorp
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
@@ -38,10 +38,10 @@ fn create_social_network() -> GrafeoDB {
             ("city", Value::String("NYC".into())),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
             ("city", Value::String("London".into())),
         ],
@@ -51,8 +51,8 @@ fn create_social_network() -> GrafeoDB {
         session.create_node_with_props(&["Company"], [("name", Value::String("TechCorp".into()))]);
 
     session.create_edge(alix, gus, "KNOWS");
-    session.create_edge(alix, carol, "KNOWS");
-    session.create_edge(gus, carol, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
     session.create_edge(alix, techcorp, "WORKS_AT");
     session.create_edge(gus, techcorp, "WORKS_AT");
 
@@ -141,7 +141,7 @@ fn test_unwind_create_map_property_access() {
 
     session
         .execute(
-            "UNWIND [{id: 'u1', name: 'Gus'}, {id: 'u2', name: 'Carol'}] AS props \
+            "UNWIND [{id: 'u1', name: 'Gus'}, {id: 'u2', name: 'Harm'}] AS props \
              CREATE (:Test {id: props.id, name: props.name})",
         )
         .unwrap();
@@ -154,7 +154,7 @@ fn test_unwind_create_map_property_access() {
     assert_eq!(result.rows[0][0], Value::String("u1".into()));
     assert_eq!(result.rows[0][1], Value::String("Gus".into()));
     assert_eq!(result.rows[1][0], Value::String("u2".into()));
-    assert_eq!(result.rows[1][1], Value::String("Carol".into()));
+    assert_eq!(result.rows[1][1], Value::String("Harm".into()));
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn test_unwind_param_create_map_property_access() {
         ]))),
         Value::Map(Arc::new(BTreeMap::from([
             (PropertyKey::new("id"), Value::String("u2".into())),
-            (PropertyKey::new("name"), Value::String("Carol".into())),
+            (PropertyKey::new("name"), Value::String("Harm".into())),
         ]))),
     ]));
 
@@ -197,7 +197,7 @@ fn test_unwind_param_create_map_property_access() {
     assert_eq!(result.rows[0][0], Value::String("u1".into()));
     assert_eq!(result.rows[0][1], Value::String("Gus".into()));
     assert_eq!(result.rows[1][0], Value::String("u2".into()));
-    assert_eq!(result.rows[1][1], Value::String("Carol".into()));
+    assert_eq!(result.rows[1][1], Value::String("Harm".into()));
 }
 
 #[test]
@@ -433,9 +433,9 @@ fn test_delete_node_by_match() {
 
     let before = db.node_count();
 
-    // Delete Carol (who has KNOWS edges)
+    // Delete Harm (who has KNOWS edges)
     session
-        .execute("MATCH (n:Person) WHERE n.name = 'Carol' DETACH DELETE n")
+        .execute("MATCH (n:Person) WHERE n.name = 'Harm' DETACH DELETE n")
         .unwrap();
 
     assert!(db.node_count() < before);
@@ -576,17 +576,17 @@ fn test_optional_match_null_when_missing() {
     let db = create_social_network();
     let session = db.session();
 
-    // Carol doesn't manage anyone, OPTIONAL MATCH should still produce a row
+    // Harm doesn't manage anyone, OPTIONAL MATCH should still produce a row
     // (LEFT JOIN preserves the left side even when right side has no matches)
     let result = session
         .execute(
-            "MATCH (a:Person {name: 'Carol'}) \
+            "MATCH (a:Person {name: 'Harm'}) \
              OPTIONAL MATCH (a)-[:MANAGES]->(c:Company) \
              RETURN a, c",
         )
         .unwrap();
 
-    // Should produce exactly 1 row: LEFT JOIN keeps Carol even without a MANAGES match
+    // Should produce exactly 1 row: LEFT JOIN keeps Harm even without a MANAGES match
     assert_eq!(
         result.rows.len(),
         1,

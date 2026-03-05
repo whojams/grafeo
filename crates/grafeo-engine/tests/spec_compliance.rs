@@ -33,10 +33,10 @@ fn social_network() -> GrafeoDB {
             ("age", Value::Int64(25)),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
         ],
     );
@@ -57,9 +57,9 @@ fn social_network() -> GrafeoDB {
 
     let e1 = session.create_edge(alix, gus, "KNOWS");
     db.set_edge_property(e1, "since", Value::Int64(2020));
-    let e2 = session.create_edge(alix, carol, "KNOWS");
+    let e2 = session.create_edge(alix, harm, "KNOWS");
     db.set_edge_property(e2, "since", Value::Int64(2019));
-    let e3 = session.create_edge(gus, carol, "KNOWS");
+    let e3 = session.create_edge(gus, harm, "KNOWS");
     db.set_edge_property(e3, "since", Value::Int64(2021));
     session.create_edge(alix, techcorp, "WORKS_AT");
     session.create_edge(gus, techcorp, "WORKS_AT");
@@ -134,7 +134,7 @@ mod gql_set_ops {
                  MATCH (n:Person) WHERE n.age > 30 RETURN n.name",
             )
             .unwrap();
-        // Should exclude Carol (35)
+        // Should exclude Harm (35)
         let names = result
             .rows
             .iter()
@@ -143,7 +143,7 @@ mod gql_set_ops {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(!names.contains(&"Carol".to_string()));
+        assert!(!names.contains(&"Harm".to_string()));
     }
 
     #[test]
@@ -298,13 +298,13 @@ mod gql_predicates {
     #[test]
     fn xor_operator() {
         let db = social_network();
-        // XOR: (age>30)=Carol XOR (name=Gus)=Gus, but not both => Gus, Carol
+        // XOR: (age>30)=Harm XOR (name=Gus)=Gus, but not both => Gus, Harm
         let names = extract_strings(
             &db,
             "MATCH (n:Person) WHERE (n.age > 30) XOR (n.name = 'Gus') RETURN n.name ORDER BY n.name",
         );
         assert!(names.contains(&"Gus".to_string()));
-        assert!(names.contains(&"Carol".to_string()));
+        assert!(names.contains(&"Harm".to_string()));
         assert!(!names.contains(&"Alix".to_string())); // age=30, not >30, not Gus
     }
 }
@@ -351,7 +351,7 @@ mod gql_statements {
             })
             .collect();
         assert!(names.contains(&"Alix".to_string())); // age 30
-        assert!(names.contains(&"Carol".to_string())); // age 35
+        assert!(names.contains(&"Harm".to_string())); // age 35
         assert!(!names.contains(&"Gus".to_string())); // age 25
     }
 
@@ -365,7 +365,7 @@ mod gql_statements {
                  RETURN a.name, b.name ORDER BY a.name",
             )
             .unwrap();
-        // since>=2020: Alix->Gus (2020), Gus->Carol (2021)
+        // since>=2020: Alix->Gus (2020), Gus->Harm (2021)
         assert!(result.row_count() >= 2);
     }
 
@@ -390,7 +390,7 @@ mod gql_statements {
                 "MATCH (a:Person)-[:KNOWS{1,2}]->(b:Person) WHERE a.name = 'Alix' RETURN b.name",
             )
             .unwrap();
-        // Alix->Gus (1), Alix->Carol (1), Alix->Gus->Carol (2)
+        // Alix->Gus (1), Alix->Harm (1), Alix->Gus->Harm (2)
         assert!(result.row_count() >= 2);
     }
 
@@ -458,7 +458,7 @@ mod gql_statements {
         let result = session
             .execute("MATCH (n IS Person & !Engineer) RETURN n.name ORDER BY n.name")
             .unwrap();
-        // Alix, Gus, Carol have Person but not Engineer
+        // Alix, Gus, Harm have Person but not Engineer
         assert_eq!(result.row_count(), 3);
     }
 
@@ -483,7 +483,7 @@ mod gql_statements {
         let result = session
             .execute("MATCH (n:Person) FILTER n.age > 28 RETURN n.name ORDER BY n.name")
             .unwrap();
-        assert!(result.row_count() >= 2); // Alix (30), Carol (35)
+        assert!(result.row_count() >= 2); // Alix (30), Harm (35)
     }
 
     #[test]
@@ -717,11 +717,11 @@ mod gql_path_features {
         let result = session
             .execute(
                 "MATCH ANY SHORTEST (a:Person)-[:KNOWS*]->(b:Person) \
-                 WHERE a.name = 'Alix' AND b.name = 'Carol' \
+                 WHERE a.name = 'Alix' AND b.name = 'Harm' \
                  RETURN a.name, b.name",
             )
             .unwrap();
-        // Alix->Carol is 1 hop (direct), should find it
+        // Alix->Harm is 1 hop (direct), should find it
         assert!(result.row_count() >= 1);
     }
 
@@ -732,7 +732,7 @@ mod gql_path_features {
         let result = session
             .execute(
                 "MATCH ALL SHORTEST (a:Person)-[:KNOWS*]->(b:Person) \
-                 WHERE a.name = 'Alix' AND b.name = 'Carol' \
+                 WHERE a.name = 'Alix' AND b.name = 'Harm' \
                  RETURN a.name, b.name",
             )
             .unwrap();
@@ -1015,7 +1015,7 @@ mod cypher_features {
             .unwrap();
         assert_eq!(result.row_count(), 1);
         match &result.rows[0][1] {
-            Value::List(items) => assert!(items.len() >= 2, "Alix knows Gus and Carol"),
+            Value::List(items) => assert!(items.len() >= 2, "Alix knows Gus and Harm"),
             other => panic!("Expected list of friends, got {other:?}"),
         }
     }
@@ -1041,7 +1041,7 @@ mod sparql_features {
             .execute_sparql(
                 r#"INSERT DATA {
                     <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
-                    <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/carol> .
+                    <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/harm> .
                 }"#,
             )
             .unwrap();
@@ -1140,7 +1140,7 @@ mod sparql_features {
                 r#"INSERT DATA {
                     <http://ex.org/alix> <http://ex.org/name> "Alix" .
                     <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
-                    <http://ex.org/carol> <http://ex.org/name> "Carol" .
+                    <http://ex.org/harm> <http://ex.org/name> "Harm" .
                 }"#,
             )
             .unwrap();
@@ -1164,7 +1164,7 @@ mod sparql_features {
                 r#"INSERT DATA {
                     <http://ex.org/alix> <http://ex.org/name> "Alix" .
                     <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
-                    <http://ex.org/carol> <http://ex.org/name> "Carol" .
+                    <http://ex.org/harm> <http://ex.org/name> "Harm" .
                 }"#,
             )
             .unwrap();
@@ -1176,7 +1176,7 @@ mod sparql_features {
                 }"#,
             )
             .unwrap();
-        assert_eq!(result.row_count(), 1, "Only Carol has no knows relation");
+        assert_eq!(result.row_count(), 1, "Only Harm has no knows relation");
     }
 
     #[test]
@@ -1187,7 +1187,7 @@ mod sparql_features {
             .execute_sparql(
                 r#"INSERT DATA {
                     <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
-                    <http://ex.org/gus> <http://ex.org/likes> <http://ex.org/carol> .
+                    <http://ex.org/gus> <http://ex.org/likes> <http://ex.org/harm> .
                 }"#,
             )
             .unwrap();
@@ -1210,7 +1210,7 @@ mod sparql_features {
             .execute_sparql(
                 r#"INSERT DATA {
                     <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
-                    <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/carol> .
+                    <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/harm> .
                 }"#,
             )
             .unwrap();

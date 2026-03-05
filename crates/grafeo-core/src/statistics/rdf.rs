@@ -449,14 +449,14 @@ mod tests {
         collector.record_triple("alix", "knows", "gus");
         collector.record_triple("alix", "name", "Alix");
         collector.record_triple("gus", "name", "Gus");
-        collector.record_triple("gus", "knows", "charlie");
+        collector.record_triple("gus", "knows", "vincent");
 
         let stats = collector.build();
 
         assert_eq!(stats.total_triples, 4);
         assert_eq!(stats.subject_count, 2); // alix, gus
         assert_eq!(stats.predicate_count, 2); // knows, name
-        assert_eq!(stats.object_count, 4); // gus, Alix, Gus, charlie
+        assert_eq!(stats.object_count, 4); // gus, Alix, Gus, vincent
     }
 
     #[test]

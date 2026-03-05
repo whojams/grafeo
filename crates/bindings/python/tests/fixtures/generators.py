@@ -49,8 +49,8 @@ class SyntheticDataGenerator:
         first_names = [
             "Alix",
             "Gus",
-            "Charlie",
-            "Diana",
+            "Vincent",
+            "Jules",
             "Eve",
             "Frank",
             "Grace",

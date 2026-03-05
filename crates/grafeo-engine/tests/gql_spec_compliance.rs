@@ -17,7 +17,7 @@ fn setup_db() -> GrafeoDB {
         .execute("INSERT (:Person {name: 'Gus', age: 25})")
         .unwrap();
     session
-        .execute("INSERT (:Person {name: 'Charlie', age: 35})")
+        .execute("INSERT (:Person {name: 'Vincent', age: 35})")
         .unwrap();
     session.commit().unwrap();
 
@@ -30,7 +30,7 @@ fn setup_db() -> GrafeoDB {
         .unwrap();
     session
         .execute(
-            "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Charlie'}) INSERT (a)-[:KNOWS]->(b)",
+            "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)",
         )
         .unwrap();
     session.commit().unwrap();
@@ -60,7 +60,7 @@ fn test_with_star() {
     let result = session
         .execute("MATCH (n:Person) WITH * WHERE n.age > 28 RETURN n.name")
         .unwrap();
-    assert_eq!(result.rows.len(), 2); // Alix (30) and Charlie (35)
+    assert_eq!(result.rows.len(), 2); // Alix (30) and Vincent (35)
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn test_except_all() {
              MATCH (n:Person {name: 'Gus'}) RETURN n.name",
         )
         .unwrap();
-    assert_eq!(result.rows.len(), 2); // Alix, Charlie
+    assert_eq!(result.rows.len(), 2); // Alix, Vincent
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn test_intersect_all() {
              MATCH (n:Person) WHERE n.age >= 30 RETURN n.name",
         )
         .unwrap();
-    assert_eq!(result.rows.len(), 2); // Alix, Charlie
+    assert_eq!(result.rows.len(), 2); // Alix, Vincent
 }
 
 // ---------------------------------------------------------------------------
@@ -623,13 +623,13 @@ fn test_parenthesized_path_mode_trail() {
     // G049: TRAIL mode inside parenthesized pattern prevents edge repetition
     let db = setup_db();
     let session = db.session();
-    // Alix -> Gus -> Charlie, with TRAIL mode (no repeated edges)
+    // Alix -> Gus -> Vincent, with TRAIL mode (no repeated edges)
     let result = session
         .execute(
             "MATCH (TRAIL (a)-[:KNOWS]->(b)){1,3} RETURN DISTINCT b.name AS name ORDER BY name",
         )
         .unwrap();
-    // Should find paths: Alix->Gus, Gus->Charlie, Alix->Gus->Charlie
+    // Should find paths: Alix->Gus, Gus->Vincent, Alix->Gus->Vincent
     assert!(
         !result.rows.is_empty(),
         "TRAIL quantified pattern should produce results"
@@ -647,7 +647,7 @@ fn test_parenthesized_where_clause() {
             "MATCH ((a:Person)-[:KNOWS]->(b:Person) WHERE b.age > 26){1,2} RETURN DISTINCT b.name AS name ORDER BY name",
         )
         .unwrap();
-    // Gus (age 25) should be filtered out; only Charlie (age 35) qualifies
+    // Gus (age 25) should be filtered out; only Vincent (age 35) qualifies
     let names: Vec<&str> = result
         .rows
         .iter()
@@ -657,8 +657,8 @@ fn test_parenthesized_where_clause() {
         })
         .collect();
     assert!(
-        names.contains(&"Charlie"),
-        "Charlie (age 35) should be in results, got: {names:?}"
+        names.contains(&"Vincent"),
+        "Vincent (age 35) should be in results, got: {names:?}"
     );
     assert!(
         !names.contains(&"Gus"),
@@ -711,7 +711,7 @@ fn test_simplified_multi_label_path() {
     // G039: -/:KNOWS|WORKS_WITH/-> with multiple label alternatives
     let db = setup_db();
     let session = db.session();
-    // Should find both KNOWS edges (Alix->Gus, Gus->Charlie)
+    // Should find both KNOWS edges (Alix->Gus, Gus->Vincent)
     let result = session
         .execute("MATCH (a:Person)-/:KNOWS/->(b:Person) RETURN a.name AS src, b.name AS dst ORDER BY src, dst")
         .unwrap();
@@ -1303,9 +1303,9 @@ fn test_path_multi_hop_nodes() {
     // GF04: nodes() on multi-hop path using variable-length
     let db = setup_db();
     let session = db.session();
-    // Alix -> Gus -> Charlie (2 hops via [*2..2])
+    // Alix -> Gus -> Vincent (2 hops via [*2..2])
     let result = session.execute(
-        "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS*2..2]->(c:Person {name: 'Charlie'}) \
+        "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS*2..2]->(c:Person {name: 'Vincent'}) \
              RETURN nodes(p) AS path_nodes",
     );
     // Variable-length path matching may or may not propagate full path nodes.

@@ -55,10 +55,10 @@ def traversal_db(db):
     # Create Person nodes
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30})
     gus = db.create_node(["Person"], {"name": "Gus", "age": 25})
-    charlie = db.create_node(["Person"], {"name": "Charlie", "age": 35})
+    vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35})
 
     # Create knows edges (lowercase for Gremlin convention)
     db.create_edge(alix.id, gus.id, "knows", {"since": 2020})
-    db.create_edge(gus.id, charlie.id, "knows", {"since": 2021})
+    db.create_edge(gus.id, vincent.id, "knows", {"since": 2021})
 
     return db

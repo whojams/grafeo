@@ -51,20 +51,20 @@ class TestSPARQLSelectBasics:
                 ex:gus foaf:age 25 .
                 ex:gus ex:city "LA" .
 
-                ex:charlie rdf:type foaf:Person .
-                ex:charlie foaf:name "Charlie" .
-                ex:charlie foaf:age 35 .
-                ex:charlie ex:city "NYC" .
+                ex:vincent rdf:type foaf:Person .
+                ex:vincent foaf:name "Vincent" .
+                ex:vincent foaf:age 35 .
+                ex:vincent ex:city "NYC" .
 
-                ex:diana rdf:type foaf:Person .
-                ex:diana foaf:name "Diana" .
-                ex:diana foaf:age 28 .
-                ex:diana ex:city "Boston" .
+                ex:jules rdf:type foaf:Person .
+                ex:jules foaf:name "Jules" .
+                ex:jules foaf:age 28 .
+                ex:jules ex:city "Boston" .
 
                 ex:alix foaf:knows ex:gus .
-                ex:alix foaf:knows ex:charlie .
-                ex:gus foaf:knows ex:charlie .
-                ex:charlie foaf:knows ex:diana .
+                ex:alix foaf:knows ex:vincent .
+                ex:gus foaf:knows ex:vincent .
+                ex:vincent foaf:knows ex:jules .
             }
         """)
 
@@ -285,9 +285,9 @@ class TestSPARQLSelectBasics:
         """)
         rows = list(result)
         names = [row.get("name") for row in rows]
-        # NYC persons (Alix, Charlie) should be excluded
+        # NYC persons (Alix, Vincent) should be excluded
         assert "Alix" not in names, "Alix (NYC) should be excluded by MINUS"
-        assert "Charlie" not in names, "Charlie (NYC) should be excluded by MINUS"
+        assert "Vincent" not in names, "Vincent (NYC) should be excluded by MINUS"
 
     # =========================================================================
     # FILTER
@@ -305,7 +305,7 @@ class TestSPARQLSelectBasics:
             }
         """)
         rows = list(result)
-        # Alix (30), Charlie (35)
+        # Alix (30), Vincent (35)
         assert len(rows) == 2, "Should find 2 persons older than 28"
 
     def test_filter_string_equality(self):
@@ -335,7 +335,7 @@ class TestSPARQLSelectBasics:
             }
         """)
         rows = list(result)
-        # Only Charlie (NYC, 35)
+        # Only Vincent (NYC, 35)
         assert len(rows) == 1
 
     def test_filter_logical_or(self):
@@ -351,7 +351,7 @@ class TestSPARQLSelectBasics:
             }
         """)
         rows = list(result)
-        # Gus (LA), Diana (Boston)
+        # Gus (LA), Jules (Boston)
         assert len(rows) == 2
 
     def test_filter_regex(self):
@@ -365,8 +365,8 @@ class TestSPARQLSelectBasics:
             }
         """)
         rows = list(result)
-        # Alix and Gus start with A or B
-        assert len(rows) == 2
+        # Alix starts with A
+        assert len(rows) == 1
 
     def test_filter_not_exists(self):
         """SPARQL: FILTER NOT EXISTS excludes matching patterns."""
@@ -381,9 +381,9 @@ class TestSPARQLSelectBasics:
             }
         """)
         rows = list(result)
-        # Diana does not know anyone, so only Diana should appear
+        # Jules does not know anyone, so only Jules should appear
         names = [row.get("name") for row in rows]
-        assert "Diana" in names, "Diana (knows nobody) should be included"
+        assert "Jules" in names, "Jules (knows nobody) should be included"
         assert "Alix" not in names, "Alix (knows others) should be excluded"
 
     def test_filter_exists(self):
@@ -400,7 +400,7 @@ class TestSPARQLSelectBasics:
         """)
         rows = list(result)
         names = [row.get("name") for row in rows]
-        # Alix, Gus, Charlie all know someone
+        # Alix, Gus, Vincent all know someone
         assert len(names) >= 3
 
     # =========================================================================
@@ -576,7 +576,7 @@ class TestSPARQLSelectBasics:
             }
         """)
         rows = list(result)
-        # Friends-of: Alix knows Gus/Charlie, Gus knows Charlie, Charlie knows Diana
+        # Friends-of: Alix knows Gus/Vincent, Gus knows Vincent, Vincent knows Jules
         assert len(rows) >= 1
 
     def test_property_path_one_or_more(self):

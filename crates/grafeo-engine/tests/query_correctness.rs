@@ -27,11 +27,11 @@ use grafeo_engine::GrafeoDB;
 ///
 /// Structure:
 /// - Alix (Person, age: 30) -KNOWS-> Gus (Person, age: 25)
-/// - Alix -KNOWS-> Carol (Person, age: 35)
-/// - Gus -KNOWS-> Carol
+/// - Alix -KNOWS-> Harm (Person, age: 35)
+/// - Gus -KNOWS-> Harm
 /// - Alix -WORKS_AT-> TechCorp (Company, founded: 2010)
 /// - Gus -WORKS_AT-> TechCorp
-/// - Carol -WORKS_AT-> Startup (Company, founded: 2020)
+/// - Harm -WORKS_AT-> Startup (Company, founded: 2020)
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
@@ -51,10 +51,10 @@ fn create_social_network() -> GrafeoDB {
             ("age", Value::Int64(25)),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
         ],
     );
@@ -77,13 +77,13 @@ fn create_social_network() -> GrafeoDB {
 
     // Create KNOWS relationships
     session.create_edge(alix, gus, "KNOWS");
-    session.create_edge(alix, carol, "KNOWS");
-    session.create_edge(gus, carol, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
 
     // Create WORKS_AT relationships
     session.create_edge(alix, techcorp, "WORKS_AT");
     session.create_edge(gus, techcorp, "WORKS_AT");
-    session.create_edge(carol, startup, "WORKS_AT");
+    session.create_edge(harm, startup, "WORKS_AT");
 
     db
 }
@@ -244,7 +244,7 @@ mod gql_basic_patterns {
         assert_eq!(
             result.row_count(),
             2,
-            "Should find 2 people older than 28 (Alix: 30, Carol: 35)"
+            "Should find 2 people older than 28 (Alix: 30, Harm: 35)"
         );
     }
 
@@ -290,7 +290,7 @@ mod gql_basic_patterns {
         let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
         assert!(names.contains(&&Value::String("Alix".into())));
         assert!(names.contains(&&Value::String("Gus".into())));
-        assert!(names.contains(&&Value::String("Carol".into())));
+        assert!(names.contains(&&Value::String("Harm".into())));
     }
 
     #[test]
@@ -449,7 +449,7 @@ mod gql_joins {
             .execute("MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, b.name, c.name")
             .unwrap();
 
-        // Alix knows Gus, Gus knows Carol
+        // Alix knows Gus, Gus knows Harm
         assert!(
             result.row_count() >= 1,
             "Should find at least one 2-hop path"
@@ -543,7 +543,7 @@ mod gql_mutations {
 
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Carol'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Harm'})").unwrap();
 
         let result = session.execute("MATCH (n:Person) RETURN n").unwrap();
         assert_eq!(result.row_count(), 3, "Should have 3 Person nodes");
@@ -660,7 +660,7 @@ mod cypher_tests {
 
     #[test]
     fn test_cypher_exists_subquery_basic() {
-        // Alix-[:KNOWS]->Gus, Alix-[:KNOWS]->Carol, Gus-[:KNOWS]->Carol
+        // Alix-[:KNOWS]->Gus, Alix-[:KNOWS]->Harm, Gus-[:KNOWS]->Harm
         let db = create_social_network();
         let session = db.session();
 
@@ -670,7 +670,7 @@ mod cypher_tests {
             )
             .unwrap();
 
-        // Alix knows Gus and Carol, Gus knows Carol
+        // Alix knows Gus and Harm, Gus knows Harm
         assert_eq!(result.row_count(), 2);
         assert_eq!(result.rows[0][0], Value::String("Alix".into()));
         assert_eq!(result.rows[1][0], Value::String("Gus".into()));
@@ -687,9 +687,9 @@ mod cypher_tests {
             )
             .unwrap();
 
-        // Carol has no outgoing KNOWS edges
+        // Harm has no outgoing KNOWS edges
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[0][0], Value::String("Harm".into()));
     }
 
     #[test]
@@ -736,8 +736,8 @@ mod cypher_tests {
 
         assert_eq!(result.row_count(), 3);
         assert_eq!(result.rows[0][0], Value::String("Alix".into()));
-        assert_eq!(result.rows[1][0], Value::String("Carol".into()));
-        assert_eq!(result.rows[2][0], Value::String("Gus".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+        assert_eq!(result.rows[2][0], Value::String("Harm".into()));
     }
 
     #[test]
@@ -1153,11 +1153,11 @@ mod gql_direction_tests {
         let db = create_social_network();
         let session = db.session();
 
-        // Carol is known by both Alix and Gus (incoming KNOWS)
+        // Harm is known by both Alix and Gus (incoming KNOWS)
         let result = session
-            .execute("MATCH (c:Person {name: \"Carol\"})<-[:KNOWS]-(x) RETURN x.name")
+            .execute("MATCH (c:Person {name: \"Harm\"})<-[:KNOWS]-(x) RETURN x.name")
             .unwrap();
-        assert_eq!(result.row_count(), 2, "Carol should be known by 2 people");
+        assert_eq!(result.row_count(), 2, "Harm should be known by 2 people");
 
         // Gus is known by Alix (incoming KNOWS)
         let result = session
@@ -1393,7 +1393,7 @@ mod gql_in_operator {
             .execute("INSERT (:Person {name: 'Gus', age: 25})")
             .unwrap();
         session
-            .execute("INSERT (:Person {name: 'Carol', age: 35})")
+            .execute("INSERT (:Person {name: 'Harm', age: 35})")
             .unwrap();
         db
     }
@@ -1420,8 +1420,8 @@ mod gql_in_operator {
             .execute("MATCH (n:Person) WHERE n.age IN [25, 35] RETURN n.name ORDER BY n.name")
             .unwrap();
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Carol".into()));
-        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+        assert_eq!(result.rows[0][0], Value::String("Gus".into()));
+        assert_eq!(result.rows[1][0], Value::String("Harm".into()));
     }
 
     #[test]
@@ -1429,10 +1429,10 @@ mod gql_in_operator {
         let db = setup_db();
         let session = db.session();
         let result = session
-            .execute("MATCH (n:Person) WHERE n.name IN ['Carol'] RETURN n.name")
+            .execute("MATCH (n:Person) WHERE n.name IN ['Harm'] RETURN n.name")
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[0][0], Value::String("Harm".into()));
     }
 
     #[test]
@@ -1477,7 +1477,7 @@ mod parameterized_queries {
             .execute("INSERT (:Person {name: 'Gus', age: 25})")
             .unwrap();
         session
-            .execute("INSERT (:Person {name: 'Carol', age: 35})")
+            .execute("INSERT (:Person {name: 'Harm', age: 35})")
             .unwrap();
         db
     }
@@ -1516,7 +1516,7 @@ mod parameterized_queries {
             .unwrap();
         assert_eq!(result.row_count(), 2);
         assert_eq!(result.rows[0][0], Value::String("Alix".into()));
-        assert_eq!(result.rows[1][0], Value::String("Carol".into()));
+        assert_eq!(result.rows[1][0], Value::String("Harm".into()));
     }
 
     #[test]

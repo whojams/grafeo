@@ -305,11 +305,11 @@ mod tests {
         // Create nodes
         let alix = store.create_node(&["Person"]);
         let gus = store.create_node(&["Person"]);
-        let charlie = store.create_node(&["Person"]);
+        let vincent = store.create_node(&["Person"]);
 
-        // Create edges: Alix -> Gus, Alix -> Charlie
+        // Create edges: Alix -> Gus, Alix -> Vincent
         store.create_edge(alix, gus, "KNOWS");
-        store.create_edge(alix, charlie, "KNOWS");
+        store.create_edge(alix, vincent, "KNOWS");
 
         // Scan Alix only
         let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
@@ -333,7 +333,7 @@ mod tests {
             }
         }
 
-        // Alix -> Gus, Alix -> Charlie
+        // Alix -> Gus, Alix -> Vincent
         assert_eq!(results.len(), 2);
 
         // All source nodes should be Alix
@@ -341,10 +341,10 @@ mod tests {
             assert_eq!(*src, alix);
         }
 
-        // Target nodes should be Gus and Charlie
+        // Target nodes should be Gus and Vincent
         let targets: Vec<NodeId> = results.iter().map(|(_, _, dst)| *dst).collect();
         assert!(targets.contains(&gus));
-        assert!(targets.contains(&charlie));
+        assert!(targets.contains(&vincent));
     }
 
     #[test]

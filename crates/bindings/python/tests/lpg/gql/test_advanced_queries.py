@@ -24,7 +24,7 @@ class TestGQLAdvancedQueries(BaseAdvancedQueriesTest):
     def setup_social_graph(self, db):
         alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         gus = db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        carol = db.create_node(["Person"], {"name": "Carol", "age": 35, "city": "London"})
+        harm = db.create_node(["Person"], {"name": "Harm", "age": 35, "city": "London"})
         db.create_edge(alix.id, gus.id, "KNOWS")
-        db.create_edge(alix.id, carol.id, "KNOWS")
-        db.create_edge(gus.id, carol.id, "KNOWS")
+        db.create_edge(alix.id, harm.id, "KNOWS")
+        db.create_edge(gus.id, harm.id, "KNOWS")

@@ -28,7 +28,7 @@ class BaseAdminTest(ABC):
         """Set up test data for admin tests.
 
         Should create a graph with:
-        - Person nodes: Alix (30, NYC), Gus (25, LA), Charlie (35, NYC)
+        - Person nodes: Alix (30, NYC), Gus (25, LA), Vincent (35, NYC)
         - Company nodes: Acme Corp, Globex Inc
         - KNOWS edges between persons
         - WORKS_AT edges from persons to companies

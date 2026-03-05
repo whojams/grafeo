@@ -408,7 +408,7 @@ mod tests {
             Arc::clone(&store),
             "n".to_string(),
             vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Charlie".into()))],
+            vec![("name".to_string(), Value::String("Vincent".into()))],
             vec![("created".to_string(), Value::Bool(true))], // on_create
             vec![],                                           // no on_match
         );
@@ -420,7 +420,7 @@ mod tests {
         let node = store.get_node(nodes[0]).unwrap();
         assert_eq!(
             node.properties.get(&PropertyKey::new("name")),
-            Some(&Value::String("Charlie".into()))
+            Some(&Value::String("Vincent".into()))
         );
         assert_eq!(
             node.properties.get(&PropertyKey::new("created")),
@@ -435,7 +435,7 @@ mod tests {
         // Create an existing node
         let node_id = store.create_node_with_props(
             &["Person"],
-            &[(PropertyKey::new("name"), Value::String("Diana".into()))],
+            &[(PropertyKey::new("name"), Value::String("Jules".into()))],
         );
 
         // MERGE with ON MATCH SET
@@ -443,7 +443,7 @@ mod tests {
             Arc::clone(&store),
             "n".to_string(),
             vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Diana".into()))],
+            vec![("name".to_string(), Value::String("Jules".into()))],
             vec![],                                           // no on_create
             vec![("updated".to_string(), Value::Bool(true))], // on_match
         );

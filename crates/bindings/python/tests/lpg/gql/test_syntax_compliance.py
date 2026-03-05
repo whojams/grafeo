@@ -113,7 +113,7 @@ class TestGqlClauses:
         """WITH pipes data between clauses with projection."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
         db.create_node(["Person"], {"name": "Gus", "age": 25})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35})
         result = list(
             db.execute(
                 "MATCH (p:Person) "
@@ -123,7 +123,7 @@ class TestGqlClauses:
             )
         )
         names = [r["name"] for r in result]
-        assert names == ["Alix", "Charlie"]
+        assert names == ["Alix", "Vincent"]
 
     def test_with_where(self, db):
         """WITH followed by WHERE for filtering."""
@@ -162,23 +162,23 @@ class TestGqlClauses:
         """ORDER BY ascending on alias."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
         db.create_node(["Person"], {"name": "Gus", "age": 25})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35})
         result = list(
             db.execute("MATCH (p:Person) RETURN p.name AS name, p.age AS age ORDER BY age ASC")
         )
         names = [r["name"] for r in result]
-        assert names == ["Gus", "Alix", "Charlie"]
+        assert names == ["Gus", "Alix", "Vincent"]
 
     def test_order_by_alias_desc(self, db):
         """ORDER BY descending on alias."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
         db.create_node(["Person"], {"name": "Gus", "age": 25})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35})
         result = list(
             db.execute("MATCH (p:Person) RETURN p.name AS name, p.age AS age ORDER BY age DESC")
         )
         names = [r["name"] for r in result]
-        assert names == ["Charlie", "Alix", "Gus"]
+        assert names == ["Vincent", "Alix", "Gus"]
 
     def test_skip(self, db):
         """SKIP skips the first N rows."""
@@ -449,18 +449,18 @@ class TestGqlExpressions:
         """Logical AND in WHERE."""
         db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35, "city": "NYC"})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "NYC"})
         result = list(
             db.execute("MATCH (n:Person) WHERE n.age > 25 AND n.city = 'NYC' RETURN n.name")
         )
         names = {r["n.name"] for r in result}
-        assert names == {"Alix", "Charlie"}
+        assert names == {"Alix", "Vincent"}
 
     def test_or(self, db):
         """Logical OR in WHERE."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
         db.create_node(["Person"], {"name": "Gus", "age": 25})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35})
         result = list(
             db.execute("MATCH (n:Person) WHERE n.name = 'Alix' OR n.name = 'Gus' RETURN n.name")
         )
@@ -490,10 +490,10 @@ class TestGqlExpressions:
     def test_case_searched(self, db):
         """Searched CASE expression (CASE WHEN cond THEN result)."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35})
         result = list(
             db.execute(
-                "MATCH (n:Person {name: 'Charlie'}) "
+                "MATCH (n:Person {name: 'Vincent'}) "
                 "RETURN CASE WHEN n.age > 30 THEN 'senior' ELSE 'junior' END AS level"
             )
         )
@@ -561,18 +561,18 @@ class TestGqlExpressions:
     def test_ends_with(self, db):
         """ENDS WITH string predicate."""
         db.create_node(["Person"], {"name": "Alix"})
-        db.create_node(["Person"], {"name": "Charlie"})
+        db.create_node(["Person"], {"name": "Vincent"})
         db.create_node(["Person"], {"name": "Gus"})
-        result = list(db.execute("MATCH (n:Person) WHERE n.name ENDS WITH 'e' RETURN n.name"))
+        result = list(db.execute("MATCH (n:Person) WHERE n.name ENDS WITH 'nt' RETURN n.name"))
         names = {r["n.name"] for r in result}
-        assert "Alix" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
+        assert len(names) == 1
 
     def test_contains(self, db):
         """CONTAINS string predicate."""
         db.create_node(["Person"], {"name": "Alix"})
         db.create_node(["Person"], {"name": "Gus"})
-        result = list(db.execute("MATCH (n:Person) WHERE n.name CONTAINS 'lic' RETURN n.name"))
+        result = list(db.execute("MATCH (n:Person) WHERE n.name CONTAINS 'li' RETURN n.name"))
         assert len(result) == 1
         assert result[0]["n.name"] == "Alix"
 
@@ -582,7 +582,7 @@ class TestGqlExpressions:
         """IN list membership test."""
         db.create_node(["Person"], {"name": "Alix"})
         db.create_node(["Person"], {"name": "Gus"})
-        db.create_node(["Person"], {"name": "Charlie"})
+        db.create_node(["Person"], {"name": "Vincent"})
         result = list(db.execute("MATCH (n:Person) WHERE n.name IN ['Alix', 'Gus'] RETURN n.name"))
         assert len(result) == 2
 
@@ -615,9 +615,9 @@ class TestGqlPredicates:
         """EXISTS { MATCH ... } subquery predicate."""
         alix = db.create_node(["Person"], {"name": "Alix"})
         gus = db.create_node(["Person"], {"name": "Gus"})
-        charlie = db.create_node(["Person"], {"name": "Charlie"})
+        vincent = db.create_node(["Person"], {"name": "Vincent"})
         db.create_edge(alix.id, gus.id, "KNOWS")
-        db.create_edge(alix.id, charlie.id, "KNOWS")
+        db.create_edge(alix.id, vincent.id, "KNOWS")
         result = list(
             db.execute("MATCH (p:Person) WHERE EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name")
         )
@@ -683,7 +683,7 @@ class TestGqlPatterns:
         """Two-hop path pattern."""
         a = db.create_node(["Person"], {"name": "Alix"})
         b = db.create_node(["Person"], {"name": "Gus"})
-        c = db.create_node(["Person"], {"name": "Charlie"})
+        c = db.create_node(["Person"], {"name": "Vincent"})
         db.create_edge(a.id, b.id, "KNOWS")
         db.create_edge(b.id, c.id, "KNOWS")
         result = list(
@@ -693,7 +693,7 @@ class TestGqlPatterns:
         )
         assert len(result) == 1
         assert result[0]["a.name"] == "Alix"
-        assert result[0]["c.name"] == "Charlie"
+        assert result[0]["c.name"] == "Vincent"
 
     def test_comma_separated_patterns(self, db):
         """Comma-separated patterns in MATCH (cross product)."""
@@ -851,11 +851,11 @@ class TestGqlFunctions:
         """collect(expr) aggregate."""
         db.create_node(["Person"], {"name": "Alix"})
         db.create_node(["Person"], {"name": "Gus"})
-        db.create_node(["Person"], {"name": "Charlie"})
+        db.create_node(["Person"], {"name": "Vincent"})
         result = list(db.execute("MATCH (p:Person) RETURN collect(p.name) AS names"))
         assert len(result) == 1
         names = result[0]["names"]
-        assert set(names) == {"Alix", "Gus", "Charlie"}
+        assert set(names) == {"Alix", "Gus", "Vincent"}
 
     def test_stdev(self, db):
         """stdev(expr) sample standard deviation."""
@@ -1187,7 +1187,7 @@ class TestGqlIsoFeatures:
         """GROUP BY groups results explicitly."""
         db.create_node(["Person"], {"name": "Alix", "city": "NYC"})
         db.create_node(["Person"], {"name": "Gus", "city": "LA"})
-        db.create_node(["Person"], {"name": "Charlie", "city": "NYC"})
+        db.create_node(["Person"], {"name": "Vincent", "city": "NYC"})
         result = list(db.execute("MATCH (n:Person) RETURN n.city, count(n) AS cnt GROUP BY n.city"))
         assert len(result) == 2
         la_row = next(r for r in result if r["n.city"] == "LA")

@@ -150,13 +150,13 @@ class TestRDFGraphQLFilters:
             ["Resource", "Person"],
             {"uri": "http://example.org/gus", "name": "Gus", "age": 25},
         )
-        charlie = self.db.create_node(
+        vincent = self.db.create_node(
             ["Resource", "Person"],
-            {"uri": "http://example.org/charlie", "name": "Charlie", "age": 35},
+            {"uri": "http://example.org/vincent", "name": "Vincent", "age": 35},
         )
 
         self.db.create_edge(alix.id, gus.id, "knows", {})
-        self.db.create_edge(alix.id, charlie.id, "knows", {})
+        self.db.create_edge(alix.id, vincent.id, "knows", {})
 
         result = self._execute_graphql(
             """

@@ -847,7 +847,10 @@ pub extern "C" fn grafeo_find_nodes_by_property(
 pub extern "C" fn grafeo_free_node_ids(ids: *mut u64, count: usize) {
     if !ids.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in find_nodes_by_property.
-        unsafe { drop(Vec::from_raw_parts(ids, count, count)) };
+        unsafe {
+            let slice = std::ptr::slice_from_raw_parts_mut(ids, count);
+            drop(Box::from_raw(slice));
+        }
     }
 }
 
@@ -1143,11 +1146,17 @@ pub extern "C" fn grafeo_batch_create_nodes(
 pub extern "C" fn grafeo_free_vector_results(ids: *mut u64, distances: *mut f32, count: usize) {
     if !ids.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in vector_search.
-        unsafe { drop(Vec::from_raw_parts(ids, count, count)) };
+        unsafe {
+            let slice = std::ptr::slice_from_raw_parts_mut(ids, count);
+            drop(Box::from_raw(slice));
+        }
     }
     if !distances.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in vector_search.
-        unsafe { drop(Vec::from_raw_parts(distances, count, count)) };
+        unsafe {
+            let slice = std::ptr::slice_from_raw_parts_mut(distances, count);
+            drop(Box::from_raw(slice));
+        }
     }
 }
 

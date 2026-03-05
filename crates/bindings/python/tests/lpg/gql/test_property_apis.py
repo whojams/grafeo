@@ -31,13 +31,13 @@ def populated_db(db):
     """Database with a few nodes and edges pre-created."""
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30})
     gus = db.create_node(["Person"], {"name": "Gus", "age": 25})
-    charlie = db.create_node(["Person", "Employee"], {"name": "Charlie", "age": 35})
+    vincent = db.create_node(["Person", "Employee"], {"name": "Vincent", "age": 35})
     edge = db.create_edge(alix.id, gus.id, "KNOWS", {"since": 2020})
     return {
         "db": db,
         "alix": alix,
         "gus": gus,
-        "charlie": charlie,
+        "vincent": vincent,
         "edge": edge,
     }
 
@@ -178,8 +178,8 @@ class TestLabelManagement:
 
     def test_remove_label(self, populated_db):
         db = populated_db["db"]
-        nid = populated_db["charlie"].id
-        # Charlie has Person and Employee
+        nid = populated_db["vincent"].id
+        # Vincent has Person and Employee
         removed = db.remove_node_label(nid, "Employee")
         assert removed is True
         labels = db.get_node_labels(nid)
@@ -194,7 +194,7 @@ class TestLabelManagement:
 
     def test_get_labels(self, populated_db):
         db = populated_db["db"]
-        nid = populated_db["charlie"].id
+        nid = populated_db["vincent"].id
         labels = db.get_node_labels(nid)
         assert "Person" in labels
         assert "Employee" in labels
@@ -294,14 +294,14 @@ class TestGetPropertyBatch:
         ids = [
             populated_db["alix"].id,
             populated_db["gus"].id,
-            populated_db["charlie"].id,
+            populated_db["vincent"].id,
         ]
         values = db.get_property_batch(ids, "name")
         assert len(values) == 3
         names = [v for v in values if v is not None]
         assert "Alix" in names
         assert "Gus" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
 
     def test_batch_with_missing_property(self, populated_db):
         db = populated_db["db"]

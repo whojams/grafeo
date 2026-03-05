@@ -19,7 +19,7 @@ class TestCypherClauses:
     def test_match_by_label(self, pattern_db):
         result = list(pattern_db.execute_cypher("MATCH (n:Person) RETURN n.name"))
         names = {r["n.name"] for r in result}
-        assert names == {"Alix", "Gus", "Charlie"}
+        assert names == {"Alix", "Gus", "Vincent"}
 
     def test_match_by_property(self, pattern_db):
         result = list(pattern_db.execute_cypher("MATCH (n:Person {name: 'Alix'}) RETURN n.age"))
@@ -45,14 +45,14 @@ class TestCypherClauses:
             pattern_db.execute_cypher(
                 "MATCH (a:Person {name: 'Alix'}) "
                 "MATCH (b:Person {name: 'Gus'}) "
-                "MATCH (c:Person {name: 'Charlie'}) "
+                "MATCH (c:Person {name: 'Vincent'}) "
                 "RETURN a.name, b.name, c.name"
             )
         )
         assert len(result) == 1
         assert result[0]["a.name"] == "Alix"
         assert result[0]["b.name"] == "Gus"
-        assert result[0]["c.name"] == "Charlie"
+        assert result[0]["c.name"] == "Vincent"
 
     def test_multiple_match_with_create(self, db):
         """MATCH + MATCH + CREATE (Deriva pattern)."""
@@ -87,7 +87,7 @@ class TestCypherClauses:
         result = list(pattern_db.execute_cypher("MATCH (n:Person) WHERE n.age > 28 RETURN n.name"))
         names = {r["n.name"] for r in result}
         assert "Alix" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
         assert "Gus" not in names
 
     # --- WITH ---
@@ -102,14 +102,14 @@ class TestCypherClauses:
             )
         )
         names = [r["name"] for r in result]
-        assert names == ["Alix", "Charlie"]
+        assert names == ["Alix", "Vincent"]
 
     def test_with_where(self, pattern_db):
         result = list(
             pattern_db.execute_cypher("MATCH (p:Person) WITH p WHERE p.age > 30 RETURN p.name")
         )
         assert len(result) == 1
-        assert result[0]["p.name"] == "Charlie"
+        assert result[0]["p.name"] == "Vincent"
 
     # --- RETURN ---
 
@@ -126,7 +126,7 @@ class TestCypherClauses:
             )
         )
         names = [r["name"] for r in result]
-        assert names == ["Gus", "Alix", "Charlie"]
+        assert names == ["Gus", "Alix", "Vincent"]
 
     def test_return_order_by_alias_desc(self, pattern_db):
         result = list(
@@ -135,13 +135,13 @@ class TestCypherClauses:
             )
         )
         names = [r["name"] for r in result]
-        assert names == ["Charlie", "Alix", "Gus"]
+        assert names == ["Vincent", "Alix", "Gus"]
 
     def test_return_order_by_property(self, pattern_db):
         """ORDER BY on a property access (n.prop) without alias."""
         result = list(pattern_db.execute_cypher("MATCH (p:Person) RETURN p.name ORDER BY p.age"))
         names = [r["p.name"] for r in result]
-        assert names == ["Gus", "Alix", "Charlie"]
+        assert names == ["Gus", "Alix", "Vincent"]
 
     def test_return_skip(self, pattern_db):
         result = list(
@@ -380,7 +380,7 @@ class TestCypherExpressions:
             )
         )
         names = {r["n.name"] for r in result}
-        assert names == {"Alix", "Charlie"}
+        assert names == {"Alix", "Vincent"}
 
     def test_or(self, pattern_db):
         result = list(
@@ -498,19 +498,17 @@ class TestCypherExpressions:
 
     def test_ends_with(self, pattern_db):
         result = list(
-            pattern_db.execute_cypher("MATCH (n:Person) WHERE n.name ENDS WITH 'e' RETURN n.name")
+            pattern_db.execute_cypher("MATCH (n:Person) WHERE n.name ENDS WITH 'us' RETURN n.name")
         )
         names = {r["n.name"] for r in result}
-        assert "Alix" in names
-        assert "Charlie" in names
+        assert "Gus" in names
 
     def test_contains(self, pattern_db):
         result = list(
-            pattern_db.execute_cypher("MATCH (n:Person) WHERE n.name CONTAINS 'li' RETURN n.name")
+            pattern_db.execute_cypher("MATCH (n:Person) WHERE n.name CONTAINS 'in' RETURN n.name")
         )
         names = {r["n.name"] for r in result}
-        assert "Alix" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
 
     def test_regex(self, pattern_db):
         result = list(
@@ -533,7 +531,7 @@ class TestCypherExpressions:
     def test_case_searched(self, pattern_db):
         result = list(
             pattern_db.execute_cypher(
-                "MATCH (n:Person {name: 'Charlie'}) "
+                "MATCH (n:Person {name: 'Vincent'}) "
                 "RETURN CASE WHEN n.age > 30 THEN 'senior' ELSE 'junior' END AS level"
             )
         )
@@ -821,7 +819,7 @@ class TestCypherAggregates:
     def test_collect(self, pattern_db):
         result = list(pattern_db.execute_cypher("MATCH (n:Person) RETURN collect(n.name) AS names"))
         names = result[0]["names"]
-        assert set(names) == {"Alix", "Gus", "Charlie"}
+        assert set(names) == {"Alix", "Gus", "Vincent"}
 
     def test_stdev(self, db):
         for score in [10, 20, 30]:
@@ -922,7 +920,7 @@ class TestCypherPatterns:
         )
         names = {r["b.name"] for r in result}
         assert "Gus" in names
-        assert "Charlie" in names
+        assert "Vincent" in names
 
     def test_variable_length_path(self, db):
         a = db.create_node(["Node"], {"name": "a"})

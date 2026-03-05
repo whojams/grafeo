@@ -26,7 +26,7 @@ fn test_concurrent_read_sessions() {
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Carol'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Harm'})").unwrap();
     }
 
     let num_threads = 8;

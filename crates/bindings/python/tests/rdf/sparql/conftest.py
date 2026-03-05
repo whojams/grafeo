@@ -66,18 +66,18 @@ def sparql_db(db):
         },
     )
 
-    charlie = db.create_node(
+    vincent = db.create_node(
         ["Resource"],
         {
-            "uri": "http://example.org/person/charlie",
+            "uri": "http://example.org/person/vincent",
             "rdf:type": "http://xmlns.com/foaf/0.1/Person",
-            "foaf:name": "Charlie",
+            "foaf:name": "Vincent",
             "foaf:age": 35,
         },
     )
 
     # Create foaf:knows relationships
     db.create_edge(alix.id, gus.id, "foaf:knows", {})
-    db.create_edge(gus.id, charlie.id, "foaf:knows", {})
+    db.create_edge(gus.id, vincent.id, "foaf:knows", {})
 
     return db

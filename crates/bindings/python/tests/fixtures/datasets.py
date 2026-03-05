@@ -118,7 +118,7 @@ def create_pattern_test_graph(db):
     """Create a graph for pattern matching tests.
 
     Creates:
-    - Person nodes: Alix (30, NYC), Gus (25, LA), Charlie (35, NYC)
+    - Person nodes: Alix (30, NYC), Gus (25, LA), Vincent (35, NYC)
     - Company nodes: Acme Corp, Globex Inc
     - KNOWS edges between persons
     - WORKS_AT edges from persons to companies
@@ -129,7 +129,7 @@ def create_pattern_test_graph(db):
     # Create Person nodes
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
     gus = db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-    charlie = db.create_node(["Person"], {"name": "Charlie", "age": 35, "city": "NYC"})
+    vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "NYC"})
 
     # Create Company nodes
     acme = db.create_node(["Company"], {"name": "Acme Corp", "founded": 2010})
@@ -137,18 +137,18 @@ def create_pattern_test_graph(db):
 
     # Create KNOWS edges
     db.create_edge(alix.id, gus.id, "KNOWS", {"since": 2020})
-    db.create_edge(gus.id, charlie.id, "KNOWS", {"since": 2021})
-    db.create_edge(alix.id, charlie.id, "KNOWS", {"since": 2019})
+    db.create_edge(gus.id, vincent.id, "KNOWS", {"since": 2021})
+    db.create_edge(alix.id, vincent.id, "KNOWS", {"since": 2019})
 
     # Create WORKS_AT edges
     db.create_edge(alix.id, acme.id, "WORKS_AT", {"role": "Engineer"})
     db.create_edge(gus.id, globex.id, "WORKS_AT", {"role": "Manager"})
-    db.create_edge(charlie.id, acme.id, "WORKS_AT", {"role": "Director"})
+    db.create_edge(vincent.id, acme.id, "WORKS_AT", {"role": "Director"})
 
     return {
         "alix": alix,
         "gus": gus,
-        "charlie": charlie,
+        "vincent": vincent,
         "acme": acme,
         "globex": globex,
     }

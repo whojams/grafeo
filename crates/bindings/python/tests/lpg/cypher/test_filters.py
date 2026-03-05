@@ -59,10 +59,10 @@ class TestCypherFilterVerification:
         """Test filtering with relationship pattern."""
         alix = db.create_node(["Person"], {"name": "Alix", "age": 30})
         gus = db.create_node(["Person"], {"name": "Gus", "age": 25})
-        charlie = db.create_node(["Person"], {"name": "Charlie", "age": 35})
+        vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35})
 
         db.create_edge(alix.id, gus.id, "KNOWS", {})
-        db.create_edge(alix.id, charlie.id, "KNOWS", {})
+        db.create_edge(alix.id, vincent.id, "KNOWS", {})
 
         result = db.execute_cypher(
             "MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(friend:Person) "
@@ -76,7 +76,7 @@ class TestCypherFilterVerification:
         """Test OR filter condition."""
         db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        db.create_node(["Person"], {"name": "Charlie", "age": 35, "city": "Chicago"})
+        db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "Chicago"})
 
         result = db.execute_cypher(
             "MATCH (p:Person) WHERE p.city = 'NYC' OR p.age < 30 RETURN p.name"
@@ -100,6 +100,6 @@ class TestCypherFilterVerification:
         db.create_node(["Person"], {"name": "Malice"})
         db.create_node(["Person"], {"name": "Gus"})
 
-        result = db.execute_cypher("MATCH (p:Person) WHERE p.name CONTAINS 'lic' RETURN p.name")
+        result = db.execute_cypher("MATCH (p:Person) WHERE p.name CONTAINS 'li' RETURN p.name")
         matches = list(result)
         assert len(matches) == 2, "Should find Alix and Malice"

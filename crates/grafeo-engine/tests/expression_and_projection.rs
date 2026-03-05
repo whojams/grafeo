@@ -37,18 +37,18 @@ fn create_test_graph() -> GrafeoDB {
             ("city", Value::String("NYC".into())),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
             ("city", Value::String("London".into())),
         ],
     );
 
     session.create_edge(alix, gus, "KNOWS");
-    session.create_edge(alix, carol, "KNOWS");
-    session.create_edge(gus, carol, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
 
     db
 }
@@ -72,7 +72,7 @@ fn test_case_when_then_else() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 3);
-    // Alix(30) -> junior, Gus(25) -> junior, Carol(35) -> senior
+    // Alix(30) -> junior, Gus(25) -> junior, Harm(35) -> senior
     let categories: Vec<&Value> = result.rows.iter().map(|r| &r[1]).collect();
     assert!(categories.contains(&&Value::String("senior".into())));
     assert!(categories.contains(&&Value::String("junior".into())));
@@ -117,8 +117,8 @@ fn test_exists_subquery_no_match() {
 // ============================================================================
 
 /// Extended graph: Person nodes with KNOWS edges, City nodes with LIVES_IN edges.
-/// Alix -> Gus, Alix -> Carol, Gus -> Carol (KNOWS)
-/// Alix lives in NYC, Gus lives in NYC, Carol lives in London.
+/// Alix -> Gus, Alix -> Harm, Gus -> Harm (KNOWS)
+/// Alix lives in NYC, Gus lives in NYC, Harm lives in London.
 fn create_multi_hop_graph() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
@@ -137,10 +137,10 @@ fn create_multi_hop_graph() -> GrafeoDB {
             ("age", Value::Int64(25)),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
         ],
     );
@@ -159,14 +159,14 @@ fn create_multi_hop_graph() -> GrafeoDB {
 
     // KNOWS edges
     session.create_edge(alix, gus, "KNOWS");
-    session.create_edge(alix, carol, "KNOWS");
-    session.create_edge(gus, carol, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
     session.create_edge(dave, alix, "KNOWS");
 
     // LIVES_IN edges
     session.create_edge(alix, nyc, "LIVES_IN");
     session.create_edge(gus, nyc, "LIVES_IN");
-    session.create_edge(carol, london, "LIVES_IN");
+    session.create_edge(harm, london, "LIVES_IN");
     // Dave has no LIVES_IN edge
 
     drop(session);
@@ -192,8 +192,8 @@ fn sorted_names(db: &GrafeoDB, query: &str) -> Vec<String> {
 fn test_exists_multi_hop() {
     let db = create_multi_hop_graph();
 
-    // Alix KNOWS Gus who LIVES_IN NYC, Alix KNOWS Carol who LIVES_IN London
-    // Gus KNOWS Carol who LIVES_IN London
+    // Alix KNOWS Gus who LIVES_IN NYC, Alix KNOWS Harm who LIVES_IN London
+    // Gus KNOWS Harm who LIVES_IN London
     // Dave KNOWS Alix who LIVES_IN NYC
     // All 4 have a 2-hop KNOWS->LIVES_IN path
     let names = sorted_names(
@@ -223,10 +223,10 @@ fn test_exists_multi_hop_no_match() {
 fn test_exists_with_inner_property_filter() {
     let db = create_multi_hop_graph();
 
-    // Alix KNOWS Gus(25) and Carol(35), Gus KNOWS Carol(35), Dave KNOWS Alix(30)
+    // Alix KNOWS Gus(25) and Harm(35), Gus KNOWS Harm(35), Dave KNOWS Alix(30)
     // Only people who know someone older than 30:
-    //   Alix: KNOWS Carol(35) ✓
-    //   Gus: KNOWS Carol(35) ✓
+    //   Alix: KNOWS Harm(35) ✓
+    //   Gus: KNOWS Harm(35) ✓
     //   Dave: KNOWS Alix(30), 30 is NOT > 30 ✗
     let names = sorted_names(
         &db,
@@ -242,18 +242,18 @@ fn test_not_exists_complex() {
     let db = create_multi_hop_graph();
 
     // NOT EXISTS multi-hop: people who do NOT have a KNOWS->LIVES_IN path to a City
-    // Alix, Gus, Dave all have such paths; Carol KNOWS nobody with LIVES_IN? No:
-    // Carol has no outgoing KNOWS edges, so she has no 2-hop path.
-    // But Carol is not in the KNOWS->LIVES_IN result set at all.
-    // Actually: Alix->Gus->NYC, Alix->Carol->London, Gus->Carol->London, Dave->Alix->NYC
-    // Carol has no outgoing KNOWS edges, so NOT EXISTS is true for Carol.
+    // Alix, Gus, Dave all have such paths; Harm KNOWS nobody with LIVES_IN? No:
+    // Harm has no outgoing KNOWS edges, so she has no 2-hop path.
+    // But Harm is not in the KNOWS->LIVES_IN result set at all.
+    // Actually: Alix->Gus->NYC, Alix->Harm->London, Gus->Harm->London, Dave->Alix->NYC
+    // Harm has no outgoing KNOWS edges, so NOT EXISTS is true for Harm.
     let names = sorted_names(
         &db,
         "MATCH (n:Person) \
          WHERE NOT EXISTS { MATCH (n)-[:KNOWS]->(m)-[:LIVES_IN]->(c:City) } \
          RETURN n.name",
     );
-    assert_eq!(names, vec!["Carol"]);
+    assert_eq!(names, vec!["Harm"]);
 }
 
 #[test]
@@ -378,10 +378,10 @@ fn test_order_by_property_asc() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 3);
-    // Gus(25), Alix(30), Carol(35)
+    // Gus(25), Alix(30), Harm(35)
     assert_eq!(result.rows[0][0], Value::String("Gus".into()));
     assert_eq!(result.rows[1][0], Value::String("Alix".into()));
-    assert_eq!(result.rows[2][0], Value::String("Carol".into()));
+    assert_eq!(result.rows[2][0], Value::String("Harm".into()));
 }
 
 #[test]
@@ -394,8 +394,8 @@ fn test_order_by_property_desc() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 3);
-    // Carol(35), Alix(30), Gus(25)
-    assert_eq!(result.rows[0][0], Value::String("Carol".into()));
+    // Harm(35), Alix(30), Gus(25)
+    assert_eq!(result.rows[0][0], Value::String("Harm".into()));
     assert_eq!(result.rows[1][0], Value::String("Alix".into()));
     assert_eq!(result.rows[2][0], Value::String("Gus".into()));
 }
@@ -428,7 +428,7 @@ fn test_with_filters_pipeline() {
         .execute("MATCH (n:Person) WHERE n.age > 28 WITH n RETURN n.name")
         .unwrap();
 
-    // Alix(30) and Carol(35) pass the WHERE filter
+    // Alix(30) and Harm(35) pass the WHERE filter
     assert_eq!(result.rows.len(), 2);
 }
 

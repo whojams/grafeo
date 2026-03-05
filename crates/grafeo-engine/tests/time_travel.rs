@@ -103,10 +103,10 @@ fn test_deleted_node_history_preserves_epoch() {
     let db = setup_db();
     let mut session = db.session();
 
-    // Insert in a transaction (Charlie created at epoch 0)
+    // Insert in a transaction (Vincent created at epoch 0)
     session.begin_tx().unwrap();
     session
-        .execute("INSERT (:Person {name: 'Charlie'})")
+        .execute("INSERT (:Person {name: 'Vincent'})")
         .unwrap();
     session.commit().unwrap();
 
@@ -116,13 +116,13 @@ fn test_deleted_node_history_preserves_epoch() {
     // Delete in a separate transaction
     session.begin_tx().unwrap();
     session
-        .execute("MATCH (p:Person {name: 'Charlie'}) DELETE p")
+        .execute("MATCH (p:Person {name: 'Vincent'}) DELETE p")
         .unwrap();
     session.commit().unwrap();
 
     // After deletion, node should not be visible at current epoch
     let result = session
-        .execute("MATCH (p:Person {name: 'Charlie'}) RETURN p")
+        .execute("MATCH (p:Person {name: 'Vincent'}) RETURN p")
         .unwrap();
     assert!(result.rows.is_empty());
 

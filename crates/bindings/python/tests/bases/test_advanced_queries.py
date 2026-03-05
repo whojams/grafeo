@@ -26,7 +26,7 @@ class BaseAdvancedQueriesTest(ABC):
 
     @abstractmethod
     def setup_social_graph(self, db):
-        """Set up: Alix(30,NYC), Gus(25,LA), Carol(35,London) with KNOWS edges."""
+        """Set up: Alix(30,NYC), Gus(25,LA), Harm(35,London) with KNOWS edges."""
         raise NotImplementedError
 
     # =========================================================================

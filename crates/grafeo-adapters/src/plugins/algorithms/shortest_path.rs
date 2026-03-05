@@ -1064,7 +1064,7 @@ mod tests {
         let n2 = store.create_node(&["Node"]);
         store.set_node_property(n0, "name", Value::from("alix"));
         store.set_node_property(n1, "name", Value::from("gus"));
-        store.set_node_property(n2, "name", Value::from("carol"));
+        store.set_node_property(n2, "name", Value::from("harm"));
         store.create_edge_with_props(n0, n1, "KNOWS", [("weight", Value::Float64(1.0))]);
         store.create_edge_with_props(n1, n2, "KNOWS", [("weight", Value::Float64(2.0))]);
 
@@ -1074,7 +1074,7 @@ mod tests {
 
         let result = SsspAlgorithm.execute(&store, &params).unwrap();
         assert_eq!(result.columns, vec!["node_id", "distance"]);
-        assert_eq!(result.row_count(), 3); // alix, gus, carol
+        assert_eq!(result.row_count(), 3); // alix, gus, harm
     }
 
     #[test]

@@ -50,41 +50,41 @@ def social_graph(db):
 
     Topology:
         Alix -knows(since:2018)-> Gus
-        Alix -knows(since:2020)-> Charlie
-        Gus   -knows(since:2019)-> Charlie
-        Gus   -knows(since:2021)-> Diana
+        Alix -knows(since:2020)-> Vincent
+        Gus   -knows(since:2019)-> Vincent
+        Gus   -knows(since:2021)-> Jules
         Alix -works_at(role:'engineer')-> Acme
         Gus   -works_at(role:'manager')-> Acme
 
     Node properties:
         Alix:   Person  age=30, city="NYC",     score=4.5
         Gus:     Person  age=25, city="LA",      score=3.8
-        Charlie: Person  age=35, city="NYC",     score=4.9
-        Diana:   Person  age=28, city="Chicago", score=4.1
+        Vincent: Person  age=35, city="NYC",     score=4.9
+        Jules:   Person  age=28, city="Chicago", score=4.1
         Acme:    Company revenue=1000000
     """
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC", "score": 4.5})
     gus = db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA", "score": 3.8})
-    charlie = db.create_node(
-        ["Person"], {"name": "Charlie", "age": 35, "city": "NYC", "score": 4.9}
+    vincent = db.create_node(
+        ["Person"], {"name": "Vincent", "age": 35, "city": "NYC", "score": 4.9}
     )
-    diana = db.create_node(
-        ["Person"], {"name": "Diana", "age": 28, "city": "Chicago", "score": 4.1}
+    jules = db.create_node(
+        ["Person"], {"name": "Jules", "age": 28, "city": "Chicago", "score": 4.1}
     )
     acme = db.create_node(["Company"], {"name": "Acme", "revenue": 1000000})
 
     e1 = db.create_edge(alix.id, gus.id, "knows", {"since": 2018})
-    e2 = db.create_edge(alix.id, charlie.id, "knows", {"since": 2020})
-    e3 = db.create_edge(gus.id, charlie.id, "knows", {"since": 2019})
-    e4 = db.create_edge(gus.id, diana.id, "knows", {"since": 2021})
+    e2 = db.create_edge(alix.id, vincent.id, "knows", {"since": 2020})
+    e3 = db.create_edge(gus.id, vincent.id, "knows", {"since": 2019})
+    e4 = db.create_edge(gus.id, jules.id, "knows", {"since": 2021})
     e5 = db.create_edge(alix.id, acme.id, "works_at", {"role": "engineer"})
     e6 = db.create_edge(gus.id, acme.id, "works_at", {"role": "manager"})
 
     ids = {
         "alix": alix.id,
         "gus": gus.id,
-        "charlie": charlie.id,
-        "diana": diana.id,
+        "vincent": vincent.id,
+        "jules": jules.id,
         "acme": acme.id,
         "e1": e1.id,
         "e2": e2.id,
@@ -144,9 +144,9 @@ class TestGremlinSourceSteps:
         db, _ = social_graph
         _exec(
             db,
-            "g.V().has('name', 'Charlie').addE('knows').to(g.V().has('name', 'Diana'))",
+            "g.V().has('name', 'Vincent').addE('knows').to(g.V().has('name', 'Jules'))",
         )
-        rows = _rows(db, "g.V().has('name', 'Charlie').out('knows')")
+        rows = _rows(db, "g.V().has('name', 'Vincent').out('knows')")
         assert len(rows) >= 1
 
     def test_add_e_with_property(self, social_graph):
@@ -154,10 +154,10 @@ class TestGremlinSourceSteps:
         db, _ = social_graph
         _exec(
             db,
-            "g.V().has('name', 'Diana').addE('knows').to(g.V().has('name', 'Alix'))"
+            "g.V().has('name', 'Jules').addE('knows').to(g.V().has('name', 'Alix'))"
             ".property('since', 2025)",
         )
-        rows = _rows(db, "g.V().has('name', 'Diana').outE('knows').has('since', 2025)")
+        rows = _rows(db, "g.V().has('name', 'Jules').outE('knows').has('since', 2025)")
         assert len(rows) == 1
 
 
@@ -175,20 +175,20 @@ class TestGremlinNavigation:
         """out('knows') follows outgoing 'knows' edges."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('name', 'Alix').out('knows')")
-        assert len(rows) == 2  # Gus, Charlie
+        assert len(rows) == 2  # Gus, Vincent
 
     def test_out_unlabeled(self, social_graph):
         """out() follows all outgoing edges regardless of label."""
         db, _ = social_graph
-        # Alix has knows->Gus, knows->Charlie, works_at->Acme
+        # Alix has knows->Gus, knows->Vincent, works_at->Acme
         rows = _rows(db, "g.V().has('name', 'Alix').out()")
         assert len(rows) == 3
 
     def test_in_labeled(self, social_graph):
         """in('knows') follows incoming 'knows' edges."""
         db, _ = social_graph
-        # Charlie receives knows from Alix and Gus
-        rows = _rows(db, "g.V().has('name', 'Charlie').in('knows')")
+        # Vincent receives knows from Alix and Gus
+        rows = _rows(db, "g.V().has('name', 'Vincent').in('knows')")
         assert len(rows) == 2
 
     def test_in_unlabeled(self, social_graph):
@@ -201,7 +201,7 @@ class TestGremlinNavigation:
     def test_both(self, social_graph):
         """both('knows') returns neighbours in either direction."""
         db, _ = social_graph
-        # Gus: in(knows) from Alix, out(knows) to Charlie and Diana
+        # Gus: in(knows) from Alix, out(knows) to Vincent and Jules
         rows = _rows(db, "g.V().has('name', 'Gus').both('knows')")
         assert len(rows) == 3
 
@@ -216,13 +216,13 @@ class TestGremlinNavigation:
     def test_in_e(self, social_graph):
         """inE('knows') returns incoming edge objects."""
         db, _ = social_graph
-        rows = _rows(db, "g.V().has('name', 'Charlie').inE('knows')")
+        rows = _rows(db, "g.V().has('name', 'Vincent').inE('knows')")
         assert len(rows) == 2
 
     def test_both_e(self, social_graph):
         """bothE('knows') returns edges in either direction."""
         db, _ = social_graph
-        # Gus: inE(knows)=1 (from Alix), outE(knows)=2 (to Charlie, Diana)
+        # Gus: inE(knows)=1 (from Alix), outE(knows)=2 (to Vincent, Jules)
         rows = _rows(db, "g.V().has('name', 'Gus').bothE('knows')")
         assert len(rows) == 3
 
@@ -239,7 +239,7 @@ class TestGremlinNavigation:
         """inV() returns the target vertex of an edge."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('name', 'Alix').outE('knows').inV()")
-        assert len(rows) == 2  # Gus and Charlie
+        assert len(rows) == 2  # Gus and Vincent
 
     def test_both_v(self, social_graph):
         """bothV() returns both endpoints of an edge."""
@@ -251,7 +251,7 @@ class TestGremlinNavigation:
         """otherV() returns the vertex at the other end relative to the traverser."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('name', 'Alix').outE('knows').otherV()")
-        # From Alix's perspective, otherV is the far end: Gus, Charlie
+        # From Alix's perspective, otherV is the far end: Gus, Vincent
         assert len(rows) == 2
 
 
@@ -276,13 +276,13 @@ class TestGremlinFilter:
         """has(label, key, value) filters by label and property."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('Person', 'city', 'NYC')")
-        assert len(rows) == 2  # Alix and Charlie
+        assert len(rows) == 2  # Alix and Vincent
 
     def test_has_key_predicate(self, social_graph):
         """has(key, predicate) filters using a predicate."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', gt(29))")
-        assert len(rows) == 2  # Alix(30), Charlie(35)
+        assert len(rows) == 2  # Alix(30), Vincent(35)
 
     def test_has_label(self, social_graph):
         """hasLabel('Person') filters by vertex label."""
@@ -318,7 +318,7 @@ class TestGremlinFilter:
             db,
             "g.V().and(has('age', gt(24)), has('city', 'NYC'))",
         )
-        # Alix(30, NYC) and Charlie(35, NYC)
+        # Alix(30, NYC) and Vincent(35, NYC)
         assert len(rows) == 2
 
     def test_or_step(self, social_graph):
@@ -328,14 +328,14 @@ class TestGremlinFilter:
             db,
             "g.V().or(has('city', 'LA'), has('city', 'Chicago'))",
         )
-        # Gus(LA) and Diana(Chicago)
+        # Gus(LA) and Jules(Chicago)
         assert len(rows) == 2
 
     def test_not_step(self, social_graph):
         """not() negates a filter condition."""
         db, _ = social_graph
         rows = _rows(db, "g.V().hasLabel('Person').not(has('city', 'NYC'))")
-        # Gus(LA), Diana(Chicago)
+        # Gus(LA), Jules(Chicago)
         assert len(rows) == 2
 
     # -- where / filter ------------------------------------------------
@@ -357,7 +357,7 @@ class TestGremlinFilter:
             db,
             "g.V().hasLabel('Person').filter(has('age', gt(27)))",
         )
-        # Alix(30), Charlie(35), Diana(28)
+        # Alix(30), Vincent(35), Jules(28)
         assert len(rows) == 3
 
     # -- dedup / limit / skip / range ----------------------------------
@@ -365,9 +365,9 @@ class TestGremlinFilter:
     def test_dedup(self, social_graph):
         """dedup() removes duplicate traversers."""
         db, _ = social_graph
-        # Charlie is reachable from both Alix and Gus, but dedup keeps one
+        # Vincent is reachable from both Alix and Gus, but dedup keeps one
         rows = _rows(db, "g.V().hasLabel('Person').out('knows').dedup()")
-        # Alix->Gus,Charlie; Gus->Charlie,Diana; dedup => Gus, Charlie, Diana
+        # Alix->Gus,Vincent; Gus->Vincent,Jules; dedup => Gus, Vincent, Jules
         assert len(rows) == 3
 
     def test_limit(self, social_graph):
@@ -542,7 +542,7 @@ class TestGremlinMap:
         # The engine returns a single-column row; unwrap the inner map.
         counts = next(iter(raw.values())) if len(raw) == 1 else raw
         assert isinstance(counts, dict)
-        # NYC has Alix and Charlie
+        # NYC has Alix and Vincent
         assert counts.get("NYC", 0) == 2
 
     # -- path and projection -------------------------------------------
@@ -554,7 +554,7 @@ class TestGremlinMap:
             db,
             "g.V().has('name', 'Alix').out('knows').out('knows').path()",
         )
-        # Alix->Gus->Charlie, Alix->Gus->Diana
+        # Alix->Gus->Vincent, Alix->Gus->Jules
         assert len(rows) >= 1
 
     def test_select_after_as(self, social_graph):
@@ -592,16 +592,16 @@ class TestGremlinMap:
         )
         assert len(rows) == 4
         values = [r if not isinstance(r, dict) else next(iter(r.values())) for r in rows]
-        assert values.count("senior") == 2  # Alix(30), Charlie(35)
-        assert values.count("junior") == 2  # Gus(25), Diana(28)
+        assert values.count("senior") == 2  # Alix(30), Vincent(35)
+        assert values.count("junior") == 2  # Gus(25), Jules(28)
 
     def test_optional(self, social_graph):
         """optional() keeps the current traverser when the inner traversal is empty."""
         db, _ = social_graph
-        # Diana has no outgoing 'knows', so optional keeps her
+        # Jules has no outgoing 'knows', so optional keeps her
         rows = _rows(
             db,
-            "g.V().has('name', 'Diana').optional(out('knows'))",
+            "g.V().has('name', 'Jules').optional(out('knows'))",
         )
         assert len(rows) >= 1
 
@@ -618,10 +618,10 @@ class TestGremlinMap:
     def test_coalesce(self, social_graph):
         """coalesce() returns the first non-empty traversal."""
         db, _ = social_graph
-        # Diana has no 'works_at' but does have incoming 'knows' (from Gus)
+        # Jules has no 'works_at' but does have incoming 'knows' (from Gus)
         rows = _rows(
             db,
-            "g.V().has('name', 'Diana').coalesce(out('works_at'), in('knows'))",
+            "g.V().has('name', 'Jules').coalesce(out('works_at'), in('knows'))",
         )
         assert len(rows) >= 1
 
@@ -647,7 +647,7 @@ class TestGremlinMap:
         )
         assert len(rows) == 4
         first = rows[0] if isinstance(rows[0], str) else rows[0].get("name")
-        assert first == "Charlie"  # oldest at 35
+        assert first == "Vincent"  # oldest at 35
 
 
 # ===================================================================
@@ -758,7 +758,7 @@ class TestGremlinPredicates:
         """neq(val) excludes equal values."""
         db, _ = social_graph
         rows = _rows(db, "g.V().hasLabel('Person').has('age', neq(30))")
-        assert len(rows) == 3  # Gus, Charlie, Diana
+        assert len(rows) == 3  # Gus, Vincent, Jules
 
     def test_lt(self, social_graph):
         """lt(val) matches strictly less than."""
@@ -770,19 +770,19 @@ class TestGremlinPredicates:
         """lte(val) matches less than or equal."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', lte(28))")
-        assert len(rows) == 2  # Gus(25), Diana(28)
+        assert len(rows) == 2  # Gus(25), Jules(28)
 
     def test_gt(self, social_graph):
         """gt(val) matches strictly greater than."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', gt(30))")
-        assert len(rows) == 1  # Charlie(35)
+        assert len(rows) == 1  # Vincent(35)
 
     def test_gte(self, social_graph):
         """gte(val) matches greater than or equal."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', gte(30))")
-        assert len(rows) == 2  # Alix(30), Charlie(35)
+        assert len(rows) == 2  # Alix(30), Vincent(35)
 
     # -- range predicates ----------------------------------------------
 
@@ -790,21 +790,21 @@ class TestGremlinPredicates:
         """between(low, high) matches low <= x < high."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', between(25, 31))")
-        # 25 <= age < 31: Gus(25), Diana(28), Alix(30)
+        # 25 <= age < 31: Gus(25), Jules(28), Alix(30)
         assert len(rows) == 3
 
     def test_inside(self, social_graph):
         """inside(low, high) matches low < x < high (exclusive)."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', inside(25, 35))")
-        # 25 < age < 35: Diana(28), Alix(30)
+        # 25 < age < 35: Jules(28), Alix(30)
         assert len(rows) == 2
 
     def test_outside(self, social_graph):
         """outside(low, high) matches x < low or x > high."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', outside(26, 34))")
-        # age < 26 or age > 34: Gus(25), Charlie(35)
+        # age < 26 or age > 34: Gus(25), Vincent(35)
         assert len(rows) == 2
 
     # -- membership predicates -----------------------------------------
@@ -813,14 +813,14 @@ class TestGremlinPredicates:
         """within(v1, v2, ...) checks set membership."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('city', within('NYC', 'LA'))")
-        # Alix(NYC), Gus(LA), Charlie(NYC)
+        # Alix(NYC), Gus(LA), Vincent(NYC)
         assert len(rows) == 3
 
     def test_without(self, social_graph):
         """without(v1, v2, ...) excludes set members."""
         db, _ = social_graph
         rows = _rows(db, "g.V().hasLabel('Person').has('city', without('NYC', 'LA'))")
-        # Diana(Chicago)
+        # Jules(Chicago)
         assert len(rows) == 1
 
     # -- string predicates ---------------------------------------------
@@ -829,7 +829,7 @@ class TestGremlinPredicates:
         """containing('sub') matches strings containing a substring."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('name', containing('li'))")
-        # Alix and Charlie both contain 'li'
+        # Alix and Vincent both contain 'li'
         assert len(rows) == 2
 
     def test_starting_with(self, social_graph):
@@ -841,8 +841,8 @@ class TestGremlinPredicates:
     def test_ending_with(self, social_graph):
         """endingWith('suffix') matches strings ending with suffix."""
         db, _ = social_graph
-        rows = _rows(db, "g.V().has('name', endingWith('ob'))")
-        assert len(rows) == 1  # Gus
+        rows = _rows(db, "g.V().has('name', endingWith('ent'))")
+        assert len(rows) == 1  # Vincent
 
     # -- predicate combination -----------------------------------------
 
@@ -850,7 +850,7 @@ class TestGremlinPredicates:
         """Predicates work on edge properties too."""
         db, _ = social_graph
         rows = _rows(db, "g.E().has('since', gte(2020))")
-        # since=2020 (Alix->Charlie), since=2021 (Gus->Diana)
+        # since=2020 (Alix->Vincent), since=2021 (Gus->Jules)
         assert len(rows) == 2
 
     def test_predicate_with_navigation(self, social_graph):
@@ -869,5 +869,5 @@ class TestGremlinPredicates:
         """within() works with numeric values, not just strings."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('age', within(25, 35))")
-        # Gus(25), Charlie(35)
+        # Gus(25), Vincent(35)
         assert len(rows) == 2

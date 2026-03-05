@@ -21,8 +21,8 @@ use grafeo_engine::GrafeoDB;
 ///
 /// Structure:
 /// - Alix (Person, age: 30) -KNOWS-> Gus (Person, age: 25)
-/// - Alix -KNOWS-> Carol (Person, age: 35)
-/// - Gus -KNOWS-> Carol
+/// - Alix -KNOWS-> Harm (Person, age: 35)
+/// - Gus -KNOWS-> Harm
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
@@ -41,17 +41,17 @@ fn create_social_network() -> GrafeoDB {
             ("age", Value::Int64(25)),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
         ],
     );
 
     session.create_edge(alix, gus, "KNOWS");
-    session.create_edge(alix, carol, "KNOWS");
-    session.create_edge(gus, carol, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
 
     db
 }
@@ -131,7 +131,7 @@ fn test_where_with_table_alias() {
         )
         .unwrap();
 
-    // Alix (30) and Carol (35) have age > 28
+    // Alix (30) and Harm (35) have age > 28
     assert_eq!(result.row_count(), 2, "Should find 2 people with age > 28");
 }
 
@@ -151,7 +151,7 @@ fn test_where_without_table_alias() {
         )
         .unwrap();
 
-    // Alix (30) and Carol (35) have age > 28
+    // Alix (30) and Harm (35) have age > 28
     assert_eq!(result.row_count(), 2, "Should find 2 people older than 28");
 }
 

@@ -496,8 +496,8 @@ mod tests {
     fn test_find_by_subject() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("alix", "knows", "carol"),
-            make_triple("gus", "knows", "carol"),
+            make_triple("alix", "knows", "harm"),
+            make_triple("gus", "knows", "harm"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -795,13 +795,13 @@ mod tests {
     fn test_dictionary_accessor() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("alix", "likes", "charlie"),
+            make_triple("alix", "likes", "vincent"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
         let dict = ring.dictionary();
         assert!(!dict.is_empty());
-        // Should have 5 unique terms: alix, knows, gus, likes, charlie
+        // Should have 5 unique terms: alix, knows, gus, likes, vincent
         assert_eq!(dict.len(), 5);
 
         // Verify we can look up terms

@@ -534,8 +534,8 @@ mod tests {
     fn test_ring_iterator_with_subject() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("alix", "knows", "carol"),
-            make_triple("gus", "knows", "carol"),
+            make_triple("alix", "knows", "harm"),
+            make_triple("gus", "knows", "harm"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -579,7 +579,7 @@ mod tests {
     fn test_leapfrog_single_pattern() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("gus", "knows", "carol"),
+            make_triple("gus", "knows", "harm"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -597,7 +597,7 @@ mod tests {
     fn test_ring_iterator_with_object() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("carol", "knows", "gus"),
+            make_triple("harm", "knows", "gus"),
             make_triple("dave", "likes", "eve"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
@@ -681,7 +681,7 @@ mod tests {
     fn test_ring_iterator_seek_bound() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("carol", "knows", "dave"),
+            make_triple("harm", "knows", "dave"),
             make_triple("alix", "likes", "eve"),
             make_triple("frank", "knows", "alix"),
         ];
@@ -727,7 +727,7 @@ mod tests {
     fn test_leapfrog_patterns_accessor() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("gus", "knows", "carol"),
+            make_triple("gus", "knows", "harm"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -743,8 +743,8 @@ mod tests {
     fn test_leapfrog_multi_pattern() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("gus", "knows", "carol"),
-            make_triple("carol", "likes", "alix"),
+            make_triple("gus", "knows", "harm"),
+            make_triple("harm", "likes", "alix"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -764,7 +764,7 @@ mod tests {
     fn test_leapfrog_no_match() {
         let triples = vec![
             make_triple("alix", "knows", "gus"),
-            make_triple("gus", "knows", "carol"),
+            make_triple("gus", "knows", "harm"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -847,12 +847,12 @@ mod tests {
 
     #[test]
     fn test_leapfrog_shared_subject() {
-        // (?x knows bob) AND (?x knows carol) -> find subjects knowing both
+        // (?x knows bob) AND (?x knows harm) -> find subjects knowing both
         let triples = vec![
             make_triple("alix", "knows", "bob"),
-            make_triple("alix", "knows", "carol"),
+            make_triple("alix", "knows", "harm"),
             make_triple("dave", "knows", "bob"),
-            make_triple("eve", "knows", "carol"),
+            make_triple("eve", "knows", "harm"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -871,7 +871,7 @@ mod tests {
                 pattern: TriplePattern {
                     subject: None,
                     predicate: Some(Term::iri("knows")),
-                    object: Some(Term::iri("carol")),
+                    object: Some(Term::iri("harm")),
                 },
                 subject_var: Some("x".to_string()),
                 predicate_var: None,
@@ -882,7 +882,7 @@ mod tests {
         let lf = LeapfrogRing::with_variables(&ring, annotated);
         let results: Vec<Vec<Triple>> = lf.collect();
 
-        // Only alix knows both bob and carol
+        // Only alix knows both bob and harm
         assert_eq!(results.len(), 1);
         assert_eq!(results[0][0].subject(), &Term::iri("alix"));
         assert_eq!(results[0][1].subject(), &Term::iri("alix"));
@@ -893,8 +893,8 @@ mod tests {
         // (?x knows ?y) AND (?y knows ?z) AND (?z knows ?x) -> find triangles
         let triples = vec![
             make_triple("alix", "knows", "bob"),
-            make_triple("bob", "knows", "carol"),
-            make_triple("carol", "knows", "alix"),
+            make_triple("bob", "knows", "harm"),
+            make_triple("harm", "knows", "alix"),
             make_triple("dave", "knows", "eve"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
@@ -935,7 +935,7 @@ mod tests {
         let lf = LeapfrogRing::with_variables(&ring, annotated);
         let results: Vec<Vec<Triple>> = lf.collect();
 
-        // Should find the triangle in 3 rotations: alix->bob->carol->alix
+        // Should find the triangle in 3 rotations: alix->bob->harm->alix
         assert_eq!(results.len(), 3, "Expected three rotations of the triangle");
         assert_eq!(results[0].len(), 3);
     }
@@ -945,7 +945,7 @@ mod tests {
         // (?x knows bob) AND (?x knows dave) -> no one knows both
         let triples = vec![
             make_triple("alix", "knows", "bob"),
-            make_triple("carol", "knows", "dave"),
+            make_triple("harm", "knows", "dave"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 
@@ -982,7 +982,7 @@ mod tests {
     fn test_ring_iterator_current_term_id() {
         let triples = vec![
             make_triple("alix", "knows", "bob"),
-            make_triple("carol", "likes", "dave"),
+            make_triple("harm", "likes", "dave"),
         ];
         let ring = TripleRing::from_triples(triples.into_iter());
 

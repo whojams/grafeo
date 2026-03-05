@@ -2849,20 +2849,20 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            // Create a graph: Alix -> Gus, Alix -> Charlie
+            // Create a graph: Alix -> Gus, Alix -> Vincent
             let alix = session.create_node(&["Person"]);
             let gus = session.create_node(&["Person"]);
-            let charlie = session.create_node(&["Person"]);
+            let vincent = session.create_node(&["Person"]);
 
             session.create_edge(alix, gus, "KNOWS");
-            session.create_edge(alix, charlie, "KNOWS");
+            session.create_edge(alix, vincent, "KNOWS");
 
             // Execute a path query: MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b
             let result = session
                 .execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a, b")
                 .unwrap();
 
-            // Should return 2 rows (Alix->Gus, Alix->Charlie)
+            // Should return 2 rows (Alix->Gus, Alix->Vincent)
             assert_eq!(result.row_count(), 2);
             assert_eq!(result.column_count(), 2);
             assert_eq!(result.columns[0], "a");
@@ -2874,13 +2874,13 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            // Create a graph: Alix -KNOWS-> Gus, Alix -WORKS_WITH-> Charlie
+            // Create a graph: Alix -KNOWS-> Gus, Alix -WORKS_WITH-> Vincent
             let alix = session.create_node(&["Person"]);
             let gus = session.create_node(&["Person"]);
-            let charlie = session.create_node(&["Person"]);
+            let vincent = session.create_node(&["Person"]);
 
             session.create_edge(alix, gus, "KNOWS");
-            session.create_edge(alix, charlie, "WORKS_WITH");
+            session.create_edge(alix, vincent, "WORKS_WITH");
 
             // Query only KNOWS relationships
             let result = session
@@ -3146,17 +3146,17 @@ mod tests {
 
             let alix = session.create_node(&["Person"]);
             let gus = session.create_node(&["Person"]);
-            let carol = session.create_node(&["Person"]);
+            let harm = session.create_node(&["Person"]);
 
             session.create_edge(alix, gus, "KNOWS");
-            session.create_edge(alix, carol, "KNOWS");
+            session.create_edge(alix, harm, "KNOWS");
 
             let neighbors = session.get_neighbors_outgoing(alix);
             assert_eq!(neighbors.len(), 2);
 
             let neighbor_ids: Vec<_> = neighbors.iter().map(|(node_id, _)| *node_id).collect();
             assert!(neighbor_ids.contains(&gus));
-            assert!(neighbor_ids.contains(&carol));
+            assert!(neighbor_ids.contains(&harm));
         }
 
         #[test]
@@ -3166,17 +3166,17 @@ mod tests {
 
             let alix = session.create_node(&["Person"]);
             let gus = session.create_node(&["Person"]);
-            let carol = session.create_node(&["Person"]);
+            let harm = session.create_node(&["Person"]);
 
             session.create_edge(gus, alix, "KNOWS");
-            session.create_edge(carol, alix, "KNOWS");
+            session.create_edge(harm, alix, "KNOWS");
 
             let neighbors = session.get_neighbors_incoming(alix);
             assert_eq!(neighbors.len(), 2);
 
             let neighbor_ids: Vec<_> = neighbors.iter().map(|(node_id, _)| *node_id).collect();
             assert!(neighbor_ids.contains(&gus));
-            assert!(neighbor_ids.contains(&carol));
+            assert!(neighbor_ids.contains(&harm));
         }
 
         #[test]
@@ -3239,11 +3239,11 @@ mod tests {
 
             let alix = session.create_node(&["Person"]);
             let gus = session.create_node(&["Person"]);
-            let carol = session.create_node(&["Person"]);
+            let harm = session.create_node(&["Person"]);
 
-            // Alix knows Gus and Carol (2 outgoing)
+            // Alix knows Gus and Harm (2 outgoing)
             session.create_edge(alix, gus, "KNOWS");
-            session.create_edge(alix, carol, "KNOWS");
+            session.create_edge(alix, harm, "KNOWS");
             // Gus knows Alix (1 incoming for Alix)
             session.create_edge(gus, alix, "KNOWS");
 
@@ -3265,9 +3265,9 @@ mod tests {
 
             let alix = session.create_node(&["Person"]);
             let gus = session.create_node(&["Person"]);
-            let carol = session.create_node(&["Person"]);
+            let harm = session.create_node(&["Person"]);
 
-            let nodes = session.get_nodes_batch(&[alix, gus, carol]);
+            let nodes = session.get_nodes_batch(&[alix, gus, harm]);
             assert_eq!(nodes.len(), 3);
             assert!(nodes[0].is_some());
             assert!(nodes[1].is_some());
@@ -3275,7 +3275,7 @@ mod tests {
 
             // With non-existent node
             use grafeo_common::types::NodeId;
-            let nodes_with_missing = session.get_nodes_batch(&[alix, NodeId::new(9999), carol]);
+            let nodes_with_missing = session.get_nodes_batch(&[alix, NodeId::new(9999), harm]);
             assert_eq!(nodes_with_missing.len(), 3);
             assert!(nodes_with_missing[0].is_some());
             assert!(nodes_with_missing[1].is_none()); // Missing node

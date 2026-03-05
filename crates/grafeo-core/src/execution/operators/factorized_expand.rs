@@ -696,11 +696,11 @@ mod tests {
         // Create nodes
         let alix = store.create_node(&["Person"]);
         let gus = store.create_node(&["Person"]);
-        let charlie = store.create_node(&["Person"]);
+        let vincent = store.create_node(&["Person"]);
 
-        // Alix knows Gus and Charlie
+        // Alix knows Gus and Vincent
         store.create_edge(alix, gus, "KNOWS");
-        store.create_edge(alix, charlie, "KNOWS");
+        store.create_edge(alix, vincent, "KNOWS");
 
         let scan = Box::new(ScanOperator::with_label(store.clone(), "Person"));
 
@@ -721,11 +721,11 @@ mod tests {
         // Should have 2 levels: sources and neighbors
         assert_eq!(chunk.level_count(), 2);
 
-        // Level 0 has 3 sources (Alix, Gus, Charlie)
+        // Level 0 has 3 sources (Alix, Gus, Vincent)
         assert_eq!(chunk.level(0).unwrap().column_count(), 1);
 
         // Level 1 has edges and targets
-        // Only Alix has outgoing KNOWS edges (to Gus and Charlie)
+        // Only Alix has outgoing KNOWS edges (to Gus and Vincent)
         // So we should have 2 edges total
         assert_eq!(chunk.level(1).unwrap().column_count(), 2);
     }
@@ -736,11 +736,11 @@ mod tests {
 
         let alix = store.create_node(&["Person"]);
         let gus = store.create_node(&["Person"]);
-        let charlie = store.create_node(&["Person"]);
+        let vincent = store.create_node(&["Person"]);
 
         store.create_edge(alix, gus, "KNOWS");
-        store.create_edge(alix, charlie, "KNOWS");
-        store.create_edge(gus, charlie, "KNOWS");
+        store.create_edge(alix, vincent, "KNOWS");
+        store.create_edge(gus, vincent, "KNOWS");
 
         // Run factorized expand
         let scan1 = Box::new(ScanOperator::with_label(store.clone(), "Person"));

@@ -268,12 +268,12 @@ class BaseMutationsTest(ABC):
         # Create test data
         self.execute_query(db, self.create_node_query(["Person"], {"name": "Alix", "age": 30}))
         self.execute_query(db, self.create_node_query(["Person"], {"name": "Gus", "age": 25}))
-        self.execute_query(db, self.create_node_query(["Person"], {"name": "Charlie", "age": 35}))
+        self.execute_query(db, self.create_node_query(["Person"], {"name": "Vincent", "age": 35}))
 
         # Query with filter
         query = self.match_where_query("Person", "age", ">", 28)
         result = self.execute_query(db, query)
         rows = list(result)
 
-        # Alix (30) and Charlie (35) should match
+        # Alix (30) and Vincent (35) should match
         assert len(rows) == 2

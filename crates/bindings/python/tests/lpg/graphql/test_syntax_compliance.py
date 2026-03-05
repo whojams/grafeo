@@ -36,8 +36,8 @@ class TestGraphQLQueryOperations:
         """Create a social network for query tests."""
         self.alix = self.db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         self.gus = self.db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
-        self.charlie = self.db.create_node(
-            ["Person"], {"name": "Charlie", "age": 35, "city": "NYC"}
+        self.vincent = self.db.create_node(
+            ["Person"], {"name": "Vincent", "age": 35, "city": "NYC"}
         )
 
         self.post1 = self.db.create_node(
@@ -48,8 +48,8 @@ class TestGraphQLQueryOperations:
         )
 
         self.db.create_edge(self.alix.id, self.gus.id, "friends", {})
-        self.db.create_edge(self.alix.id, self.charlie.id, "friends", {})
-        self.db.create_edge(self.gus.id, self.charlie.id, "friends", {})
+        self.db.create_edge(self.alix.id, self.vincent.id, "friends", {})
+        self.db.create_edge(self.gus.id, self.vincent.id, "friends", {})
 
         self.db.create_edge(self.alix.id, self.post1.id, "authored", {})
         self.db.create_edge(self.gus.id, self.post2.id, "authored", {})

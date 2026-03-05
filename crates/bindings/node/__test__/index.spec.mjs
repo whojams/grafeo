@@ -9,14 +9,14 @@ function seedDb() {
   // People
   const alix = db.createNode(['Person'], { name: 'Alix', age: 30 })
   const gus = db.createNode(['Person'], { name: 'Gus', age: 25 })
-  const charlie = db.createNode(['Person'], { name: 'Charlie', age: 35 })
+  const vincent = db.createNode(['Person'], { name: 'Vincent', age: 35 })
   // Company
   const acme = db.createNode(['Company'], { name: 'Acme Corp', founded: 2010 })
   // Relationships
   const knows1 = db.createEdge(alix.id, gus.id, 'KNOWS', { since: 2020 })
-  const knows2 = db.createEdge(gus.id, charlie.id, 'KNOWS', { since: 2021 })
+  const knows2 = db.createEdge(gus.id, vincent.id, 'KNOWS', { since: 2021 })
   const worksAt = db.createEdge(alix.id, acme.id, 'WORKS_AT', { role: 'Engineer' })
-  return { db, alix, gus, charlie, acme, knows1, knows2, worksAt }
+  return { db, alix, gus, vincent, acme, knows1, knows2, worksAt }
 }
 
 // ── Module-level exports ─────────────────────────────────────────────
@@ -389,7 +389,7 @@ describe('transactions', () => {
     const tx = db.beginTransaction()
     await tx.execute("INSERT (:Person {name: 'Alix'})")
     await tx.execute("INSERT (:Person {name: 'Gus'})")
-    await tx.execute("INSERT (:Person {name: 'Charlie'})")
+    await tx.execute("INSERT (:Person {name: 'Vincent'})")
     tx.commit()
 
     expect(db.nodeCount()).toBe(3)
@@ -433,7 +433,7 @@ describe('QueryResult metadata', () => {
     const names = nodes.map((n) => n.get('name'))
     expect(names).toContain('Alix')
     expect(names).toContain('Gus')
-    expect(names).toContain('Charlie')
+    expect(names).toContain('Vincent')
   })
 
   it('should return edges() accessor without error', async () => {
@@ -675,7 +675,7 @@ describe('error handling', () => {
 describe('database counts', () => {
   it('should track nodeCount and edgeCount', () => {
     const { db } = seedDb()
-    expect(db.nodeCount()).toBe(4) // Alix, Gus, Charlie, Acme
+    expect(db.nodeCount()).toBe(4) // Alix, Gus, Vincent, Acme
     expect(db.edgeCount()).toBe(3) // knows1, knows2, worksAt
   })
 })

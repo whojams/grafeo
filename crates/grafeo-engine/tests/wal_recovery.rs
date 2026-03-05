@@ -79,10 +79,10 @@ mod wal {
             let b = db.create_node(&["Person"]);
             db.set_node_property(b, "name", Value::String("Gus".into()));
             let c = db.create_node(&["Person"]);
-            db.set_node_property(c, "name", Value::String("Carol".into()));
+            db.set_node_property(c, "name", Value::String("Harm".into()));
             db.create_edge(a, b, "KNOWS");
 
-            // Delete Carol (no edges)
+            // Delete Harm (no edges)
             db.delete_node(c);
             db.close().expect("close");
         }

@@ -821,11 +821,11 @@ fn test_property_index_create_and_lookup() {
     // Create nodes with properties
     let alix = store.create_node(&["Person"]);
     let gus = store.create_node(&["Person"]);
-    let charlie = store.create_node(&["Person"]);
+    let vincent = store.create_node(&["Person"]);
 
     store.set_node_property(alix, "city", Value::from("NYC"));
     store.set_node_property(gus, "city", Value::from("NYC"));
-    store.set_node_property(charlie, "city", Value::from("LA"));
+    store.set_node_property(vincent, "city", Value::from("LA"));
 
     // Before indexing, lookup still works (via scan)
     let nyc_people = store.find_nodes_by_property("city", &Value::from("NYC"));
@@ -843,7 +843,7 @@ fn test_property_index_create_and_lookup() {
 
     let la_people = store.find_nodes_by_property("city", &Value::from("LA"));
     assert_eq!(la_people.len(), 1);
-    assert!(la_people.contains(&charlie));
+    assert!(la_people.contains(&vincent));
 }
 
 #[test]

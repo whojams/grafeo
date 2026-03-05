@@ -77,7 +77,7 @@ Pass arguments to filter by property values:
 ```graphql
 # Filter by name
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     age
   }
@@ -85,7 +85,7 @@ Pass arguments to filter by property values:
 
 # Filter by multiple properties (AND)
 {
-  Person(age: 30, city: "Seattle") {
+  Person(age: 30, city: "Utrecht") {
     name
     email
   }
@@ -159,7 +159,7 @@ Combine filtering, ordering and pagination:
 ```graphql
 {
   Person(
-    name: "Alice"
+    name: "Alix"
     orderBy: { age: DESC }
     first: 5
   ) {
@@ -178,8 +178,8 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 
 # Simple query
 result = db.execute_graphql("""
@@ -209,7 +209,7 @@ result = db.execute_graphql("""
 use grafeo_engine::GrafeoDB;
 
 let db = GrafeoDB::new_in_memory();
-db.execute("INSERT (:Person {name: 'Alice', age: 30})").unwrap();
+db.execute("INSERT (:Person {name: 'Alix', age: 30})").unwrap();
 
 let result = db.execute_graphql(r#"
 {

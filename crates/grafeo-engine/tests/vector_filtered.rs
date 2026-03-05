@@ -88,7 +88,7 @@ fn test_filtered_vector_search_by_user_id() {
 fn test_filtered_search_without_filters_returns_all() {
     let db = setup_db();
 
-    // No filters — should return all matching nodes
+    // No filters: should return all matching nodes
     let results = db
         .vector_search("Doc", "emb", &[0.5, 0.5, 0.0], 10, None, None)
         .expect("unfiltered search");
@@ -100,7 +100,7 @@ fn test_filtered_search_without_filters_returns_all() {
 fn test_filtered_search_empty_filters_returns_all() {
     let db = setup_db();
 
-    // Empty filter map — should behave like no filters
+    // Empty filter map: should behave like no filters
     let filters: HashMap<String, Value> = HashMap::new();
     let results = db
         .vector_search("Doc", "emb", &[0.5, 0.5, 0.0], 10, None, Some(&filters))
@@ -205,7 +205,7 @@ fn test_filtered_search_non_indexed_property() {
         db.set_node_property(*id, "category", Value::String("science".into()));
     }
 
-    // No property index for "category" — should still work (scan fallback)
+    // No property index for "category": should still work (scan fallback)
     let filters: HashMap<String, Value> =
         [("category".to_string(), Value::String("science".into()))]
             .into_iter()
@@ -233,7 +233,7 @@ fn test_create_vector_index_with_dims_no_data_succeeds() {
     db.create_vector_index("Doc", "emb", Some(4), Some("cosine"), None, None)
         .expect("should create empty index with explicit dimensions");
 
-    // Insert a node with vector after index creation — auto-insert should work
+    // Insert a node with vector after index creation, auto-insert should work
     let id = db.create_node(&["Doc"]);
     db.set_node_property(id, "emb", Value::Vector(vec![1.0, 0.0, 0.0, 0.0].into()));
 
@@ -255,7 +255,7 @@ fn test_grafeo_memory_pattern() {
 
     // Create nodes with properties at creation time (grafeo-memory pattern)
     for i in 0..10 {
-        let user = if i < 5 { "alice" } else { "bob" };
+        let user = if i < 5 { "alix" } else { "gus" };
         let id = db.create_node_with_props(
             &["Memory"],
             vec![
@@ -275,14 +275,14 @@ fn test_grafeo_memory_pattern() {
         db.set_node_property(id, "embedding", Value::Vector(emb.into()));
     }
 
-    // Search WITHOUT filters first — should work
+    // Search WITHOUT filters first: should work
     let all_results = db
         .vector_search("Memory", "embedding", &[0.5, 0.5, 0.1, 0.1], 10, None, None)
         .expect("unfiltered search");
     assert_eq!(all_results.len(), 10, "should find all 10 Memory nodes");
 
     // Search WITH String-valued filter, NO property index (scan fallback)
-    let filters: HashMap<String, Value> = [("user_id".to_string(), Value::String("alice".into()))]
+    let filters: HashMap<String, Value> = [("user_id".to_string(), Value::String("alix".into()))]
         .into_iter()
         .collect();
 
@@ -297,16 +297,16 @@ fn test_grafeo_memory_pattern() {
         )
         .expect("filtered search should not error");
 
-    assert_eq!(results.len(), 5, "should find 5 alice nodes");
+    assert_eq!(results.len(), 5, "should find 5 alix nodes");
 
-    // Verify all results have user_id="alice"
+    // Verify all results have user_id="alix"
     for (id, _) in &results {
         let node = db.get_node(*id).expect("node exists");
         let uid = node
             .properties
             .get(&grafeo_common::types::PropertyKey::new("user_id"))
             .expect("has user_id");
-        assert_eq!(uid, &Value::String("alice".into()));
+        assert_eq!(uid, &Value::String("alix".into()));
     }
 }
 
@@ -518,7 +518,7 @@ fn test_filter_mixed_equality_and_operators() {
 fn test_filter_cross_type_numeric_comparison() {
     let db = setup_operator_db();
 
-    // score (Float64) > 0 (Int64) — cross-type comparison
+    // score (Float64) > 0 (Int64): cross-type comparison
     let filters: HashMap<String, Value> = [(
         "score".to_string(),
         op_filter(vec![("$gt", Value::Int64(0))]),

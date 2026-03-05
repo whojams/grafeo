@@ -4,7 +4,6 @@ use std::path::Path;
 
 use anyhow::Result;
 use comfy_table::{Cell, Color};
-use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
 use crate::OutputFormat;
@@ -52,7 +51,7 @@ struct WarningOutput {
 
 /// Run the validate command.
 pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
-    let db = GrafeoDB::open(path)?;
+    let db = super::open_existing(path)?;
     let result = db.validate();
 
     let output = ValidationOutput {

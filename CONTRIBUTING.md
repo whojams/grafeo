@@ -73,7 +73,7 @@ See [CODE_STYLE.md](.claude/CODE_STYLE.md) for the full guide.
 ```bash
 cd crates/bindings/python
 maturin develop
-pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py
+pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py
 ```
 
 ## Node.js Bindings

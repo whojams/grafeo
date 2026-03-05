@@ -21,7 +21,9 @@ pub use cardinality::{
 pub use cost::{Cost, CostModel};
 pub use join_order::{BitSet, DPccp, JoinGraph, JoinGraphBuilder, JoinPlan};
 
-use crate::query::plan::{FilterOp, LogicalExpression, LogicalOperator, LogicalPlan};
+use crate::query::plan::{
+    FilterOp, JoinCondition, LogicalExpression, LogicalOperator, LogicalPlan, MultiWayJoinOp,
+};
 use grafeo_common::utils::error::Result;
 use std::collections::HashSet;
 
@@ -316,6 +318,15 @@ impl Optimizer {
             LogicalOperator::EdgeScan(scan) => {
                 required.insert(RequiredColumn::Variable(scan.variable.clone()));
             }
+            LogicalOperator::MultiWayJoin(mwj) => {
+                for cond in &mwj.conditions {
+                    Self::collect_from_expression(&cond.left, required);
+                    Self::collect_from_expression(&cond.right, required);
+                }
+                for input in &mwj.inputs {
+                    Self::collect_required_recursive(input, required);
+                }
+            }
             _ => {}
         }
     }
@@ -482,6 +493,14 @@ impl Optimizer {
                 mc.input = Box::new(self.push_projections_recursive(*mc.input, required));
                 LogicalOperator::MapCollect(mc)
             }
+            LogicalOperator::MultiWayJoin(mut mwj) => {
+                mwj.inputs = mwj
+                    .inputs
+                    .into_iter()
+                    .map(|input| self.push_projections_recursive(input, required))
+                    .collect();
+                LogicalOperator::MultiWayJoin(mwj)
+            }
             other => other,
         }
     }
@@ -549,6 +568,14 @@ impl Optimizer {
             LogicalOperator::MapCollect(mut mc) => {
                 mc.input = Box::new(self.reorder_joins(*mc.input));
                 LogicalOperator::MapCollect(mc)
+            }
+            LogicalOperator::MultiWayJoin(mut mwj) => {
+                mwj.inputs = mwj
+                    .inputs
+                    .into_iter()
+                    .map(|input| self.reorder_joins(input))
+                    .collect();
+                LogicalOperator::MultiWayJoin(mwj)
             }
             // Join operators are handled by the parent reorder_joins call
             other => other,
@@ -639,7 +666,8 @@ impl Optimizer {
         }
     }
 
-    /// Optimizes the join order using DPccp.
+    /// Optimizes the join order using DPccp, or produces a multi-way
+    /// leapfrog join for cyclic patterns when the cost model prefers it.
     fn optimize_join_order(
         &self,
         relations: &[(String, LogicalOperator)],
@@ -665,7 +693,40 @@ impl Optimizer {
 
         let graph = builder.build();
 
-        // Run DPccp
+        // For cyclic graphs with 3+ relations, use leapfrog (WCOJ) join.
+        // Cyclic joins (e.g. triangle patterns) benefit from worst-case optimal
+        // multi-way intersection rather than binary hash join cascades that can
+        // produce intermediate blowup.
+        if graph.is_cyclic() && relations.len() >= 3 {
+            // Collect shared variables (variables appearing in 2+ conditions)
+            let mut var_counts: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for cond in conditions {
+                *var_counts.entry(&cond.left_var).or_default() += 1;
+                *var_counts.entry(&cond.right_var).or_default() += 1;
+            }
+            let shared_variables: Vec<String> = var_counts
+                .into_iter()
+                .filter(|(_, count)| *count >= 2)
+                .map(|(var, _)| var.to_string())
+                .collect();
+
+            let join_conditions: Vec<JoinCondition> = conditions
+                .iter()
+                .map(|c| JoinCondition {
+                    left: c.left_expr.clone(),
+                    right: c.right_expr.clone(),
+                })
+                .collect();
+
+            return Some(LogicalOperator::MultiWayJoin(MultiWayJoinOp {
+                inputs: relations.iter().map(|(_, rel)| rel.clone()).collect(),
+                conditions: join_conditions,
+                shared_variables,
+            }));
+        }
+
+        // Fall through to DPccp for binary join ordering
         let mut dpccp = DPccp::new(&graph, &self.cost_model, &self.card_estimator);
         let plan = dpccp.optimize()?;
 
@@ -725,6 +786,14 @@ impl Optimizer {
                 mc.input = Box::new(self.push_filters_down(*mc.input));
                 LogicalOperator::MapCollect(mc)
             }
+            LogicalOperator::MultiWayJoin(mut mwj) => {
+                mwj.inputs = mwj
+                    .inputs
+                    .into_iter()
+                    .map(|input| self.push_filters_down(input))
+                    .collect();
+                LogicalOperator::MultiWayJoin(mwj)
+            }
             // Leaf operators and unsupported operators are returned as-is
             other => other,
         }
@@ -753,6 +822,7 @@ impl Optimizer {
                     // Can't push through, keep filter on top
                     LogicalOperator::Filter(FilterOp {
                         predicate,
+                        pushdown_hint: None,
                         input: Box::new(LogicalOperator::Project(proj)),
                     })
                 }
@@ -792,6 +862,7 @@ impl Optimizer {
                     // Keep filter after expand
                     LogicalOperator::Filter(FilterOp {
                         predicate,
+                        pushdown_hint: None,
                         input: Box::new(LogicalOperator::Expand(expand)),
                     })
                 }
@@ -818,6 +889,7 @@ impl Optimizer {
                     // Uses both sides - keep above join
                     LogicalOperator::Filter(FilterOp {
                         predicate,
+                        pushdown_hint: None,
                         input: Box::new(LogicalOperator::Join(join)),
                     })
                 }
@@ -826,18 +898,21 @@ impl Optimizer {
             // Cannot push through Aggregate (predicate refers to aggregated values)
             LogicalOperator::Aggregate(agg) => LogicalOperator::Filter(FilterOp {
                 predicate,
+                pushdown_hint: None,
                 input: Box::new(LogicalOperator::Aggregate(agg)),
             }),
 
             // For NodeScan, we've reached the bottom - keep filter on top
             LogicalOperator::NodeScan(scan) => LogicalOperator::Filter(FilterOp {
                 predicate,
+                pushdown_hint: None,
                 input: Box::new(LogicalOperator::NodeScan(scan)),
             }),
 
             // For other operators, keep filter on top
             other => LogicalOperator::Filter(FilterOp {
                 predicate,
+                pushdown_hint: None,
                 input: Box::new(other),
             }),
         }
@@ -1081,6 +1156,7 @@ mod tests {
                     label: Some("Person".to_string()),
                     input: None,
                 })),
+                pushdown_hint: None,
             })),
         }));
 
@@ -1118,6 +1194,7 @@ mod tests {
                     op: BinaryOp::Gt,
                     right: Box::new(LogicalExpression::Literal(Value::Int64(30))),
                 },
+                pushdown_hint: None,
                 input: Box::new(LogicalOperator::Expand(ExpandOp {
                     from_variable: "a".to_string(),
                     to_variable: "b".to_string(),
@@ -1175,6 +1252,7 @@ mod tests {
                     op: BinaryOp::Gt,
                     right: Box::new(LogicalExpression::Literal(Value::Int64(30))),
                 },
+                pushdown_hint: None,
                 input: Box::new(LogicalOperator::Expand(ExpandOp {
                     from_variable: "a".to_string(),
                     to_variable: "b".to_string(),
@@ -1264,6 +1342,7 @@ mod tests {
                     label: None,
                     input: None,
                 })),
+                pushdown_hint: None,
             })),
         }));
 
@@ -1345,6 +1424,7 @@ mod tests {
                 op: BinaryOp::Gt,
                 right: Box::new(LogicalExpression::Literal(Value::Int64(30))),
             },
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Project(ProjectOp {
                 projections: vec![Projection {
                     expression: LogicalExpression::Variable("n".to_string()),
@@ -1380,6 +1460,7 @@ mod tests {
                 op: BinaryOp::Gt,
                 right: Box::new(LogicalExpression::Literal(Value::Int64(30))),
             },
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Project(ProjectOp {
                 projections: vec![Projection {
                     expression: LogicalExpression::Property {
@@ -1413,6 +1494,7 @@ mod tests {
 
         let plan = LogicalPlan::new(LogicalOperator::Filter(FilterOp {
             predicate: LogicalExpression::Literal(Value::Bool(true)),
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Limit(LimitOp {
                 count: 10,
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1440,10 +1522,12 @@ mod tests {
 
         let plan = LogicalPlan::new(LogicalOperator::Filter(FilterOp {
             predicate: LogicalExpression::Literal(Value::Bool(true)),
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Sort(SortOp {
                 keys: vec![SortKey {
                     expression: LogicalExpression::Variable("n".to_string()),
                     order: SortOrder::Ascending,
+                    nulls: None,
                 }],
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
@@ -1470,6 +1554,7 @@ mod tests {
 
         let plan = LogicalPlan::new(LogicalOperator::Filter(FilterOp {
             predicate: LogicalExpression::Literal(Value::Bool(true)),
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Distinct(DistinctOp {
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
@@ -1501,11 +1586,13 @@ mod tests {
                 op: BinaryOp::Gt,
                 right: Box::new(LogicalExpression::Literal(Value::Int64(10))),
             },
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Aggregate(AggregateOp {
                 group_by: vec![],
                 aggregates: vec![AggregateExpr {
                     function: AggregateFunction::Count,
                     expression: None,
+                    expression2: None,
                     distinct: false,
                     alias: Some("cnt".to_string()),
                     percentile: None,
@@ -1544,6 +1631,7 @@ mod tests {
                 op: BinaryOp::Gt,
                 right: Box::new(LogicalExpression::Literal(Value::Int64(30))),
             },
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Join(JoinOp {
                 left: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "a".to_string(),
@@ -1585,6 +1673,7 @@ mod tests {
                 op: BinaryOp::Eq,
                 right: Box::new(LogicalExpression::Literal(Value::String("Acme".into()))),
             },
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Join(JoinOp {
                 left: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "a".to_string(),
@@ -1629,6 +1718,7 @@ mod tests {
                     property: "a_id".to_string(),
                 }),
             },
+            pushdown_hint: None,
             input: Box::new(LogicalOperator::Join(JoinOp {
                 left: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "a".to_string(),
@@ -1842,6 +1932,7 @@ mod tests {
             distinct: false,
             input: Box::new(LogicalOperator::Filter(FilterOp {
                 predicate: LogicalExpression::Literal(Value::Bool(true)),
+                pushdown_hint: None,
                 input: Box::new(LogicalOperator::Skip(SkipOp {
                     count: 5,
                     input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1879,6 +1970,7 @@ mod tests {
                     op: BinaryOp::Gt,
                     right: Box::new(LogicalExpression::Literal(Value::Int64(1))),
                 },
+                pushdown_hint: None,
                 input: Box::new(LogicalOperator::Filter(FilterOp {
                     predicate: LogicalExpression::Binary {
                         left: Box::new(LogicalExpression::Property {
@@ -1888,6 +1980,7 @@ mod tests {
                         op: BinaryOp::Lt,
                         right: Box::new(LogicalExpression::Literal(Value::Int64(10))),
                     },
+                    pushdown_hint: None,
                     input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                         variable: "n".to_string(),
                         label: None,
@@ -1899,5 +1992,166 @@ mod tests {
 
         let optimized = optimizer.optimize(plan).unwrap();
         assert!(matches!(&optimized.root, LogicalOperator::Return(_)));
+    }
+
+    #[test]
+    fn test_cyclic_join_produces_multi_way_join() {
+        use crate::query::plan::JoinCondition;
+
+        // Triangle pattern: a ⋈ b ⋈ c ⋈ a (cyclic)
+        let scan_a = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "a".to_string(),
+            label: Some("Person".to_string()),
+            input: None,
+        });
+        let scan_b = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "b".to_string(),
+            label: Some("Person".to_string()),
+            input: None,
+        });
+        let scan_c = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "c".to_string(),
+            label: Some("Person".to_string()),
+            input: None,
+        });
+
+        // Build: Join(Join(a, b, a=b), c, b=c) with extra condition c=a
+        let join_ab = LogicalOperator::Join(JoinOp {
+            left: Box::new(scan_a),
+            right: Box::new(scan_b),
+            join_type: JoinType::Inner,
+            conditions: vec![JoinCondition {
+                left: LogicalExpression::Variable("a".to_string()),
+                right: LogicalExpression::Variable("b".to_string()),
+            }],
+        });
+
+        let join_abc = LogicalOperator::Join(JoinOp {
+            left: Box::new(join_ab),
+            right: Box::new(scan_c),
+            join_type: JoinType::Inner,
+            conditions: vec![
+                JoinCondition {
+                    left: LogicalExpression::Variable("b".to_string()),
+                    right: LogicalExpression::Variable("c".to_string()),
+                },
+                JoinCondition {
+                    left: LogicalExpression::Variable("c".to_string()),
+                    right: LogicalExpression::Variable("a".to_string()),
+                },
+            ],
+        });
+
+        let plan = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable("a".to_string()),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(join_abc),
+        }));
+
+        let mut optimizer = Optimizer::new();
+        optimizer
+            .card_estimator
+            .add_table_stats("Person", cardinality::TableStats::new(1000));
+
+        let optimized = optimizer.optimize(plan).unwrap();
+
+        // Walk the tree to find a MultiWayJoin
+        fn has_multi_way_join(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::MultiWayJoin(_) => true,
+                LogicalOperator::Return(ret) => has_multi_way_join(&ret.input),
+                LogicalOperator::Filter(f) => has_multi_way_join(&f.input),
+                LogicalOperator::Project(p) => has_multi_way_join(&p.input),
+                _ => false,
+            }
+        }
+
+        assert!(
+            has_multi_way_join(&optimized.root),
+            "Expected MultiWayJoin for cyclic triangle pattern"
+        );
+    }
+
+    #[test]
+    fn test_acyclic_join_uses_binary_joins() {
+        use crate::query::plan::JoinCondition;
+
+        // Chain: a ⋈ b ⋈ c (acyclic)
+        let scan_a = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "a".to_string(),
+            label: Some("Person".to_string()),
+            input: None,
+        });
+        let scan_b = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "b".to_string(),
+            label: Some("Person".to_string()),
+            input: None,
+        });
+        let scan_c = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "c".to_string(),
+            label: Some("Company".to_string()),
+            input: None,
+        });
+
+        let join_ab = LogicalOperator::Join(JoinOp {
+            left: Box::new(scan_a),
+            right: Box::new(scan_b),
+            join_type: JoinType::Inner,
+            conditions: vec![JoinCondition {
+                left: LogicalExpression::Variable("a".to_string()),
+                right: LogicalExpression::Variable("b".to_string()),
+            }],
+        });
+
+        let join_abc = LogicalOperator::Join(JoinOp {
+            left: Box::new(join_ab),
+            right: Box::new(scan_c),
+            join_type: JoinType::Inner,
+            conditions: vec![JoinCondition {
+                left: LogicalExpression::Variable("b".to_string()),
+                right: LogicalExpression::Variable("c".to_string()),
+            }],
+        });
+
+        let plan = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable("a".to_string()),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(join_abc),
+        }));
+
+        let mut optimizer = Optimizer::new();
+        optimizer
+            .card_estimator
+            .add_table_stats("Person", cardinality::TableStats::new(1000));
+        optimizer
+            .card_estimator
+            .add_table_stats("Company", cardinality::TableStats::new(100));
+
+        let optimized = optimizer.optimize(plan).unwrap();
+
+        // Should NOT contain MultiWayJoin for acyclic pattern
+        fn has_multi_way_join(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::MultiWayJoin(_) => true,
+                LogicalOperator::Return(ret) => has_multi_way_join(&ret.input),
+                LogicalOperator::Filter(f) => has_multi_way_join(&f.input),
+                LogicalOperator::Project(p) => has_multi_way_join(&p.input),
+                LogicalOperator::Join(j) => {
+                    has_multi_way_join(&j.left) || has_multi_way_join(&j.right)
+                }
+                _ => false,
+            }
+        }
+
+        assert!(
+            !has_multi_way_join(&optimized.root),
+            "Acyclic join should NOT produce MultiWayJoin"
+        );
     }
 }

@@ -20,15 +20,15 @@
 //!
 //! let store = RdfStore::new();
 //!
-//! // Add a triple: <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice"
+//! // Add a triple: <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> "Alix"
 //! store.insert(Triple::new(
-//!     Term::iri("http://example.org/alice"),
+//!     Term::iri("http://example.org/alix"),
 //!     Term::iri("http://xmlns.com/foaf/0.1/name"),
-//!     Term::literal("Alice"),
+//!     Term::literal("Alix"),
 //! ));
 //!
 //! // Query triples with a specific subject
-//! let subject = Term::iri("http://example.org/alice");
+//! let subject = Term::iri("http://example.org/alix");
 //! for triple in store.triples_with_subject(&subject) {
 //!     println!("{:?}", triple);
 //! }

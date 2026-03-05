@@ -34,13 +34,13 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 # Friend's names (two-hop path)
 SELECT ?name
 WHERE {
-    <http://example.org/alice> foaf:knows/foaf:name ?name
+    <http://example.org/alix> foaf:knows/foaf:name ?name
 }
 
 # Equivalent to:
 SELECT ?name
 WHERE {
-    <http://example.org/alice> foaf:knows ?friend .
+    <http://example.org/alix> foaf:knows ?friend .
     ?friend foaf:name ?name
 }
 ```
@@ -75,7 +75,7 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 # All people reachable through knows (including self)
 SELECT ?person
 WHERE {
-    <http://example.org/alice> foaf:knows* ?person
+    <http://example.org/alix> foaf:knows* ?person
 }
 ```
 
@@ -109,7 +109,7 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 # Person or their direct friend
 SELECT ?target
 WHERE {
-    <http://example.org/alice> foaf:knows? ?target
+    <http://example.org/alix> foaf:knows? ?target
 }
 ```
 
@@ -120,16 +120,16 @@ Traverse edges in reverse direction:
 ```sparql
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
-# Who knows Alice?
+# Who knows Alix?
 SELECT ?person
 WHERE {
-    <http://example.org/alice> ^foaf:knows ?person
+    <http://example.org/alix> ^foaf:knows ?person
 }
 
 # Equivalent to:
 SELECT ?person
 WHERE {
-    ?person foaf:knows <http://example.org/alice>
+    ?person foaf:knows <http://example.org/alix>
 }
 ```
 
@@ -143,7 +143,7 @@ PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 # All predicates except rdf:type
 SELECT ?p ?o
 WHERE {
-    <http://example.org/alice> !rdf:type ?o
+    <http://example.org/alix> !rdf:type ?o
     BIND(?p AS !rdf:type)
 }
 
@@ -169,13 +169,13 @@ WHERE {
 # All names in the friend network
 SELECT DISTINCT ?name
 WHERE {
-    <http://example.org/alice> foaf:knows+/foaf:name ?name
+    <http://example.org/alix> foaf:knows+/foaf:name ?name
 }
 
 # Bidirectional knows relationship
 SELECT ?person
 WHERE {
-    <http://example.org/alice> (foaf:knows|^foaf:knows)+ ?person
+    <http://example.org/alix> (foaf:knows|^foaf:knows)+ ?person
 }
 ```
 
@@ -189,8 +189,8 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 # Friends of friends (exactly 2 hops)
 SELECT ?fof
 WHERE {
-    <http://example.org/alice> foaf:knows/foaf:knows ?fof
-    FILTER(?fof != <http://example.org/alice>)
+    <http://example.org/alix> foaf:knows/foaf:knows ?fof
+    FILTER(?fof != <http://example.org/alix>)
 }
 ```
 
@@ -203,7 +203,7 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
 # Find if path exists (any length)
 ASK {
-    <http://example.org/alice> foaf:knows+ <http://example.org/charlie>
+    <http://example.org/alix> foaf:knows+ <http://example.org/vincent>
 }
 ```
 
@@ -237,7 +237,7 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 # Find all people within 3 hops
 SELECT DISTINCT ?person ?name
 WHERE {
-    <http://example.org/alice> foaf:knows{1,3} ?person .
+    <http://example.org/alix> foaf:knows{1,3} ?person .
     ?person foaf:name ?name
 }
 ```

@@ -14,7 +14,7 @@ The `WHERE` clause filters results based on conditions.
 
 ```cypher
 -- Equality
-WHERE p.name = 'Alice'
+WHERE p.name = 'Alix'
 
 -- Inequality
 WHERE p.age <> 30

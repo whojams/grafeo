@@ -120,7 +120,10 @@ impl Operator for ExceptOperator {
         if self.result.is_none() {
             self.compute()?;
         }
-        let rows = self.result.as_ref().unwrap();
+        let rows = self
+            .result
+            .as_ref()
+            .expect("result is Some: compute() called above");
         if self.position >= rows.len() {
             return Ok(None);
         }
@@ -209,7 +212,10 @@ impl Operator for IntersectOperator {
         if self.result.is_none() {
             self.compute()?;
         }
-        let rows = self.result.as_ref().unwrap();
+        let rows = self
+            .result
+            .as_ref()
+            .expect("result is Some: compute() called above");
         if self.position >= rows.len() {
             return Ok(None);
         }

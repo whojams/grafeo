@@ -14,7 +14,7 @@
 //! let mut session = db.session();
 //!
 //! session.begin_tx()?;
-//! session.execute("INSERT (:Person {name: 'Alice'})")?;
+//! session.execute("INSERT (:Person {name: 'Alix'})")?;
 //!
 //! let mut prepared = session.prepare_commit()?;
 //! let info = prepared.info();
@@ -157,7 +157,7 @@ mod tests {
         let mut session = db.session();
 
         session.begin_tx().unwrap();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let prepared = session.prepare_commit().unwrap();
         let info = prepared.info();
@@ -175,11 +175,11 @@ mod tests {
         let mut session = db.session();
 
         session.begin_tx().unwrap();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
         session
             .execute(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) INSERT (a)-[:KNOWS]->(b)",
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)",
             )
             .unwrap();
 
@@ -198,7 +198,7 @@ mod tests {
         let mut session = db.session();
 
         session.begin_tx().unwrap();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let mut prepared = session.prepare_commit().unwrap();
         prepared.set_metadata("audit_user", "admin");
@@ -216,7 +216,7 @@ mod tests {
         let mut session = db.session();
 
         session.begin_tx().unwrap();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let prepared = session.prepare_commit().unwrap();
         prepared.abort().unwrap();
@@ -232,7 +232,7 @@ mod tests {
         let mut session = db.session();
 
         session.begin_tx().unwrap();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         {
             let _prepared = session.prepare_commit().unwrap();

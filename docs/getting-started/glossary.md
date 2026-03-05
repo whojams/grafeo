@@ -20,7 +20,7 @@ A vertex in the graph representing an entity (person, product, concept). Nodes h
 
 - **ID**: Unique 64-bit identifier
 - **Labels**: Categories like "Person", "Product" (can have multiple)
-- **Properties**: Key-value attributes like `{name: "Alice", age: 30}`
+- **Properties**: Key-value attributes like `{name: "Alix", age: 30}`
 
 ### Edge
 A relationship connecting two nodes. Edges have:

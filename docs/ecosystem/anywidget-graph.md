@@ -36,13 +36,13 @@ from anywidget_graph import Graph
 
 graph = Graph.from_dict({
     "nodes": [
-        {"id": "alice", "label": "Alice", "group": "person"},
-        {"id": "bob", "label": "Bob", "group": "person"},
+        {"id": "alix", "label": "Alix", "group": "person"},
+        {"id": "gus", "label": "Gus", "group": "person"},
         {"id": "paper", "label": "Graph Theory", "group": "document"},
     ],
     "edges": [
-        {"source": "alice", "target": "bob", "label": "knows"},
-        {"source": "alice", "target": "paper", "label": "authored"},
+        {"source": "alix", "target": "gus", "label": "knows"},
+        {"source": "alix", "target": "paper", "label": "authored"},
     ]
 })
 
@@ -64,7 +64,7 @@ graph = Graph.from_dict({
 
 ```python
 graph = Graph(
-    nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+    nodes=[{"id": "a", "label": "Alix"}, {"id": "b", "label": "Gus"}],
     edges=[{"source": "a", "target": "b", "label": "KNOWS"}],
 )
 ```
@@ -129,8 +129,8 @@ graph = Graph.from_networkx(G)
 ```python
 import pandas as pd
 
-nodes_df = pd.DataFrame({"id": ["alice", "bob"], "group": ["person", "person"]})
-edges_df = pd.DataFrame({"source": ["alice"], "target": ["bob"], "weight": [1.0]})
+nodes_df = pd.DataFrame({"id": ["alix", "gus"], "group": ["person", "person"]})
+edges_df = pd.DataFrame({"source": ["alix"], "target": ["gus"], "weight": [1.0]})
 
 graph = Graph.from_dataframe(nodes_df, edges_df)
 ```
@@ -165,15 +165,15 @@ graph.selection_mode = "box"    # Switch to box-select mode
 ### Node expansion
 
 ```python
-graph.expand_node("alice")      # Fetch and merge neighbors (requires backend)
+graph.expand_node("alix")      # Fetch and merge neighbors (requires backend)
 ```
 
 ### Node pinning
 
 ```python
-graph.pin_nodes(["alice", "bob"])   # Pin at current positions
-graph.unpin_nodes(["alice"])        # Release back to layout
-graph.toggle_pin("bob")            # Toggle pin state
+graph.pin_nodes(["alix", "gus"])   # Pin at current positions
+graph.unpin_nodes(["alix"])        # Release back to layout
+graph.toggle_pin("gus")            # Toggle pin state
 graph.unpin_all()                   # Unpin everything
 ```
 

@@ -2,7 +2,7 @@
 //!
 //! [`PropertyMap`] replaces `BTreeMap<PropertyKey, Value>` on user-facing
 //! [`Node`](crate::graph::lpg::Node) and [`Edge`](crate::graph::lpg::Edge)
-//! types.  For the typical case of 1–4 properties the data lives entirely
+//! types.  For the typical case of 1-4 properties the data lives entirely
 //! inline (no heap allocation), and lookups use a fast linear scan instead
 //! of tree traversal.
 
@@ -13,9 +13,9 @@ use smallvec::SmallVec;
 
 use super::value::{PropertyKey, Value};
 
-/// Inline capacity — entries stored on the stack without allocation.
+/// Inline capacity: entries stored on the stack without allocation.
 ///
-/// Covers the common case of 1–4 properties per entity.  Beyond this the
+/// Covers the common case of 1-4 properties per entity.  Beyond this the
 /// backing `SmallVec` spills to the heap but remains a flat array, so
 /// iteration is still cache-friendly.
 const INLINE_CAP: usize = 4;
@@ -166,13 +166,13 @@ mod tests {
     #[test]
     fn insert_and_get() {
         let mut map = PropertyMap::new();
-        map.insert(PropertyKey::new("name"), Value::from("Alice"));
+        map.insert(PropertyKey::new("name"), Value::from("Alix"));
         map.insert(PropertyKey::new("age"), Value::from(30i64));
 
         assert_eq!(map.len(), 2);
         assert_eq!(
             map.get(&PropertyKey::new("name")).and_then(Value::as_str),
-            Some("Alice")
+            Some("Alix")
         );
         assert_eq!(
             map.get(&PropertyKey::new("age")).and_then(Value::as_int64),
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let mut map = PropertyMap::new();
-        map.insert(PropertyKey::new("name"), Value::from("Alice"));
+        map.insert(PropertyKey::new("name"), Value::from("Alix"));
         let dbg = format!("{map:?}");
         assert!(dbg.contains("name"));
     }

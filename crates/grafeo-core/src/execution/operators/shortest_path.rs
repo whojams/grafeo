@@ -252,7 +252,7 @@ impl ShortestPathOperator {
                 if let Some(b) = best
                     && depth + 1 > b
                 {
-                    // Clear the queue — no further expansion can improve
+                    // Clear the queue; no further expansion can improve
                     forward_queue.clear();
                     continue;
                 }
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_find_shortest_path_direct() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // a -> b (1 hop)
         let a = store.create_node(&["Node"]);
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_find_shortest_path_same_node() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let a = store.create_node(&["Node"]);
 
         let input = Box::new(MockPairOperator::new(vec![(a, a)]));
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_find_shortest_path_two_hops() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // a -> b -> c (2 hops from a to c)
         let a = store.create_node(&["Node"]);
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_find_shortest_path_no_path() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // a and b are disconnected
         let a = store.create_node(&["Node"]);
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_find_shortest_path_prefers_shorter() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create two paths: a -> d (1 hop) and a -> b -> c -> d (3 hops)
         let a = store.create_node(&["Node"]);
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_find_shortest_path_with_edge_type_filter() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // a -KNOWS-> b -LIKES-> c
         let a = store.create_node(&["Node"]);
@@ -636,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_all_shortest_paths_single_path() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // a -> b (single path)
         let a = store.create_node(&["Node"]);
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn test_all_shortest_paths_multiple_paths() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create diamond: a -> b -> d and a -> c -> d (two paths of length 2)
         let a = store.create_node(&["Node"]);
@@ -696,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_multiple_pairs_in_chunk() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Create: a -> b, c -> d
         let a = store.create_node(&["Node"]);
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn test_operator_reset() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         store.create_edge(a, b, "KNOWS");
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_operator_name() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let input = Box::new(MockPairOperator::new(vec![]));
         let op = ShortestPathOperator::new(
             store.clone() as Arc<dyn GraphStore>,
@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let input = Box::new(MockPairOperator::new(vec![]));
         let mut op = ShortestPathOperator::new(
             store.clone() as Arc<dyn GraphStore>,
@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn test_all_shortest_paths_no_path() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Disconnected nodes
         let a = store.create_node(&["Node"]);
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn test_all_shortest_paths_same_node() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let a = store.create_node(&["Node"]);
 
         let input = Box::new(MockPairOperator::new(vec![(a, a)]));
@@ -843,7 +843,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_bfs_long_chain() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Chain: n0 -> n1 -> n2 -> ... -> n9 (9 hops)
         let nodes: Vec<NodeId> = (0..10).map(|_| store.create_node(&["Node"])).collect();
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_bfs_diamond() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // Diamond: a -> b -> d, a -> c -> d (two paths of length 2)
         let a = store.create_node(&["Node"]);
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_bfs_no_path() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_bfs_same_node() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let a = store.create_node(&["Node"]);
 
         let input = Box::new(MockPairOperator::new(vec![(a, a)]));
@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_bfs_prefers_shorter() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -972,7 +972,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_bfs_with_edge_type_filter() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
 
         // a -KNOWS-> b -LIKES-> c
         let a = store.create_node(&["Node"]);
@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn test_bidirectional_bfs_has_backward_adjacency() {
         // Default store has backward adjacency enabled
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         assert!(store.has_backward_adjacency());
 
         let a = store.create_node(&["Node"]);

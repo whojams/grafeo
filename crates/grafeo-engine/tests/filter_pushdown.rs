@@ -12,7 +12,7 @@ use grafeo_engine::GrafeoDB;
 
 /// Builds a small social graph for filter tests.
 ///
-/// 5 Person nodes (Alice/NYC, Bob/NYC, Carol/London, Dave/London, Eve/Paris)
+/// 5 Person nodes (Alix/NYC, Gus/NYC, Harm/London, Dave/London, Eve/Paris)
 /// 2 Company nodes (Acme, Globex)
 fn setup() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
@@ -20,9 +20,9 @@ fn setup() -> GrafeoDB {
 
     session
         .execute(
-            "CREATE (a:Person {name: 'Alice', city: 'NYC', age: 30}),
-                    (b:Person {name: 'Bob',   city: 'NYC', age: 25}),
-                    (c:Person {name: 'Carol', city: 'London', age: 35}),
+            "CREATE (a:Person {name: 'Alix', city: 'NYC', age: 30}),
+                    (b:Person {name: 'Gus',   city: 'NYC', age: 25}),
+                    (c:Person {name: 'Harm', city: 'London', age: 35}),
                     (d:Person {name: 'Dave',  city: 'London', age: 40}),
                     (e:Person {name: 'Eve',   city: 'Paris',  age: 28}),
                     (x:Company {name: 'Acme'}),
@@ -41,11 +41,11 @@ fn equality_filter_pushdown_without_index() {
     let session = db.session();
 
     let result = session
-        .execute("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name, n.city")
+        .execute("MATCH (n:Person) WHERE n.name = 'Alix' RETURN n.name, n.city")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::from("Alice"));
+    assert_eq!(result.rows[0][0], Value::from("Alix"));
     assert_eq!(result.rows[0][1], Value::from("NYC"));
 }
 
@@ -59,7 +59,7 @@ fn compound_equality_pushdown_without_index() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::from("Bob"));
+    assert_eq!(result.rows[0][0], Value::from("Gus"));
 }
 
 // ── Equality with property index (existing path still works) ──
@@ -71,7 +71,7 @@ fn equality_filter_pushdown_with_index() {
     let session = db.session();
 
     let result = session
-        .execute("MATCH (n:Person) WHERE n.name = 'Carol' RETURN n.city")
+        .execute("MATCH (n:Person) WHERE n.name = 'Harm' RETURN n.city")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
@@ -99,7 +99,7 @@ fn mixed_equality_and_range_no_match() {
     let db = setup();
     let session = db.session();
 
-    // Equality matches Carol (35) and Dave (40), but range > 50 matches nobody
+    // Equality matches Harm (35) and Dave (40), but range > 50 matches nobody
     let result = session
         .execute("MATCH (n:Person) WHERE n.city = 'London' AND n.age > 50 RETURN n.name")
         .unwrap();
@@ -118,10 +118,10 @@ fn range_filter_pushdown() {
         .execute("MATCH (n:Person) WHERE n.age > 30 RETURN n.name")
         .unwrap();
 
-    // Carol (35) and Dave (40) match
+    // Harm (35) and Dave (40) match
     assert_eq!(result.rows.len(), 2);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Carol")));
+    assert!(names.contains(&&Value::from("Harm")));
     assert!(names.contains(&&Value::from("Dave")));
 }
 
@@ -134,11 +134,11 @@ fn between_filter_pushdown() {
         .execute("MATCH (n:Person) WHERE n.age >= 28 AND n.age <= 35 RETURN n.name")
         .unwrap();
 
-    // Alice (30), Carol (35), Eve (28) match
+    // Alix (30), Harm (35), Eve (28) match
     assert_eq!(result.rows.len(), 3);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Alice")));
-    assert!(names.contains(&&Value::from("Carol")));
+    assert!(names.contains(&&Value::from("Alix")));
+    assert!(names.contains(&&Value::from("Harm")));
     assert!(names.contains(&&Value::from("Eve")));
 }
 
@@ -149,13 +149,13 @@ fn non_pushable_expression_filter() {
     let db = setup();
     let session = db.session();
 
-    // String function in predicate — not pushable, uses generic FilterOperator
+    // String function in predicate: not pushable, uses generic FilterOperator
     let result = session
         .execute("MATCH (n:Person) WHERE n.name STARTS WITH 'A' RETURN n.name")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::from("Alice"));
+    assert_eq!(result.rows[0][0], Value::from("Alix"));
 }
 
 // ── No label (no pushdown without label or index) ──
@@ -165,14 +165,14 @@ fn equality_without_label_or_index_falls_through() {
     let db = setup();
     let session = db.session();
 
-    // No label, no index — falls through to generic FilterOperator
+    // No label, no index: falls through to generic FilterOperator
     // Should still return correct results
     let result = session
-        .execute("MATCH (n) WHERE n.name = 'Alice' RETURN n.name")
+        .execute("MATCH (n) WHERE n.name = 'Alix' RETURN n.name")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::from("Alice"));
+    assert_eq!(result.rows[0][0], Value::from("Alix"));
 }
 
 // ── Label selectivity: only label-matching nodes checked ──
@@ -210,15 +210,15 @@ fn or_filter_matches_either_side() {
     let db = setup();
     let session = db.session();
 
-    // OR filter: matches Alice (NYC) or Carol (London)
+    // OR filter: matches Alix (NYC) or Harm (London)
     let result = session
-        .execute("MATCH (n:Person) WHERE n.name = 'Alice' OR n.name = 'Carol' RETURN n.name")
+        .execute("MATCH (n:Person) WHERE n.name = 'Alix' OR n.name = 'Harm' RETURN n.name")
         .unwrap();
 
     assert_eq!(result.rows.len(), 2);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Alice")));
-    assert!(names.contains(&&Value::from("Carol")));
+    assert!(names.contains(&&Value::from("Alix")));
+    assert!(names.contains(&&Value::from("Harm")));
 }
 
 #[test]
@@ -241,11 +241,11 @@ fn or_filter_matches_one_side() {
 
     // OR filter: only left side matches
     let result = session
-        .execute("MATCH (n:Person) WHERE n.name = 'Alice' OR n.name = 'Nobody' RETURN n.name")
+        .execute("MATCH (n:Person) WHERE n.name = 'Alix' OR n.name = 'Nobody' RETURN n.name")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::from("Alice"));
+    assert_eq!(result.rows[0][0], Value::from("Alix"));
 }
 
 // ── AND + OR combined (compound logic) ──
@@ -255,18 +255,18 @@ fn and_or_combined_filter() {
     let db = setup();
     let session = db.session();
 
-    // (city = NYC AND age > 28) OR name = Carol
-    // Matches Alice (NYC, 30) and Carol (London, 35)
+    // (city = NYC AND age > 28) OR name = Harm
+    // Matches Alix (NYC, 30) and Harm (London, 35)
     let result = session
         .execute(
-            "MATCH (n:Person) WHERE (n.city = 'NYC' AND n.age > 28) OR n.name = 'Carol' RETURN n.name",
+            "MATCH (n:Person) WHERE (n.city = 'NYC' AND n.age > 28) OR n.name = 'Harm' RETURN n.name",
         )
         .unwrap();
 
     assert_eq!(result.rows.len(), 2);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Alice")));
-    assert!(names.contains(&&Value::from("Carol")));
+    assert!(names.contains(&&Value::from("Alix")));
+    assert!(names.contains(&&Value::from("Harm")));
 }
 
 // ── Reversed operands: literal on left side ──
@@ -276,9 +276,9 @@ fn reversed_equality_literal_on_left() {
     let db = setup();
     let session = db.session();
 
-    // Literal on left: 'Alice' = n.name
+    // Literal on left: 'Alix' = n.name
     let result = session
-        .execute("MATCH (n:Person) WHERE 'Alice' = n.name RETURN n.city")
+        .execute("MATCH (n:Person) WHERE 'Alix' = n.name RETURN n.city")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
@@ -295,10 +295,10 @@ fn reversed_range_literal_on_left() {
         .execute("MATCH (n:Person) WHERE 30 < n.age RETURN n.name")
         .unwrap();
 
-    // Carol (35) and Dave (40) match
+    // Harm (35) and Dave (40) match
     assert_eq!(result.rows.len(), 2);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Carol")));
+    assert!(names.contains(&&Value::from("Harm")));
     assert!(names.contains(&&Value::from("Dave")));
 }
 
@@ -312,10 +312,10 @@ fn reversed_range_ge_literal_on_left() {
         .execute("MATCH (n:Person) WHERE 35 <= n.age RETURN n.name")
         .unwrap();
 
-    // Carol (35) and Dave (40) match
+    // Harm (35) and Dave (40) match
     assert_eq!(result.rows.len(), 2);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Carol")));
+    assert!(names.contains(&&Value::from("Harm")));
     assert!(names.contains(&&Value::from("Dave")));
 }
 
@@ -332,9 +332,9 @@ fn property_index_with_remaining_predicate() {
         .execute("MATCH (n:Person) WHERE n.city = 'NYC' AND n.age > 28 RETURN n.name")
         .unwrap();
 
-    // Only Alice (30) matches both conditions
+    // Only Alix (30) matches both conditions
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::from("Alice"));
+    assert_eq!(result.rows[0][0], Value::from("Alix"));
 }
 
 // ── NOT/inequality filter (non-pushable, generic FilterOperator) ──
@@ -348,11 +348,11 @@ fn not_equal_filter() {
         .execute("MATCH (n:Person) WHERE n.city <> 'NYC' RETURN n.name")
         .unwrap();
 
-    // Carol (London), Dave (London), Eve (Paris) match
+    // Harm (London), Dave (London), Eve (Paris) match
     assert_eq!(result.rows.len(), 3);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(!names.contains(&&Value::from("Alice")));
-    assert!(!names.contains(&&Value::from("Bob")));
+    assert!(!names.contains(&&Value::from("Alix")));
+    assert!(!names.contains(&&Value::from("Gus")));
 }
 
 // ── BETWEEN variations (different boundary inclusivity) ──
@@ -367,10 +367,10 @@ fn between_exclusive_both_sides() {
         .execute("MATCH (n:Person) WHERE n.age > 25 AND n.age < 35 RETURN n.name")
         .unwrap();
 
-    // Alice (30) and Eve (28) match
+    // Alix (30) and Eve (28) match
     assert_eq!(result.rows.len(), 2);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Alice")));
+    assert!(names.contains(&&Value::from("Alix")));
     assert!(names.contains(&&Value::from("Eve")));
 }
 
@@ -384,12 +384,12 @@ fn between_inclusive_lower_exclusive_upper() {
         .execute("MATCH (n:Person) WHERE n.age >= 25 AND n.age < 35 RETURN n.name")
         .unwrap();
 
-    // Bob (25), Eve (28), Alice (30) match
+    // Gus (25), Eve (28), Alix (30) match
     assert_eq!(result.rows.len(), 3);
     let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(names.contains(&&Value::from("Bob")));
+    assert!(names.contains(&&Value::from("Gus")));
     assert!(names.contains(&&Value::from("Eve")));
-    assert!(names.contains(&&Value::from("Alice")));
+    assert!(names.contains(&&Value::from("Alix")));
 }
 
 // ── MVCC visibility: rolled-back nodes must not leak through pushdown ──
@@ -417,7 +417,7 @@ fn rollback_hides_nodes_from_equality_pushdown() {
 
     // Original nodes still visible
     let result = session
-        .execute("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name")
+        .execute("MATCH (n:Person) WHERE n.name = 'Alix' RETURN n.name")
         .unwrap();
     assert_eq!(result.rows.len(), 1);
 }

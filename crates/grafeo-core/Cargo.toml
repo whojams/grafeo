@@ -22,7 +22,7 @@ dashmap.workspace = true
 arcstr.workspace = true
 
 # Hashing
-ahash.workspace = true
+foldhash.workspace = true
 
 # Serialization
 serde.workspace = true
@@ -40,6 +40,9 @@ tokio = { workspace = true, optional = true }
 
 # Regex
 regex.workspace = true
+
+# Unicode normalization (for IS NORMALIZED predicate)
+unicode-normalization.workspace = true
 
 # Vector index (optional)
 ordered-float = { workspace = true, optional = true }

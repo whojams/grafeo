@@ -12,7 +12,7 @@
 //!     MATCH (a:Person)-[e:KNOWS]->(b:Person)
 //!     COLUMNS (a.name AS person, e.since AS year, b.name AS friend)
 //! ) result
-//! WHERE result.person = 'Alice'
+//! WHERE result.person = 'Alix'
 //! ORDER BY result.year DESC
 //! LIMIT 10;
 //! ```

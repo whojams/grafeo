@@ -550,9 +550,9 @@ mod tests {
     #[test]
     fn test_project_node_resolve() {
         // Create a store with a test node
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let node_id = store.create_node(&["Person"]);
-        store.set_node_property(node_id, "name", Value::String("Alice".into()));
+        store.set_node_property(node_id, "name", Value::String("Alix".into()));
         store.set_node_property(node_id, "age", Value::Int64(30));
 
         // Create input chunk with a NodeId column
@@ -585,7 +585,7 @@ mod tests {
             assert!(map.get(&PropertyKey::new("_labels")).is_some());
             assert_eq!(
                 map.get(&PropertyKey::new("name")),
-                Some(&Value::String("Alice".into()))
+                Some(&Value::String("Alix".into()))
             );
             assert_eq!(map.get(&PropertyKey::new("age")), Some(&Value::Int64(30)));
         } else {
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_project_edge_resolve() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let src = store.create_node(&["Person"]);
         let dst = store.create_node(&["Company"]);
         let edge_id = store.create_edge(src, dst, "WORKS_AT");
@@ -651,7 +651,7 @@ mod tests {
     fn test_project_resolve_missing_entity() {
         use grafeo_common::types::NodeId;
 
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Create input chunk with a NodeId that doesn't exist in the store
         let mut builder = DataChunkBuilder::new(&[LogicalType::Node]);

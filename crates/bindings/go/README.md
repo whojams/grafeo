@@ -34,8 +34,8 @@ func main() {
     defer db.Close()
 
     // Create nodes
-    db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice", "age": 30})
-    db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob", "age": 25})
+    db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix", "age": 30})
+    db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus", "age": 25})
 
     // Query with GQL
     result, err := db.Execute("MATCH (p:Person) WHERE p.age > 20 RETURN p.name, p.age")

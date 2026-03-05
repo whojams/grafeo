@@ -176,10 +176,10 @@ const db = await GrafeoDB.create();
 // const db = await GrafeoDB.create({ path: './my-graph.db' });
 
 // Create nodes and relationships
-await db.execute("INSERT (:Person {name: 'Alice', age: 30})");
-await db.execute("INSERT (:Person {name: 'Bob', age: 25})");
+await db.execute("INSERT (:Person {name: 'Alix', age: 30})");
+await db.execute("INSERT (:Person {name: 'Gus', age: 25})");
 await db.execute(`
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS {since: 2020}]->(b)
 `);
 
@@ -205,12 +205,12 @@ db = grafeo.GrafeoDB()
 # db = grafeo.GrafeoDB("/path/to/database")
 
 # Create nodes using GQL
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 
 # Create a relationship
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS {since: 2020}]->(b)
 """)
 
@@ -224,7 +224,7 @@ for row in result:
     print(row)
 
 # Or use the direct API
-node = db.create_node(["Person"], {"name": "Carol"})
+node = db.create_node(["Person"], {"name": "Harm"})
 print(f"Created node with ID: {node.id}")
 
 # Manage labels
@@ -265,7 +265,7 @@ fn main() {
     // let db = GrafeoDB::open("./my_database").unwrap();
 
     // Execute GQL queries
-    db.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+    db.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
     let result = db.execute("MATCH (p:Person) RETURN p.name").unwrap();
     for row in result.rows {

@@ -97,7 +97,7 @@ use grafeo_core::index::HashIndex;
 
 fn query_index(index: &HashIndex<String, NodeId>) {
     // Point lookup
-    if let Some(node_ids) = index.get("Alice") {
+    if let Some(node_ids) = index.get("Alix") {
         for node_id in node_ids {
             println!("Found: {:?}", node_id);
         }

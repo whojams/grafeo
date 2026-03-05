@@ -17,7 +17,7 @@ FROM GRAPH_TABLE (
     MATCH (a:Person)-[e:KNOWS]->(b:Person)
     COLUMNS (a.name AS person, e.since AS year, b.name AS friend)
 ) result
-WHERE result.person = 'Alice'
+WHERE result.person = 'Alix'
 ORDER BY result.year DESC
 LIMIT 10;
 ```
@@ -70,7 +70,7 @@ COLUMNS (
 ```sql
 SELECT *
 FROM GRAPH_TABLE (
-    MATCH (p:Person {name: 'Alice'})-[:KNOWS]->(f:Person)
+    MATCH (p:Person {name: 'Alix'})-[:KNOWS]->(f:Person)
     COLUMNS (f.name AS friend, f.age AS age)
 );
 ```
@@ -80,10 +80,10 @@ FROM GRAPH_TABLE (
 ```sql
 SELECT DISTINCT result.fof_name
 FROM GRAPH_TABLE (
-    MATCH (me:Person {name: 'Alice'})-[:KNOWS]->()-[:KNOWS]->(fof:Person)
+    MATCH (me:Person {name: 'Alix'})-[:KNOWS]->()-[:KNOWS]->(fof:Person)
     COLUMNS (fof.name AS fof_name)
 ) result
-WHERE result.fof_name <> 'Alice';
+WHERE result.fof_name <> 'Alix';
 ```
 
 ### Path functions

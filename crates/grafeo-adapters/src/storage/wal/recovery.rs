@@ -567,7 +567,7 @@ mod crash_tests {
         }
     }
 
-    /// Crash at `wal_before_write` — no record bytes reach disk.
+    /// Crash at `wal_before_write`: no record bytes reach disk.
     /// Recovery should only return previously committed data.
     #[test]
     fn test_crash_before_write_discards_record() {
@@ -606,7 +606,7 @@ mod crash_tests {
         assert_eq!(records.len(), 2, "CreateNode(1) + TxCommit(1)");
     }
 
-    /// Crash at `wal_after_write` — data may be in BufWriter but no commit
+    /// Crash at `wal_after_write`: data may be in BufWriter but no commit
     /// marker. Recovery should discard the uncommitted record.
     #[test]
     fn test_crash_after_write_uncommitted_discarded() {
@@ -680,7 +680,7 @@ mod crash_tests {
         assert_eq!(records.len(), 4, "2 CreateNode + 2 TxCommit");
     }
 
-    /// Crash during checkpoint — committed data must still be recoverable.
+    /// Crash during checkpoint: committed data must still be recoverable.
     #[test]
     fn test_crash_during_checkpoint_preserves_data() {
         for crash_at in 1..15 {
@@ -718,7 +718,7 @@ mod crash_tests {
         }
     }
 
-    /// Crash with rotated log files — recovery should span all files.
+    /// Crash with rotated log files: recovery should span all files.
     #[test]
     fn test_crash_with_log_rotation() {
         let dir = tempdir().unwrap();

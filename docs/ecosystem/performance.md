@@ -245,13 +245,13 @@ Create indexes for frequently-queried properties:
 
 ```python
 # Before: O(n) scan
-db.find_nodes_by_property("email", "alice@example.com")  # 50ms on 1M nodes
+db.find_nodes_by_property("email", "alix@example.com")  # 50ms on 1M nodes
 
 # Create index
 db.create_property_index("email")
 
 # After: O(1) lookup
-db.find_nodes_by_property("email", "alice@example.com")  # 0.01ms
+db.find_nodes_by_property("email", "alix@example.com")  # 0.01ms
 ```
 
 ### Batch Operations

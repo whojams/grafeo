@@ -236,7 +236,11 @@ impl BitPackedInts {
         }
 
         let bits_per_value = bytes[0];
-        let count = u32::from_le_bytes(bytes[1..5].try_into().unwrap()) as usize;
+        let count = u32::from_le_bytes(
+            bytes[1..5]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        ) as usize;
 
         let num_words = if bits_per_value == 0 || count == 0 {
             0
@@ -255,7 +259,11 @@ impl BitPackedInts {
         let mut data = Vec::with_capacity(num_words);
         for i in 0..num_words {
             let offset = 5 + i * 8;
-            let word = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            let word = u64::from_le_bytes(
+                bytes[offset..offset + 8]
+                    .try_into()
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            );
             data.push(word);
         }
 
@@ -382,7 +390,11 @@ impl DeltaBitPacked {
             ));
         }
 
-        let base = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let base = u64::from_le_bytes(
+            bytes[0..8]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        );
         let deltas = BitPackedInts::from_bytes(&bytes[8..])?;
 
         Ok(Self { base, deltas })

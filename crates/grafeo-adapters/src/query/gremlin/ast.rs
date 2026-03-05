@@ -248,13 +248,13 @@ pub enum ByModifier {
 /// Token type for by() modifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
-    /// `T.id` — the element identifier.
+    /// `T.id`: the element identifier.
     Id,
-    /// `T.label` — the element label.
+    /// `T.label`: the element label.
     Label,
-    /// `T.key` — the property key.
+    /// `T.key`: the property key.
     Key,
-    /// `T.value` — the property value.
+    /// `T.value`: the property value.
     Value,
 }
 

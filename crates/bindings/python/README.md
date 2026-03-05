@@ -21,9 +21,9 @@ db = GrafeoDB()
 # db = GrafeoDB("./my-graph")
 
 # Create nodes
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
-db.execute("INSERT (:Person {name: 'Alice'})-[:KNOWS]->(:Person {name: 'Bob'})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
 
 # Query the graph
 result = db.execute("MATCH (p:Person) WHERE p.age > 20 RETURN p.name, p.age")
@@ -48,7 +48,7 @@ db.edge_count   # number of edges
 
 ```python
 result = db.execute(gql)                        # GQL (ISO standard)
-result = db.execute_with_params(gql, params)    # GQL with parameters
+result = db.execute(gql, {"name": "Alix"})     # GQL with parameters
 result = db.execute_cypher(query)               # Cypher
 result = db.execute_sparql(query)               # SPARQL
 result = db.execute_gremlin(query)              # Gremlin
@@ -58,7 +58,7 @@ result = db.execute_graphql(query)              # GraphQL
 ### Node & Edge CRUD
 
 ```python
-node = db.create_node(["Person"], {"name": "Alice", "age": 30})
+node = db.create_node(["Person"], {"name": "Alix", "age": 30})
 edge = db.create_edge(source_id, target_id, "KNOWS", {"since": 2024})
 
 n = db.get_node(node_id)   # Node or None
@@ -76,7 +76,7 @@ db.delete_edge(edge_id)
 ```python
 # Context manager (auto-rollback on exception)
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Carol'})")
+    tx.execute("INSERT (:Person {name: 'Harm'})")
     tx.commit()
 
 # With isolation levels

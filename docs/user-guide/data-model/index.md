@@ -19,7 +19,7 @@ A Labeled Property Graph consists of:
 
 ```mermaid
 graph LR
-    A[Alice<br/>:Person<br/>age: 30] -->|KNOWS<br/>since: 2020| B[Bob<br/>:Person<br/>age: 25]
+    A[Alix<br/>:Person<br/>age: 30] -->|KNOWS<br/>since: 2020| B[Gus<br/>:Person<br/>age: 25]
     B -->|WORKS_AT| C[Acme Inc<br/>:Company]
 ```
 

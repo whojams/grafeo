@@ -47,7 +47,7 @@ from openai import OpenAI
 from grafeo_memory import MemoryManager, MemoryConfig, OpenAIEmbedder
 
 embedder = OpenAIEmbedder(OpenAI())
-config = MemoryConfig(db_path="./memory.db", user_id="alice")
+config = MemoryConfig(db_path="./memory.db", user_id="alix")
 
 with MemoryManager("openai:gpt-4o-mini", config, embedder=embedder) as memory:
     # Add memories from conversations
@@ -73,7 +73,7 @@ from mistralai import Mistral
 from grafeo_memory import MemoryManager, MemoryConfig, MistralEmbedder
 
 embedder = MistralEmbedder(Mistral())
-config = MemoryConfig(db_path="./memory.db", user_id="alice")
+config = MemoryConfig(db_path="./memory.db", user_id="alix")
 
 with MemoryManager("mistral:mistral-small-latest", config, embedder=embedder) as memory:
     memory.add("I work at Acme Corp as a data scientist")

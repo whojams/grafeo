@@ -7,16 +7,16 @@ import { GrafeoDB, version, simdSupport } from '../index.js'
 function seedDb() {
   const db = GrafeoDB.create()
   // People
-  const alice = db.createNode(['Person'], { name: 'Alice', age: 30 })
-  const bob = db.createNode(['Person'], { name: 'Bob', age: 25 })
-  const charlie = db.createNode(['Person'], { name: 'Charlie', age: 35 })
+  const alix = db.createNode(['Person'], { name: 'Alix', age: 30 })
+  const gus = db.createNode(['Person'], { name: 'Gus', age: 25 })
+  const vincent = db.createNode(['Person'], { name: 'Vincent', age: 35 })
   // Company
   const acme = db.createNode(['Company'], { name: 'Acme Corp', founded: 2010 })
   // Relationships
-  const knows1 = db.createEdge(alice.id, bob.id, 'KNOWS', { since: 2020 })
-  const knows2 = db.createEdge(bob.id, charlie.id, 'KNOWS', { since: 2021 })
-  const worksAt = db.createEdge(alice.id, acme.id, 'WORKS_AT', { role: 'Engineer' })
-  return { db, alice, bob, charlie, acme, knows1, knows2, worksAt }
+  const knows1 = db.createEdge(alix.id, gus.id, 'KNOWS', { since: 2020 })
+  const knows2 = db.createEdge(gus.id, vincent.id, 'KNOWS', { since: 2021 })
+  const worksAt = db.createEdge(alix.id, acme.id, 'WORKS_AT', { role: 'Engineer' })
+  return { db, alix, gus, vincent, acme, knows1, knows2, worksAt }
 }
 
 // ── Module-level exports ─────────────────────────────────────────────
@@ -38,8 +38,8 @@ describe('module exports', () => {
 describe('database lifecycle', () => {
   it('should create in-memory database', () => {
     const db = GrafeoDB.create()
-    expect(db.nodeCount).toBe(0)
-    expect(db.edgeCount).toBe(0)
+    expect(db.nodeCount()).toBe(0)
+    expect(db.edgeCount()).toBe(0)
     db.close()
   })
 
@@ -52,12 +52,12 @@ describe('database lifecycle', () => {
 
     const db = GrafeoDB.create(dbPath)
     db.createNode(['Test'], { val: 42 })
-    expect(db.nodeCount).toBe(1)
+    expect(db.nodeCount()).toBe(1)
     db.close()
 
     // Reopen
     const db2 = GrafeoDB.open(dbPath)
-    expect(db2.nodeCount).toBe(1)
+    expect(db2.nodeCount()).toBe(1)
     db2.close()
 
     // Cleanup — best-effort; Windows may hold WAL file locks briefly after close
@@ -83,7 +83,7 @@ describe('node CRUD', () => {
     const node = db.createNode(['Person'])
     expect(node.id).toBeGreaterThanOrEqual(0)
     expect(node.labels).toEqual(['Person'])
-    expect(db.nodeCount).toBe(1)
+    expect(db.nodeCount()).toBe(1)
   })
 
   it('should create a node with multiple labels', () => {
@@ -93,17 +93,17 @@ describe('node CRUD', () => {
   })
 
   it('should create a node with properties', () => {
-    const node = db.createNode(['Person'], { name: 'Alice', age: 30 })
-    expect(node.get('name')).toBe('Alice')
+    const node = db.createNode(['Person'], { name: 'Alix', age: 30 })
+    expect(node.get('name')).toBe('Alix')
     expect(node.get('age')).toBe(30)
   })
 
   it('should get a node by ID', () => {
-    const created = db.createNode(['Person'], { name: 'Alice' })
+    const created = db.createNode(['Person'], { name: 'Alix' })
     const fetched = db.getNode(created.id)
     expect(fetched).not.toBeNull()
     expect(fetched.id).toBe(created.id)
-    expect(fetched.get('name')).toBe('Alice')
+    expect(fetched.get('name')).toBe('Alix')
   })
 
   it('should return null for nonexistent node', () => {
@@ -114,7 +114,7 @@ describe('node CRUD', () => {
     const node = db.createNode(['Person'])
     expect(db.deleteNode(node.id)).toBe(true)
     expect(db.getNode(node.id)).toBeNull()
-    expect(db.nodeCount).toBe(0)
+    expect(db.nodeCount()).toBe(0)
   })
 
   it('should return false when deleting nonexistent node', () => {
@@ -137,30 +137,30 @@ describe('node CRUD', () => {
 // ── Edge CRUD ────────────────────────────────────────────────────────
 
 describe('edge CRUD', () => {
-  let db, alice, bob
+  let db, alix, gus
 
   beforeEach(() => {
     db = GrafeoDB.create()
-    alice = db.createNode(['Person'], { name: 'Alice' })
-    bob = db.createNode(['Person'], { name: 'Bob' })
+    alix = db.createNode(['Person'], { name: 'Alix' })
+    gus = db.createNode(['Person'], { name: 'Gus' })
   })
 
   it('should create an edge', () => {
-    const edge = db.createEdge(alice.id, bob.id, 'KNOWS')
+    const edge = db.createEdge(alix.id, gus.id, 'KNOWS')
     expect(edge.id).toBeGreaterThanOrEqual(0)
     expect(edge.edgeType).toBe('KNOWS')
-    expect(edge.sourceId).toBe(alice.id)
-    expect(edge.targetId).toBe(bob.id)
-    expect(db.edgeCount).toBe(1)
+    expect(edge.sourceId).toBe(alix.id)
+    expect(edge.targetId).toBe(gus.id)
+    expect(db.edgeCount()).toBe(1)
   })
 
   it('should create an edge with properties', () => {
-    const edge = db.createEdge(alice.id, bob.id, 'KNOWS', { since: 2020 })
+    const edge = db.createEdge(alix.id, gus.id, 'KNOWS', { since: 2020 })
     expect(edge.get('since')).toBe(2020)
   })
 
   it('should get an edge by ID', () => {
-    const created = db.createEdge(alice.id, bob.id, 'KNOWS', { weight: 0.5 })
+    const created = db.createEdge(alix.id, gus.id, 'KNOWS', { weight: 0.5 })
     const fetched = db.getEdge(created.id)
     expect(fetched).not.toBeNull()
     expect(fetched.edgeType).toBe('KNOWS')
@@ -172,14 +172,14 @@ describe('edge CRUD', () => {
   })
 
   it('should delete an edge', () => {
-    const edge = db.createEdge(alice.id, bob.id, 'KNOWS')
+    const edge = db.createEdge(alix.id, gus.id, 'KNOWS')
     expect(db.deleteEdge(edge.id)).toBe(true)
     expect(db.getEdge(edge.id)).toBeNull()
-    expect(db.edgeCount).toBe(0)
+    expect(db.edgeCount()).toBe(0)
   })
 
   it('should toString produce readable output', () => {
-    const edge = db.createEdge(alice.id, bob.id, 'KNOWS')
+    const edge = db.createEdge(alix.id, gus.id, 'KNOWS')
     const str = edge.toString()
     expect(str).toContain('KNOWS')
   })
@@ -196,16 +196,16 @@ describe('properties', () => {
 
   it('should set and get node property', () => {
     const node = db.createNode(['Person'])
-    db.setNodeProperty(node.id, 'name', 'Alice')
+    db.setNodeProperty(node.id, 'name', 'Alix')
     const updated = db.getNode(node.id)
-    expect(updated.get('name')).toBe('Alice')
+    expect(updated.get('name')).toBe('Alix')
   })
 
   it('should overwrite node property', () => {
-    const node = db.createNode(['Person'], { name: 'Alice' })
-    db.setNodeProperty(node.id, 'name', 'Bob')
+    const node = db.createNode(['Person'], { name: 'Alix' })
+    db.setNodeProperty(node.id, 'name', 'Gus')
     const updated = db.getNode(node.id)
-    expect(updated.get('name')).toBe('Bob')
+    expect(updated.get('name')).toBe('Gus')
   })
 
   it('should set and get edge property', () => {
@@ -238,9 +238,9 @@ describe('properties', () => {
   })
 
   it('should return all properties as object', () => {
-    const node = db.createNode(['Person'], { name: 'Alice', age: 30 })
+    const node = db.createNode(['Person'], { name: 'Alix', age: 30 })
     const props = node.properties()
-    expect(props.name).toBe('Alice')
+    expect(props.name).toBe('Alix')
     expect(props.age).toBe(30)
   })
 })
@@ -250,8 +250,8 @@ describe('properties', () => {
 describe('GQL queries', () => {
   it('should execute INSERT and MATCH', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-    await db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name, p.age')
 
     expect(result.length).toBe(2)
@@ -259,14 +259,14 @@ describe('GQL queries', () => {
 
     const rows = result.toArray()
     const names = rows.map((r) => r[result.columns[0]])
-    expect(names).toContain('Alice')
-    expect(names).toContain('Bob')
+    expect(names).toContain('Alix')
+    expect(names).toContain('Gus')
   })
 
   it('should execute with parameters', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-    await db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     const result = await db.execute(
       'MATCH (p:Person) WHERE p.age > $minAge RETURN p.name',
       { minAge: 28 }
@@ -274,14 +274,14 @@ describe('GQL queries', () => {
 
     expect(result.length).toBe(1)
     const name = result.scalar()
-    expect(name).toBe('Alice')
+    expect(name).toBe('Alix')
   })
 
   it('should return scalar value', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice'})")
+    await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
-    expect(result.scalar()).toBe('Alice')
+    expect(result.scalar()).toBe('Alix')
   })
 
   it('should return execution time', async () => {
@@ -294,27 +294,27 @@ describe('GQL queries', () => {
   it('should match relationships', async () => {
     const { db } = seedDb()
     const result = await db.execute(
-      "MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.name = 'Alice' RETURN b.name"
+      "MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.name = 'Alix' RETURN b.name"
     )
     expect(result.length).toBe(1)
-    expect(result.scalar()).toBe('Bob')
+    expect(result.scalar()).toBe('Gus')
   })
 
   it('should return rows as arrays', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice'})")
+    await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     const rows = result.rows()
     expect(rows.length).toBe(1)
-    expect(rows[0][0]).toBe('Alice')
+    expect(rows[0][0]).toBe('Alix')
   })
 
   it('should get row by index', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice'})")
+    await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     const row = result.get(0)
-    expect(Object.values(row)).toContain('Alice')
+    expect(Object.values(row)).toContain('Alix')
   })
 
   it('should throw on invalid query', async () => {
@@ -352,27 +352,27 @@ describe('transactions', () => {
     const tx = db.beginTransaction()
     expect(tx.isActive).toBe(true)
 
-    await tx.execute("INSERT (:Person {name: 'Alice'})")
+    await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
 
     expect(tx.isActive).toBe(false)
-    expect(db.nodeCount).toBe(1)
+    expect(db.nodeCount()).toBe(1)
   })
 
   it('should rollback transaction', async () => {
     const db = GrafeoDB.create()
     const tx = db.beginTransaction()
-    await tx.execute("INSERT (:Person {name: 'Alice'})")
+    await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.rollback()
 
     expect(tx.isActive).toBe(false)
-    expect(db.nodeCount).toBe(0)
+    expect(db.nodeCount()).toBe(0)
   })
 
   it('should error on double commit', async () => {
     const db = GrafeoDB.create()
     const tx = db.beginTransaction()
-    await tx.execute("INSERT (:Person {name: 'Alice'})")
+    await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
     expect(() => tx.commit()).toThrow(/Already committed/)
   })
@@ -387,18 +387,18 @@ describe('transactions', () => {
   it('should execute multiple operations', async () => {
     const db = GrafeoDB.create()
     const tx = db.beginTransaction()
-    await tx.execute("INSERT (:Person {name: 'Alice'})")
-    await tx.execute("INSERT (:Person {name: 'Bob'})")
-    await tx.execute("INSERT (:Person {name: 'Charlie'})")
+    await tx.execute("INSERT (:Person {name: 'Alix'})")
+    await tx.execute("INSERT (:Person {name: 'Gus'})")
+    await tx.execute("INSERT (:Person {name: 'Vincent'})")
     tx.commit()
 
-    expect(db.nodeCount).toBe(3)
+    expect(db.nodeCount()).toBe(3)
   })
 
   it('should execute with parameters in transaction', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-    await db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 
     const tx = db.beginTransaction()
     const result = await tx.execute(
@@ -408,7 +408,7 @@ describe('transactions', () => {
     tx.commit()
 
     expect(result.length).toBe(1)
-    expect(result.scalar()).toBe('Alice')
+    expect(result.scalar()).toBe('Alix')
   })
 })
 
@@ -431,9 +431,9 @@ describe('QueryResult metadata', () => {
     const nodes = result.nodes()
     expect(nodes.length).toBe(3)
     const names = nodes.map((n) => n.get('name'))
-    expect(names).toContain('Alice')
-    expect(names).toContain('Bob')
-    expect(names).toContain('Charlie')
+    expect(names).toContain('Alix')
+    expect(names).toContain('Gus')
+    expect(names).toContain('Vincent')
   })
 
   it('should return edges() accessor without error', async () => {
@@ -460,7 +460,7 @@ describe('QueryResult metadata', () => {
 
   it('should return empty nodes/edges for scalar queries', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice'})")
+    await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     expect(result.nodes().length).toBe(0)
     expect(result.edges().length).toBe(0)
@@ -564,21 +564,21 @@ describe('advanced type round-trips', () => {
 describe('Cypher queries', () => {
   it('should execute Cypher CREATE and MATCH', async () => {
     const db = GrafeoDB.create()
-    await db.executeCypher("CREATE (a:Person {name: 'Alice'})")
+    await db.executeCypher("CREATE (a:Person {name: 'Alix'})")
     const result = await db.executeCypher('MATCH (p:Person) RETURN p.name')
-    expect(result.scalar()).toBe('Alice')
+    expect(result.scalar()).toBe('Alix')
   })
 
   it('should execute Cypher with parameters', async () => {
     const db = GrafeoDB.create()
-    await db.executeCypher("CREATE (:Person {name: 'Alice', age: 30})")
-    await db.executeCypher("CREATE (:Person {name: 'Bob', age: 25})")
+    await db.executeCypher("CREATE (:Person {name: 'Alix', age: 30})")
+    await db.executeCypher("CREATE (:Person {name: 'Gus', age: 25})")
     const result = await db.executeCypher(
       'MATCH (p:Person) WHERE p.age > $min RETURN p.name',
       { min: 28 }
     )
     expect(result.length).toBe(1)
-    expect(result.scalar()).toBe('Alice')
+    expect(result.scalar()).toBe('Alix')
   })
 })
 
@@ -587,8 +587,8 @@ describe('Cypher queries', () => {
 describe('Gremlin queries', () => {
   it('should execute basic Gremlin traversal', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice'})")
-    await db.execute("INSERT (:Person {name: 'Bob'})")
+    await db.execute("INSERT (:Person {name: 'Alix'})")
+    await db.execute("INSERT (:Person {name: 'Gus'})")
     const result = await db.executeGremlin(
       "g.V().hasLabel('Person').values('name')"
     )
@@ -614,10 +614,10 @@ describe('transaction edge cases', () => {
   it('should error on execute after commit', async () => {
     const db = GrafeoDB.create()
     const tx = db.beginTransaction()
-    await tx.execute("INSERT (:Person {name: 'Alice'})")
+    await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
     await expect(
-      tx.execute("INSERT (:Person {name: 'Bob'})")
+      tx.execute("INSERT (:Person {name: 'Gus'})")
     ).rejects.toThrow(/no longer active/)
   })
 
@@ -626,7 +626,7 @@ describe('transaction edge cases', () => {
     const tx = db.beginTransaction()
     tx.rollback()
     await expect(
-      tx.execute("INSERT (:Person {name: 'Alice'})")
+      tx.execute("INSERT (:Person {name: 'Alix'})")
     ).rejects.toThrow(/no longer active/)
   })
 
@@ -640,7 +640,7 @@ describe('transaction edge cases', () => {
   it('should error on rollback after commit', async () => {
     const db = GrafeoDB.create()
     const tx = db.beginTransaction()
-    await tx.execute("INSERT (:Person {name: 'Alice'})")
+    await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
     expect(() => tx.rollback()).toThrow(/Already committed/)
   })
@@ -670,13 +670,13 @@ describe('error handling', () => {
   })
 })
 
-// ── Counts / getters ─────────────────────────────────────────────────
+// ── Counts ──────────────────────────────────────────────────────────
 
-describe('database getters', () => {
+describe('database counts', () => {
   it('should track nodeCount and edgeCount', () => {
     const { db } = seedDb()
-    expect(db.nodeCount).toBe(4) // Alice, Bob, Charlie, Acme
-    expect(db.edgeCount).toBe(3) // knows1, knows2, worksAt
+    expect(db.nodeCount()).toBe(4) // Alix, Gus, Vincent, Acme
+    expect(db.edgeCount()).toBe(3) // knows1, knows2, worksAt
   })
 })
 
@@ -747,7 +747,7 @@ describe('vector operations', () => {
     ]
     const ids = await db.batchCreateNodes('Doc', 'embedding', vectors)
     expect(ids.length).toBe(3)
-    expect(db.nodeCount).toBe(3)
+    expect(db.nodeCount()).toBe(3)
     // All unique IDs
     expect(new Set(ids).size).toBe(3)
   })
@@ -837,8 +837,8 @@ describe('vector operations', () => {
 describe('GraphQL queries', () => {
   it('should execute basic GraphQL query', async () => {
     const db = GrafeoDB.create()
-    await db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-    await db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     const result = await db.executeGraphql('{ Person { name } }')
     expect(result.length).toBeGreaterThanOrEqual(1)
   })
@@ -940,7 +940,7 @@ describe('hybrid search', () => {
 describe('CDC operations', () => {
   it('should track node creation history', async () => {
     const db = GrafeoDB.create()
-    const node = db.createNode(['Person'], { name: 'Alice' })
+    const node = db.createNode(['Person'], { name: 'Alix' })
 
     const history = await db.nodeHistory(node.id)
     expect(history.length).toBeGreaterThanOrEqual(1)
@@ -948,7 +948,7 @@ describe('CDC operations', () => {
 
   it('should track node update history', async () => {
     const db = GrafeoDB.create()
-    const node = db.createNode(['Person'], { name: 'Alice' })
+    const node = db.createNode(['Person'], { name: 'Alix' })
     db.setNodeProperty(node.id, 'age', 30)
 
     const history = await db.nodeHistory(node.id)
@@ -967,8 +967,8 @@ describe('CDC operations', () => {
 
   it('should return changes between epochs', async () => {
     const db = GrafeoDB.create()
-    db.createNode(['Person'], { name: 'Alice' })
-    db.createNode(['Person'], { name: 'Bob' })
+    db.createNode(['Person'], { name: 'Alix' })
+    db.createNode(['Person'], { name: 'Gus' })
 
     const changes = await db.changesBetween(0, 1000)
     expect(changes.length).toBeGreaterThanOrEqual(2)
@@ -986,8 +986,8 @@ describe('CDC operations', () => {
 describe('admin operations', () => {
   it('should return node and edge counts', () => {
     const { db } = seedDb()
-    expect(db.nodeCount).toBeGreaterThan(0)
-    expect(db.edgeCount).toBeGreaterThan(0)
+    expect(db.nodeCount()).toBeGreaterThan(0)
+    expect(db.edgeCount()).toBeGreaterThan(0)
   })
 
   it('should close database without error', () => {

@@ -3,10 +3,7 @@
 //! The core MVCC types are defined in `grafeo-common` and re-exported here
 //! for convenience within the engine crate.
 
-// Re-export MVCC types from grafeo-common.
-// Note: Version is included for completeness even if not currently used in engine.
-#[allow(unused_imports)]
-pub use grafeo_common::mvcc::{Version, VersionChain, VersionInfo};
+pub use grafeo_common::mvcc::{VersionChain, VersionInfo};
 
 #[cfg(test)]
 mod tests {

@@ -23,7 +23,7 @@ Pattern matching is the core of GQL. This guide covers node and edge patterns in
 (e:Person:Employee)
 
 -- Node with properties
-(p:Person {name: 'Alice'})
+(p:Person {name: 'Alix'})
 
 -- Anonymous node (no variable)
 (:Person)
@@ -62,6 +62,20 @@ RETURN a.name, b.name, c.name
 -- Triangle pattern
 MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c)-[:KNOWS]->(a)
 RETURN a.name, b.name, c.name
+```
+
+## Path Alternation
+
+Use `|` for set alternation (dedup) or `|+|` for multiset alternation (preserves duplicates):
+
+```sql
+-- Set alternation: match KNOWS or WORKS_WITH edges (dedup)
+MATCH ((a)-[:KNOWS]->(b) | (a)-[:WORKS_WITH]->(b))
+RETURN a.name, b.name
+
+-- Multiset alternation: preserve duplicates across alternatives
+MATCH ((a)-[:KNOWS]->(b) |+| (a)-[:KNOWS]->(b))
+RETURN a.name, b.name
 ```
 
 ## Multiple Relationship Types
@@ -123,6 +137,32 @@ MATCH (n IS %) RETURN n.name
 MATCH (n IS (Person | Company) & !Inactive) RETURN n.name
 ```
 
+## Simplified Path Patterns
+
+The ISO standard provides a shorthand syntax using `/` delimiters instead of brackets:
+
+```sql
+-- Outgoing: -/:Label/-> is equivalent to -[:Label]->
+MATCH (a:Person)-/:KNOWS/->(b:Person)
+RETURN b.name
+
+-- Incoming: <-/:Label/- is equivalent to <-[:Label]-
+MATCH (b:Person)<-/:KNOWS/-(a:Person)
+RETURN a.name
+
+-- Undirected: -/:Label/- is equivalent to -[:Label]-
+MATCH (a:Person)-/:KNOWS/-(b:Person)
+RETURN b.name
+
+-- Multiple label alternatives: -/:L1|L2/->
+MATCH (a:Person)-/:KNOWS|WORKS_WITH/->(b)
+RETURN b.name
+
+-- Tilde form: ~/:Label/~
+MATCH (a:Person)~/:KNOWS/~(b:Person)
+RETURN b.name
+```
+
 ## ISO Tilde Syntax (Undirected Edges)
 
 The ISO standard uses tilde (`~`) for undirected edges, as an alternative to the Cypher-style `-[]-`:
@@ -179,32 +219,32 @@ Path search prefixes control how many matching paths are returned.
 ```sql
 -- ANY: return any single matching path
 MATCH ANY (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN a, b
 
 -- ANY k: return up to k paths
 MATCH ANY 3 (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 RETURN b.name
 
 -- ALL SHORTEST: all paths of minimum length
 MATCH ALL SHORTEST (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN a, b
 
 -- ANY SHORTEST: any one shortest path
 MATCH ANY SHORTEST (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN a, b
 
 -- SHORTEST k: the k shortest paths
 MATCH SHORTEST 3 (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN a, b
 
 -- SHORTEST k GROUPS: k groups of equal-length shortest paths
 MATCH SHORTEST 2 GROUPS (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN a, b
 ```
 
@@ -222,22 +262,22 @@ Path modes restrict which paths are valid during traversal. Place the mode keywo
 ```sql
 -- WALK (default): allow cycles
 MATCH WALK (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 RETURN b.name
 
 -- TRAIL: each edge visited at most once
 MATCH TRAIL (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 RETURN b.name
 
 -- SIMPLE: each node visited at most once (except endpoints)
 MATCH SIMPLE (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 RETURN b.name
 
 -- ACYCLIC: strictly no repeated nodes
 MATCH ACYCLIC (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 RETURN b.name
 ```
 

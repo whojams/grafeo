@@ -14,13 +14,13 @@ Nodes are the fundamental entities in a graph. Each node can have one or more la
 
 ```sql
 -- Create a node with a single label
-INSERT (:Person {name: 'Alice', age: 30})
+INSERT (:Person {name: 'Alix', age: 30})
 
 -- Create a node with multiple labels
-INSERT (:Person:Employee {name: 'Bob', department: 'Engineering'})
+INSERT (:Person:Employee {name: 'Gus', department: 'Engineering'})
 
 -- Create multiple nodes
-INSERT (:Person {name: 'Carol'})
+INSERT (:Person {name: 'Harm'})
 INSERT (:Person {name: 'Dave'})
 ```
 
@@ -44,9 +44,9 @@ Nodes can have any number of properties:
 
 ```sql
 INSERT (:Person {
-    name: 'Alice',
+    name: 'Alix',
     age: 30,
-    email: 'alice@example.com',
+    email: 'alix@example.com',
     active: true,
     scores: [95, 87, 92]
 })
@@ -56,11 +56,11 @@ INSERT (:Person {
 
 ```sql
 -- Add or update properties
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 SET p.age = 31, p.updated_at = '2024-01-15'
 
 -- Remove a property
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 REMOVE p.email
 ```
 
@@ -68,10 +68,10 @@ REMOVE p.email
 
 ```sql
 -- Delete a node (must have no edges)
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 DELETE p
 
 -- Delete a node and all its edges
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 DETACH DELETE p
 ```

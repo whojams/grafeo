@@ -285,6 +285,12 @@ nav:
       - Knowledge Graph: tutorials/knowledge-graph.md
       - Recommendation Engine: tutorials/recommendations.md
       - Fraud Detection: tutorials/fraud-detection.md
+    - Interactive Examples:
+      - tutorials/examples/index.md
+      - Graph Visualization: tutorials/examples/graph-visualization.md
+      - Vector Search: tutorials/examples/vector-search.md
+      - Fraud Detection: tutorials/examples/fraud-detection-example.md
+      - NetworkX Integration: tutorials/examples/networkx-integration.md
 
   - Architecture:
     - architecture/index.md

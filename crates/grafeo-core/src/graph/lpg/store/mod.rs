@@ -44,6 +44,7 @@ use crate::index::vector::HnswIndex;
 
 #[cfg(feature = "tiered-storage")]
 use crate::storage::EpochStore;
+use grafeo_common::memory::arena::AllocError;
 #[cfg(feature = "tiered-storage")]
 use grafeo_common::memory::arena::ArenaAllocator;
 #[cfg(feature = "tiered-storage")]
@@ -135,16 +136,16 @@ impl Default for LpgStoreConfig {
 /// use grafeo_core::graph::lpg::LpgStore;
 /// use grafeo_core::graph::Direction;
 ///
-/// let store = LpgStore::new();
+/// let store = LpgStore::new().expect("arena allocation");
 ///
 /// // Create a small social network
-/// let alice = store.create_node(&["Person"]);
-/// let bob = store.create_node(&["Person"]);
-/// store.create_edge(alice, bob, "KNOWS");
+/// let alix = store.create_node(&["Person"]);
+/// let gus = store.create_node(&["Person"]);
+/// store.create_edge(alix, gus, "KNOWS");
 ///
 /// // Traverse outgoing edges
-/// for neighbor in store.neighbors(alice, Direction::Outgoing) {
-///     println!("Alice knows node {:?}", neighbor);
+/// for neighbor in store.neighbors(alix, Direction::Outgoing) {
+///     println!("Alix knows node {:?}", neighbor);
 /// }
 /// ```
 ///
@@ -326,27 +327,37 @@ pub struct LpgStore {
 
 impl LpgStore {
     /// Creates a new LPG store with default configuration.
-    #[must_use]
-    pub fn new() -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the arena allocator cannot be initialized
+    /// (only possible with the `tiered-storage` feature).
+    // FIXME: propagate Result to callers
+    pub fn new() -> Result<Self, AllocError> {
         Self::with_config(LpgStoreConfig::default())
     }
 
     /// Creates a new LPG store with custom configuration.
-    #[must_use]
-    pub fn with_config(config: LpgStoreConfig) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the arena allocator cannot be initialized
+    /// (only possible with the `tiered-storage` feature).
+    // FIXME: propagate Result to callers
+    pub fn with_config(config: LpgStoreConfig) -> Result<Self, AllocError> {
         let backward_adj = if config.backward_edges {
             Some(ChunkedAdjacency::new())
         } else {
             None
         };
 
-        Self {
+        Ok(Self {
             #[cfg(not(feature = "tiered-storage"))]
             nodes: RwLock::new(FxHashMap::default()),
             #[cfg(not(feature = "tiered-storage"))]
             edges: RwLock::new(FxHashMap::default()),
             #[cfg(feature = "tiered-storage")]
-            arena_allocator: Arc::new(ArenaAllocator::new()),
+            arena_allocator: Arc::new(ArenaAllocator::new()?),
             #[cfg(feature = "tiered-storage")]
             node_versions: RwLock::new(FxHashMap::default()),
             #[cfg(feature = "tiered-storage")]
@@ -378,7 +389,7 @@ impl LpgStore {
             needs_stats_recompute: AtomicBool::new(false),
             named_graphs: RwLock::new(FxHashMap::default()),
             config,
-        }
+        })
     }
 
     /// Returns the current epoch.
@@ -480,29 +491,41 @@ impl LpgStore {
     }
 
     /// Returns a named graph, creating it if it does not exist.
-    pub fn graph_or_create(&self, name: &str) -> Arc<LpgStore> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if a new store cannot be allocated.
+    // FIXME: propagate Result to callers
+    pub fn graph_or_create(&self, name: &str) -> Result<Arc<LpgStore>, AllocError> {
         {
             let graphs = self.named_graphs.read();
             if let Some(g) = graphs.get(name) {
-                return Arc::clone(g);
+                return Ok(Arc::clone(g));
             }
         }
         let mut graphs = self.named_graphs.write();
         // Double-check after acquiring write lock
-        graphs
-            .entry(name.to_string())
-            .or_insert_with(|| Arc::new(LpgStore::new()))
-            .clone()
+        if let Some(g) = graphs.get(name) {
+            return Ok(Arc::clone(g));
+        }
+        let store = Arc::new(LpgStore::new()?);
+        graphs.insert(name.to_string(), Arc::clone(&store));
+        Ok(store)
     }
 
-    /// Creates a named graph. Returns `false` if it already exists.
-    pub fn create_graph(&self, name: &str) -> bool {
+    /// Creates a named graph. Returns `true` on success, `false` if it already exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the new store cannot be allocated.
+    // FIXME: propagate Result to callers
+    pub fn create_graph(&self, name: &str) -> Result<bool, AllocError> {
         let mut graphs = self.named_graphs.write();
         if graphs.contains_key(name) {
-            return false;
+            return Ok(false);
         }
-        graphs.insert(name.to_string(), Arc::new(LpgStore::new()));
-        true
+        graphs.insert(name.to_string(), Arc::new(LpgStore::new()?));
+        Ok(true)
     }
 
     /// Drops a named graph. Returns `false` if it did not exist.
@@ -536,18 +559,21 @@ impl LpgStore {
 
     /// Copies all data from the source graph to the destination graph.
     /// Creates the destination graph if it does not exist.
-    pub fn copy_graph(&self, source: Option<&str>, dest: Option<&str>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the destination store cannot be allocated.
+    // FIXME: propagate Result to callers
+    pub fn copy_graph(&self, source: Option<&str>, dest: Option<&str>) -> Result<(), AllocError> {
         let _src = match source {
             Some(n) => self.graph(n),
             None => None, // default graph
         };
-        let _dest_graph = match dest {
-            Some(n) => Some(self.graph_or_create(n)),
-            None => None, // copy into default graph
-        };
+        let _dest_graph = dest.map(|n| self.graph_or_create(n)).transpose()?;
         // Full graph copy is complex (requires iterating all entities).
         // For now, this creates the destination graph structure.
         // Full entity-level copy will be implemented when needed.
+        Ok(())
     }
 
     // === Internal Helpers ===
@@ -627,6 +653,7 @@ impl LpgStore {
 
 impl Default for LpgStore {
     fn default() -> Self {
-        Self::new()
+        // FIXME: propagate Result to callers (Default trait cannot return Result)
+        Self::new().expect("failed to allocate arena for default LpgStore")
     }
 }

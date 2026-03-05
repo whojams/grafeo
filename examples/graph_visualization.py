@@ -41,35 +41,35 @@ def __():
     db = GrafeoDB()
 
     # Create some people
-    alice = db.create_node(["Person"], {"name": "Alice", "age": 30, "city": "Seattle"})
-    bob = db.create_node(["Person"], {"name": "Bob", "age": 35, "city": "Portland"})
-    carol = db.create_node(["Person"], {"name": "Carol", "age": 28, "city": "Seattle"})
+    alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "Utrecht"})
+    gus = db.create_node(["Person"], {"name": "Gus", "age": 35, "city": "Leiden"})
+    Jules = db.create_node(["Person"], {"name": "Jules", "age": 28, "city": "Utrecht"})
     dave = db.create_node(
         ["Person"], {"name": "Dave", "age": 40, "city": "San Francisco"}
     )
-    eve = db.create_node(["Person"], {"name": "Eve", "age": 32, "city": "Portland"})
+    eve = db.create_node(["Person"], {"name": "Eve", "age": 32, "city": "Leiden"})
 
     # Create some companies
-    acme = db.create_node(["Company"], {"name": "Acme Corp", "industry": "Tech"})
-    globex = db.create_node(["Company"], {"name": "Globex Inc", "industry": "Finance"})
+    acme = db.create_node(["Company"], {"name": "Grafeo", "industry": "Tech"})
+    globex = db.create_node(["Company"], {"name": "Big Bank", "industry": "Finance"})
 
     # Create relationships
-    db.create_edge(alice.id, bob.id, "KNOWS", {"since": 2020})
-    db.create_edge(alice.id, carol.id, "KNOWS", {"since": 2019})
-    db.create_edge(bob.id, carol.id, "KNOWS", {"since": 2021})
-    db.create_edge(bob.id, dave.id, "KNOWS", {"since": 2018})
-    db.create_edge(carol.id, eve.id, "KNOWS", {"since": 2022})
+    db.create_edge(alix.id, gus.id, "KNOWS", {"since": 2020})
+    db.create_edge(alix.id, Jules.id, "KNOWS", {"since": 2019})
+    db.create_edge(gus.id, Jules.id, "KNOWS", {"since": 2021})
+    db.create_edge(gus.id, dave.id, "KNOWS", {"since": 2018})
+    db.create_edge(Jules.id, eve.id, "KNOWS", {"since": 2022})
     db.create_edge(dave.id, eve.id, "KNOWS", {"since": 2020})
 
     # Employment relationships
-    db.create_edge(alice.id, acme.id, "WORKS_AT", {"role": "Engineer"})
-    db.create_edge(bob.id, acme.id, "WORKS_AT", {"role": "Manager"})
-    db.create_edge(carol.id, globex.id, "WORKS_AT", {"role": "Analyst"})
+    db.create_edge(alix.id, acme.id, "WORKS_AT", {"role": "Engineer"})
+    db.create_edge(gus.id, acme.id, "WORKS_AT", {"role": "Manager"})
+    db.create_edge(Jules.id, globex.id, "WORKS_AT", {"role": "Analyst"})
     db.create_edge(dave.id, globex.id, "WORKS_AT", {"role": "Director"})
     db.create_edge(eve.id, acme.id, "WORKS_AT", {"role": "Designer"})
 
     print(f"Created {db.node_count} nodes and {db.edge_count} edges")
-    return acme, alice, bob, carol, dave, db, eve, globex
+    return acme, alix, gus, Jules, dave, db, eve, globex
 
 
 @app.cell
@@ -77,14 +77,14 @@ def __(db, mo):
     # Query to find friends of friends
     result = db.execute("""
         MATCH (p:Person)-[:KNOWS]->(friend)-[:KNOWS]->(fof:Person)
-        WHERE p.name = 'Alice' AND p <> fof
+        WHERE p.name = 'Alix' AND p <> fof
         RETURN DISTINCT p.name as person, fof.name as friend_of_friend
     """)
 
     mo.md(f"""
     ## Friends of Friends Query
 
-    Finding Alice's friends-of-friends:
+    Finding Alix's friends-of-friends:
 
     | Person | Friend of Friend |
     |--------|-----------------|
@@ -223,18 +223,18 @@ def __(db, mo):
     # Shortest paths
     shortest_paths_text = []
 
-    # Find paths between Seattle people
-    seattle_result = db.execute("""
+    # Find paths between Utrecht people
+    utrecht_result = db.execute("""
         MATCH (p:Person)
-        WHERE p.city = 'Seattle'
+        WHERE p.city = 'Utrecht'
         RETURN p.name as name, id(p) as id
     """)
 
-    seattle_people = [(row["name"], row["id"]) for row in seattle_result]
+    utrecht_people = [(row["name"], row["id"]) for row in utrecht_result]
 
-    if len(seattle_people) >= 2:
-        name1, id1 = seattle_people[0]
-        name2, id2 = seattle_people[1]
+    if len(utrecht_people) >= 2:
+        name1, id1 = utrecht_people[0]
+        name2, id2 = utrecht_people[1]
         distances = db.algorithms.dijkstra(id1)
         if id2 in distances:
             shortest_paths_text.append(
@@ -244,7 +244,7 @@ def __(db, mo):
     mo.md(f"""
     ## Path Analysis
 
-    Analyzing connections between Seattle residents:
+    Analyzing connections between Utrecht residents:
 
     {chr(10).join(shortest_paths_text) if shortest_paths_text else "No paths found"}
     """)
@@ -254,8 +254,8 @@ def __(db, mo):
         id2,
         name1,
         name2,
-        seattle_people,
-        seattle_result,
+        utrecht_people,
+        utrecht_result,
         shortest_paths_text,
     )
 

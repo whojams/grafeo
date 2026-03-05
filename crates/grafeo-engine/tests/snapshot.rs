@@ -45,10 +45,10 @@ fn export_import_preserves_nodes() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
     session
-        .execute("INSERT (:Person {name: 'Alice', age: 30})")
+        .execute("INSERT (:Person {name: 'Alix', age: 30})")
         .unwrap();
     session
-        .execute("INSERT (:Person {name: 'Bob', age: 25})")
+        .execute("INSERT (:Person {name: 'Gus', age: 25})")
         .unwrap();
 
     let bytes = db.export_snapshot().unwrap();
@@ -66,11 +66,11 @@ fn export_import_preserves_nodes() {
 #[test]
 fn export_import_preserves_edges() {
     let db = GrafeoDB::new_in_memory();
-    let alice = db.create_node(&["Person"]);
-    db.set_node_property(alice, "name", "Alice".into());
-    let bob = db.create_node(&["Person"]);
-    db.set_node_property(bob, "name", "Bob".into());
-    db.create_edge(alice, bob, "KNOWS");
+    let alix = db.create_node(&["Person"]);
+    db.set_node_property(alix, "name", "Alix".into());
+    let gus = db.create_node(&["Person"]);
+    db.set_node_property(gus, "name", "Gus".into());
+    db.create_edge(alix, gus, "KNOWS");
 
     let bytes = db.export_snapshot().unwrap();
     let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
@@ -112,11 +112,11 @@ fn import_rejects_invalid_data() {
 #[test]
 fn snapshot_round_trip_schema() {
     let db = GrafeoDB::new_in_memory();
-    let alice = db.create_node(&["Person"]);
-    db.set_node_property(alice, "name", "Alice".into());
-    let bob = db.create_node(&["Person"]);
-    db.set_node_property(bob, "name", "Bob".into());
-    db.create_edge(alice, bob, "KNOWS");
+    let alix = db.create_node(&["Person"]);
+    db.set_node_property(alix, "name", "Alix".into());
+    let gus = db.create_node(&["Person"]);
+    db.set_node_property(gus, "name", "Gus".into());
+    db.create_edge(alix, gus, "KNOWS");
 
     let schema_before = db.schema();
     let bytes = db.export_snapshot().unwrap();
@@ -340,7 +340,7 @@ fn import_rejects_unsupported_version() {
     // "unsupported snapshot version" error path.
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
-    session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
     let mut bytes = db.export_snapshot().unwrap();
     // The first byte in bincode standard encoding for a struct starting with
@@ -368,7 +368,7 @@ fn import_rejects_unsupported_version() {
 fn double_export_is_deterministic() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
-    session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
     let bytes1 = db.export_snapshot().unwrap();
     let bytes2 = db.export_snapshot().unwrap();

@@ -17,13 +17,13 @@ These steps traverse edges and return the adjacent vertices:
 
 ```gremlin
 // Outgoing neighbors (follow outgoing edges)
-g.V().has('name', 'Alice').out('KNOWS')
+g.V().has('name', 'Alix').out('KNOWS')
 
 // Incoming neighbors (follow incoming edges)
-g.V().has('name', 'Bob').in('KNOWS')
+g.V().has('name', 'Gus').in('KNOWS')
 
 // Both directions
-g.V().has('name', 'Alice').both('KNOWS')
+g.V().has('name', 'Alix').both('KNOWS')
 ```
 
 ### Without Edge Label
@@ -32,13 +32,13 @@ Omit the label to traverse all edge types:
 
 ```gremlin
 // All outgoing neighbors regardless of edge type
-g.V().has('name', 'Alice').out()
+g.V().has('name', 'Alix').out()
 
 // All incoming neighbors
-g.V().has('name', 'Alice').in()
+g.V().has('name', 'Alix').in()
 
 // All neighbors in both directions
-g.V().has('name', 'Alice').both()
+g.V().has('name', 'Alix').both()
 ```
 
 ## Vertex-to-Edge Steps
@@ -47,13 +47,13 @@ These steps return the edge elements themselves, not the adjacent vertices:
 
 ```gremlin
 // Outgoing edges
-g.V().has('name', 'Alice').outE('KNOWS')
+g.V().has('name', 'Alix').outE('KNOWS')
 
 // Incoming edges
-g.V().has('name', 'Bob').inE('KNOWS')
+g.V().has('name', 'Gus').inE('KNOWS')
 
 // Edges in both directions
-g.V().has('name', 'Alice').bothE('KNOWS')
+g.V().has('name', 'Alix').bothE('KNOWS')
 ```
 
 ### Accessing Edge Properties
@@ -62,7 +62,7 @@ Once edges are obtained, their properties can be accessed:
 
 ```gremlin
 // Get the 'since' property of outgoing KNOWS edges
-g.V().has('name', 'Alice').outE('KNOWS').values('since')
+g.V().has('name', 'Alix').outE('KNOWS').values('since')
 ```
 
 ## Edge-to-Vertex Steps
@@ -71,16 +71,16 @@ When traversing edges, use these steps to reach the connected vertices:
 
 ```gremlin
 // Source vertex of an edge
-g.V().has('name', 'Alice').outE('KNOWS').outV()
+g.V().has('name', 'Alix').outE('KNOWS').outV()
 
 // Target vertex of an edge
-g.V().has('name', 'Alice').outE('KNOWS').inV()
+g.V().has('name', 'Alix').outE('KNOWS').inV()
 
 // Both endpoints
-g.V().has('name', 'Alice').outE('KNOWS').bothV()
+g.V().has('name', 'Alix').outE('KNOWS').bothV()
 
 // The "other" vertex (not the one you came from)
-g.V().has('name', 'Alice').outE('KNOWS').otherV()
+g.V().has('name', 'Alix').outE('KNOWS').otherV()
 ```
 
 ## Chaining Traversals
@@ -89,13 +89,13 @@ Chain multiple steps for multi-hop traversals:
 
 ```gremlin
 // Friends of friends
-g.V().has('name', 'Alice').out('KNOWS').out('KNOWS')
+g.V().has('name', 'Alix').out('KNOWS').out('KNOWS')
 
 // Friends of friends (unique)
-g.V().has('name', 'Alice').out('KNOWS').out('KNOWS').dedup()
+g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').dedup()
 
-// People who work at companies Alice's friends work at
-g.V().has('name', 'Alice')
+// People who work at companies Alix's friends work at
+g.V().has('name', 'Alix')
     .out('KNOWS')
     .out('WORKS_AT')
     .in('WORKS_AT')
@@ -107,11 +107,11 @@ g.V().has('name', 'Alice')
 Combine traversal with filter steps:
 
 ```gremlin
-// Friends of Alice who are over 30
-g.V().has('name', 'Alice').out('KNOWS').has('age', P.gt(30))
+// Friends of Alix who are over 30
+g.V().has('name', 'Alix').out('KNOWS').has('age', P.gt(30))
 
 // Outgoing KNOWS edges created after 2020
-g.V().has('name', 'Alice').outE('KNOWS').has('since', P.gt(2020)).inV()
+g.V().has('name', 'Alix').outE('KNOWS').has('since', P.gt(2020)).inV()
 ```
 
 ## Python Example
@@ -122,29 +122,29 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create a social graph
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
-db.execute("INSERT (:Person {name: 'Charlie', age: 35})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
+db.execute("INSERT (:Person {name: 'Vincent', age: 35})")
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS {since: 2020}]->(b)
 """)
 db.execute("""
-    MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'})
+    MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'})
     INSERT (b)-[:KNOWS {since: 2021}]->(c)
 """)
 
 # Direct friends
-friends = db.execute_gremlin("g.V().has('name', 'Alice').out('KNOWS').values('name')")
+friends = db.execute_gremlin("g.V().has('name', 'Alix').out('KNOWS').values('name')")
 for row in friends:
-    print(row)  # Bob
+    print(row)  # Gus
 
 # Friends of friends
 fof = db.execute_gremlin(
-    "g.V().has('name', 'Alice').out('KNOWS').out('KNOWS').values('name')"
+    "g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').values('name')"
 )
 for row in fof:
-    print(row)  # Charlie
+    print(row)  # Vincent
 ```
 
 ## Step Reference

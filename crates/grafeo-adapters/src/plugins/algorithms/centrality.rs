@@ -183,9 +183,7 @@ pub fn pagerank(
 
         // Reset new scores with teleportation and dangling contribution
         let teleport = (1.0 - damping) / n as f64;
-        for score in &mut new_scores {
-            *score = teleport + dangling_contrib;
-        }
+        new_scores.fill(teleport + dangling_contrib);
 
         // Add contributions from incoming edges
         for (i, edges) in out_edges.iter().enumerate() {
@@ -649,7 +647,7 @@ mod tests {
     use super::*;
 
     fn create_test_graph() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Create a simple graph:
         //   0 -> 1 -> 2
@@ -675,7 +673,7 @@ mod tests {
         // Simple graph for PageRank testing
         // A -> B -> C
         // A -> C
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -732,7 +730,7 @@ mod tests {
     #[test]
     fn test_pagerank_dangling() {
         // Graph with dangling node (no outgoing edges)
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         store.create_edge(a, b, "EDGE");
@@ -747,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_pagerank_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let scores = pagerank(&store, 0.85, 100, 1e-6);
         assert!(scores.is_empty());
     }
@@ -809,7 +807,7 @@ mod tests {
     #[test]
     fn test_closeness_disconnected() {
         // Graph with isolated node
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let a = store.create_node(&["Node"]);
         let _b = store.create_node(&["Node"]); // Isolated
 
@@ -821,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         store.create_node(&["Node"]);
 
         let degree = degree_centrality(&store);
@@ -939,7 +937,7 @@ mod tests {
     #[test]
     fn test_betweenness_small_graph() {
         // Test n <= 2 edge case
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         store.create_edge(a, b, "EDGE");
@@ -956,7 +954,7 @@ mod tests {
 
     #[test]
     fn test_closeness_empty_graph() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let scores = closeness_centrality(&store, false);
         assert!(scores.is_empty());
 
@@ -966,7 +964,7 @@ mod tests {
 
     #[test]
     fn test_closeness_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let a = store.create_node(&["Node"]);
 
         let scores = closeness_centrality(&store, false);
@@ -980,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_degree_empty_graph() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = degree_centrality(&store);
         assert!(result.total_degree.is_empty());
 
@@ -1040,7 +1038,7 @@ mod tests {
     fn test_betweenness_linear_graph() {
         // Linear graph: A -> B -> C -> D
         // B and C should have highest betweenness
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         let c = store.create_node(&["Node"]);

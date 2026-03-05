@@ -16,8 +16,8 @@
 
 use crate::query::plan::{
     AggregateOp, BinaryOp, DistinctOp, ExpandOp, FilterOp, JoinOp, JoinType, LimitOp,
-    LogicalExpression, LogicalOperator, NodeScanOp, ProjectOp, SkipOp, SortOp, UnaryOp,
-    VectorJoinOp, VectorScanOp,
+    LogicalExpression, LogicalOperator, MultiWayJoinOp, NodeScanOp, ProjectOp, SkipOp, SortOp,
+    UnaryOp, VectorJoinOp, VectorScanOp,
 };
 use std::collections::HashMap;
 
@@ -225,7 +225,7 @@ impl EquiDepthHistogram {
             matching_rows += overlap * bucket.frequency as f64;
         }
 
-        (matching_rows / self.total_rows as f64).min(1.0).max(0.0)
+        (matching_rows / self.total_rows as f64).clamp(0.0, 1.0)
     }
 
     /// Estimates selectivity for an equality predicate.
@@ -669,6 +669,7 @@ impl CardinalityEstimator {
             LogicalOperator::Empty => 0.0,
             LogicalOperator::VectorScan(scan) => self.estimate_vector_scan(scan),
             LogicalOperator::VectorJoin(join) => self.estimate_vector_join(join),
+            LogicalOperator::MultiWayJoin(mwj) => self.estimate_multi_way_join(mwj),
             _ => self.default_row_count as f64,
         }
     }
@@ -852,6 +853,25 @@ impl CardinalityEstimator {
         (input_cardinality * k * selectivity).max(1.0)
     }
 
+    /// Estimates multi-way join cardinality using the AGM bound heuristic.
+    ///
+    /// For a cyclic join of N relations, the AGM (Atserias-Grohe-Marx) bound
+    /// gives min(cardinality)^(N/2) as a worst-case output size estimate.
+    fn estimate_multi_way_join(&self, mwj: &MultiWayJoinOp) -> f64 {
+        if mwj.inputs.is_empty() {
+            return 0.0;
+        }
+        let cardinalities: Vec<f64> = mwj
+            .inputs
+            .iter()
+            .map(|input| self.estimate(input))
+            .collect();
+        let min_card = cardinalities.iter().copied().fold(f64::INFINITY, f64::min);
+        let n = cardinalities.len() as f64;
+        // AGM bound: min(cardinality)^(n/2)
+        (min_card.powf(n / 2.0)).max(1.0)
+    }
+
     /// Estimates the selectivity of a predicate (0.0 to 1.0).
     fn estimate_selectivity(&self, expr: &LogicalExpression) -> f64 {
         match expr {
@@ -984,7 +1004,7 @@ impl CardinalityEstimator {
             let effective_lower = lower.unwrap_or(min).max(min);
             let effective_upper = upper.unwrap_or(max).min(max);
             let overlap = (effective_upper - effective_lower).max(0.0);
-            return Some((overlap / range).min(1.0).max(0.0));
+            return Some((overlap / range).clamp(0.0, 1.0));
         }
 
         None
@@ -1109,6 +1129,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1259,6 +1280,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1285,6 +1307,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1325,6 +1348,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1367,6 +1391,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1387,6 +1412,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1406,6 +1432,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1428,6 +1455,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1450,6 +1478,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -1676,6 +1705,7 @@ mod tests {
             keys: vec![SortKey {
                 expression: LogicalExpression::Variable("n".to_string()),
                 order: SortOrder::Ascending,
+                nulls: None,
             }],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
@@ -2025,6 +2055,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -2062,6 +2093,7 @@ mod tests {
                 label: Some("Data".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);
@@ -2122,13 +2154,14 @@ mod tests {
                     property: "name".to_string(),
                 }),
                 op: BinaryOp::Eq,
-                right: Box::new(LogicalExpression::Literal(Value::String("Alice".into()))),
+                right: Box::new(LogicalExpression::Literal(Value::String("Alix".into()))),
             },
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let default_card = default_est.estimate(&filter);
@@ -2170,6 +2203,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pushdown_hint: None,
         });
 
         let cardinality = estimator.estimate(&filter);

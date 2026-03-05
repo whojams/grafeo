@@ -99,7 +99,7 @@ if (Test-Path ".venv") {
         & uv pip install solvor 2>$null
     }
 
-    if (-not (Run-Check "Python Tests" "& $pythonCmd -m pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py --ignore=tests/python/benchmark_phases.py")) {
+    if (-not (Run-Check "Python Tests" "& $pythonCmd -m pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py")) {
         $failures += "Python Tests"
     }
 } else {

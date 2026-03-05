@@ -71,7 +71,10 @@ pub fn print_key_value_table(items: &[(&str, String)], format: Format, quiet: bo
         Format::Json => {
             let map: std::collections::HashMap<&str, &str> =
                 items.iter().map(|(k, v)| (*k, v.as_str())).collect();
-            println!("{}", serde_json::to_string_pretty(&map).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&map).expect("JSON serialization of string map")
+            );
         }
         Format::Csv => {
             println!("key,value");
@@ -112,7 +115,10 @@ pub fn print_result_table(headers: &[String], rows: &[Vec<String>], format: Form
                         .collect()
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).expect("JSON serialization of string map")
+            );
         }
         Format::Csv => {
             println!(

@@ -16,8 +16,8 @@ By default, each query runs in auto-commit mode:
 
 ```python
 # Each execute is automatically committed
-db.execute("INSERT (:Person {name: 'Alice'})")
-db.execute("INSERT (:Person {name: 'Bob'})")
+db.execute("INSERT (:Person {name: 'Alix'})")
+db.execute("INSERT (:Person {name: 'Gus'})")
 ```
 
 ## Explicit Transactions
@@ -27,8 +27,8 @@ For multiple operations in a single atomic transaction, use `begin_transaction()
 ```python
 # Start an explicit transaction
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Alice'})")
-    tx.execute("INSERT (:Person {name: 'Bob'})")
+    tx.execute("INSERT (:Person {name: 'Alix'})")
+    tx.execute("INSERT (:Person {name: 'Gus'})")
     tx.commit()  # Both inserts committed atomically
 ```
 
@@ -38,8 +38,8 @@ The transaction context manager provides automatic commit on success:
 
 ```python
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Alice'})")
-    tx.execute("INSERT (:Person {name: 'Bob'})")
+    tx.execute("INSERT (:Person {name: 'Alix'})")
+    tx.execute("INSERT (:Person {name: 'Gus'})")
     tx.commit()
 # If no exception, transaction is committed
 ```
@@ -50,11 +50,11 @@ Discard all changes in a transaction:
 
 ```python
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Alice'})")
+    tx.execute("INSERT (:Person {name: 'Alix'})")
 
     # Decide to rollback
     tx.rollback()
-    # Alice was not created
+    # Alix was not created
 ```
 
 ## Rollback on Error
@@ -64,8 +64,8 @@ When an exception occurs, call `rollback()` to discard changes:
 ```python
 with db.begin_transaction() as tx:
     try:
-        tx.execute("INSERT (:Person {name: 'Alice'})")
-        tx.execute("INSERT (:Person {name: 'Bob'})")
+        tx.execute("INSERT (:Person {name: 'Alix'})")
+        tx.execute("INSERT (:Person {name: 'Gus'})")
         raise ValueError("Something went wrong")
         tx.commit()
     except ValueError:
@@ -80,7 +80,7 @@ SPARQL operations also support transactions:
 with db.begin_transaction() as tx:
     tx.execute_sparql("""
         INSERT DATA {
-            <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+            <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> "Alix" .
         }
     """)
     tx.commit()
@@ -89,10 +89,10 @@ with db.begin_transaction() as tx:
 with db.begin_transaction() as tx:
     tx.execute_sparql("""
         INSERT DATA {
-            <http://example.org/bob> <http://xmlns.com/foaf/0.1/name> "Bob" .
+            <http://example.org/gus> <http://xmlns.com/foaf/0.1/name> "Gus" .
         }
     """)
-    tx.rollback()  # Bob was not created
+    tx.rollback()  # Gus was not created
 ```
 
 ## Snapshot Isolation

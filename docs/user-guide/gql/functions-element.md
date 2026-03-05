@@ -16,11 +16,11 @@ tags:
 
 ```sql
 -- Internal numeric ID
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 RETURN id(p)              -- e.g., 42
 
 -- ISO element identity (string format)
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 RETURN element_id(p)      -- e.g., 'n:42'
 ```
 
@@ -30,7 +30,7 @@ RETURN element_id(p)      -- e.g., 'n:42'
 -- Node labels (returns a list)
 MATCH (n)
 RETURN n.name, labels(n)
--- e.g., 'Alice', ['Person', 'Employee']
+-- e.g., 'Alix', ['Person', 'Employee']
 
 -- Edge type (returns a string)
 MATCH ()-[r]->()
@@ -47,14 +47,14 @@ RETURN n.name
 
 ```sql
 -- List all property keys
-MATCH (p:Person {name: 'Alice', age: 30})
+MATCH (p:Person {name: 'Alix', age: 30})
 RETURN keys(p)
 -- ['name', 'age']
 
 -- Get all properties as a map
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 RETURN properties(p)
--- {name: 'Alice', age: 30}
+-- {name: 'Alix', age: 30}
 
 -- Practical: inspect unknown data
 MATCH (n)
@@ -69,13 +69,13 @@ LIMIT 10
 ```sql
 -- Capture a path variable
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 
 -- Number of edges in the path
 RETURN length(path)       -- e.g., 3
 
 -- List of nodes in the path
-RETURN nodes(path)        -- [Alice, Bob, Carol, Dave]
+RETURN nodes(path)        -- [Alix, Gus, Harm, Dave]
 
 -- List of edges in the path
 RETURN edges(path)
@@ -88,7 +88,7 @@ Test structural properties of a path:
 
 ```sql
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 
 -- No repeated nodes at all
 RETURN isAcyclic(path)
@@ -103,7 +103,7 @@ RETURN isTrail(path)
 ```sql
 -- Practical: find only acyclic paths
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND isAcyclic(path)
+WHERE a.name = 'Alix' AND isAcyclic(path)
 RETURN b.name, length(path)
 ```
 

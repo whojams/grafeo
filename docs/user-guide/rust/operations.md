@@ -17,13 +17,13 @@ let session = db.session()?;
 
 // Create nodes
 session.execute(r#"
-    INSERT (:Person {name: 'Alice', age: 30})
-    INSERT (:Person {name: 'Bob', age: 25})
+    INSERT (:Person {name: 'Alix', age: 30})
+    INSERT (:Person {name: 'Gus', age: 25})
 "#)?;
 
 // Create edges
 session.execute(r#"
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS {since: 2020}]->(b)
 "#)?;
 ```
@@ -52,7 +52,7 @@ for row in result {
 let session = db.session()?;
 
 session.execute(r#"
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     SET p.age = 31
 "#)?;
 ```
@@ -70,7 +70,7 @@ session.execute(r#"
 
 // Delete nodes
 session.execute(r#"
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     DETACH DELETE p
 "#)?;
 ```
@@ -85,7 +85,7 @@ let session = db.session()?;
 let result = session.execute_with_params(
     "MATCH (p:Person {name: $name}) RETURN p",
     params! {
-        "name" => "Alice"
+        "name" => "Alix"
     }
 )?;
 ```

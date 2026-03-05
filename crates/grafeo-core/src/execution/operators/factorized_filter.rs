@@ -1163,7 +1163,7 @@ mod tests {
         use super::*;
 
         fn create_test_store() -> Arc<LpgStore> {
-            Arc::new(LpgStore::new())
+            Arc::new(LpgStore::new().unwrap())
         }
 
         fn create_chunk_with_node_ids(store: &Arc<LpgStore>) -> FactorizedChunk {
@@ -1176,9 +1176,9 @@ mod tests {
             store.set_node_property(node2, "age", Value::Int64(35));
             store.set_node_property(node3, "age", Value::Int64(45));
 
-            store.set_node_property(node1, "name", Value::String("Alice".into()));
-            store.set_node_property(node2, "name", Value::String("Bob".into()));
-            store.set_node_property(node3, "name", Value::String("Carol".into()));
+            store.set_node_property(node1, "name", Value::String("Alix".into()));
+            store.set_node_property(node2, "name", Value::String("Gus".into()));
+            store.set_node_property(node3, "name", Value::String("Harm".into()));
 
             // Create a chunk with node IDs
             let mut node_data = ValueVector::with_type(LogicalType::Node);
@@ -1204,9 +1204,9 @@ mod tests {
             // Predicate: age = 35
             let pred = PropertyPredicate::eq(0, 0, "age", Value::Int64(35), store.clone());
 
-            assert!(!pred.evaluate(&chunk, 0, 0)); // Alice age=25
-            assert!(pred.evaluate(&chunk, 0, 1)); // Bob age=35
-            assert!(!pred.evaluate(&chunk, 0, 2)); // Carol age=45
+            assert!(!pred.evaluate(&chunk, 0, 0)); // Alix age=25
+            assert!(pred.evaluate(&chunk, 0, 1)); // Gus age=35
+            assert!(!pred.evaluate(&chunk, 0, 2)); // Harm age=45
         }
 
         #[test]
@@ -1267,36 +1267,37 @@ mod tests {
             let store = create_test_store();
             let chunk = create_chunk_with_node_ids(&store);
 
-            // name = "Bob"
+            // name = "Gus"
             let pred =
-                PropertyPredicate::eq(0, 0, "name", Value::String("Bob".into()), store.clone());
+                PropertyPredicate::eq(0, 0, "name", Value::String("Gus".into()), store.clone());
 
-            assert!(!pred.evaluate(&chunk, 0, 0)); // Alice
-            assert!(pred.evaluate(&chunk, 0, 1)); // Bob
-            assert!(!pred.evaluate(&chunk, 0, 2)); // Carol
+            assert!(!pred.evaluate(&chunk, 0, 0)); // Alix
+            assert!(pred.evaluate(&chunk, 0, 1)); // Gus
+            assert!(!pred.evaluate(&chunk, 0, 2)); // Harm
 
-            // name < "Bob"
+            // name < "Gus"
             let pred_lt = PropertyPredicate::new(
                 0,
                 0,
                 "name",
                 CompareOp::Lt,
-                Value::String("Bob".into()),
+                Value::String("Gus".into()),
                 store.clone(),
             );
-            assert!(pred_lt.evaluate(&chunk, 0, 0)); // "Alice" < "Bob"
-            assert!(!pred_lt.evaluate(&chunk, 0, 1)); // "Bob" < "Bob" = false
+            assert!(pred_lt.evaluate(&chunk, 0, 0)); // "Alix" < "Gus"
+            assert!(!pred_lt.evaluate(&chunk, 0, 1)); // "Gus" < "Gus" = false
 
-            // name > "Bob"
+            // name > "Gus"
             let pred_gt = PropertyPredicate::new(
                 0,
                 0,
                 "name",
                 CompareOp::Gt,
-                Value::String("Bob".into()),
+                Value::String("Gus".into()),
                 store.clone(),
             );
-            assert!(pred_gt.evaluate(&chunk, 0, 2)); // "Carol" > "Bob"
+            assert!(pred_gt.evaluate(&chunk, 0, 2)); // "Harm" > "Gus"
+            assert!(!pred_gt.evaluate(&chunk, 0, 0)); // "Alix" > "Gus" = false
         }
 
         #[test]
@@ -1482,11 +1483,11 @@ mod tests {
 
             let selection = pred.evaluate_batch(&chunk, 0);
 
-            // Should select indices 1 and 2 (Bob=35, Carol=45)
+            // Should select indices 1 and 2 (Gus=35, Harm=45)
             assert_eq!(selection.selected_count(), 2);
-            assert!(!selection.is_selected(0)); // Alice=25
-            assert!(selection.is_selected(1)); // Bob=35
-            assert!(selection.is_selected(2)); // Carol=45
+            assert!(!selection.is_selected(0)); // Alix=25
+            assert!(selection.is_selected(1)); // Gus=35
+            assert!(selection.is_selected(2)); // Harm=45
         }
 
         #[test]

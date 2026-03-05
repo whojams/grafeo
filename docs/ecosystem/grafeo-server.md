@@ -120,7 +120,7 @@ SESSION=$(curl -s -X POST http://localhost:7474/tx/begin | jq -r .session_id)
 curl -X POST http://localhost:7474/tx/query \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: $SESSION" \
-  -d '{"query": "INSERT (:Person {name: '\''Alice'\''})"}'
+  -d '{"query": "INSERT (:Person {name: '\''Alix'\''})"}'
 
 # Commit (or POST /tx/rollback)
 curl -X POST http://localhost:7474/tx/commit \

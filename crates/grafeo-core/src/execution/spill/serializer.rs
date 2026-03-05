@@ -485,7 +485,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert(
             grafeo_common::types::PropertyKey::new("name"),
-            Value::String(ArcStr::from("Alice")),
+            Value::String(ArcStr::from("Alix")),
         );
         map.insert(
             grafeo_common::types::PropertyKey::new("age"),

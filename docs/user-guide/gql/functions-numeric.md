@@ -21,14 +21,18 @@ tags:
 | `sqrt(n)` | Square root |
 | `log(n)` / `ln(n)` | Natural logarithm |
 | `log10(n)` | Base-10 logarithm |
+| `power(b, x)` / `pow(b, x)` | b raised to the power x |
 | `exp(n)` | e raised to the power n |
+| `log2(n)` | Base-2 logarithm |
 | `sin(n)`, `cos(n)`, `tan(n)` | Trigonometric functions |
 | `asin(n)`, `acos(n)`, `atan(n)` | Inverse trigonometric |
+| `atan2(y, x)` | Two-argument arctangent |
 | `degrees(n)` | Radians to degrees |
 | `radians(n)` | Degrees to radians |
 | `pi()` | Pi constant |
 | `e()` | Euler's number |
 | `rand()` / `random()` | Random float [0, 1) |
+| `cardinality(list)` | Number of elements in a list (alias for `size`) |
 
 ## Rounding
 
@@ -43,6 +47,13 @@ RETURN sign(0)           -- 0
 RETURN sign(42)          -- 1
 ```
 
+## Power
+
+```sql
+RETURN power(2, 10)      -- 1024.0
+RETURN pow(9, 0.5)       -- 3.0 (square root)
+```
+
 ## Logarithmic and Exponential
 
 ```sql
@@ -50,6 +61,7 @@ RETURN sqrt(16)          -- 4.0
 RETURN log(e())          -- 1.0
 RETURN ln(e())           -- 1.0 (alias)
 RETURN log10(1000)       -- 3.0
+RETURN log2(8)           -- 3.0
 RETURN exp(1)            -- 2.718281828...
 ```
 
@@ -66,6 +78,7 @@ RETURN tan(pi() / 4)     -- ~1.0
 RETURN asin(1)           -- ~1.5708 (pi/2)
 RETURN acos(1)           -- 0.0
 RETURN atan(1)           -- ~0.7854 (pi/4)
+RETURN atan2(1, 1)       -- ~0.7854 (pi/4)
 
 -- Convert between degrees and radians
 RETURN degrees(pi())     -- 180.0
@@ -97,6 +110,15 @@ MATCH (p:Person)
 RETURN p.name
 ORDER BY rand()
 LIMIT 5
+```
+
+## Cardinality
+
+`cardinality(list)` returns the number of elements in a list. It is an alias for `size()`.
+
+```sql
+MATCH (p:Person)
+RETURN p.name, cardinality(p.hobbies) AS num_hobbies
 ```
 
 ## Arithmetic Operators

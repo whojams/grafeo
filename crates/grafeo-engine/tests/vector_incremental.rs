@@ -110,9 +110,9 @@ fn test_label_after_vector_triggers_index() {
     // Create a node WITHOUT the "Doc" label, set vector, THEN add label
     let n2 = db.create_node(&["Other"]);
     db.set_node_property(n2, "emb", vec3(0.0, 1.0, 0.0));
-    // At this point n2 has label "Other", not "Doc" — no index match
+    // At this point n2 has label "Other", not "Doc": no index match
     db.add_node_label(n2, "Doc");
-    // Now n2 has "Doc" label — should trigger auto-insert
+    // Now n2 has "Doc" label, should trigger auto-insert
 
     let results = db
         .vector_search("Doc", "emb", &[0.0, 1.0, 0.0], 10, None, None)
@@ -188,7 +188,7 @@ fn test_rebuild_nonexistent_index_fails() {
 fn test_set_vector_without_index_is_noop() {
     let db = GrafeoDB::new_in_memory();
 
-    // No vector index exists — setting a vector property should not crash
+    // No vector index exists: setting a vector property should not crash
     let n1 = db.create_node(&["Doc"]);
     db.set_node_property(n1, "emb", vec3(1.0, 0.0, 0.0));
 

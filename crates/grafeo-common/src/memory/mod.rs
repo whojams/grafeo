@@ -15,7 +15,7 @@ pub mod buffer;
 pub mod bump;
 pub mod pool;
 
-pub use arena::{Arena, ArenaAllocator};
+pub use arena::{AllocError, Arena, ArenaAllocator};
 pub use buffer::{
     BufferManager, BufferManagerConfig, BufferStats, MemoryConsumer, MemoryGrant, MemoryRegion,
     PressureLevel,

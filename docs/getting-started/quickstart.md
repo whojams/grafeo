@@ -42,19 +42,19 @@ Use GQL to insert nodes and edges:
     ```python
     # Create nodes
     db.execute("""
-        INSERT (:Person {name: 'Alice', age: 30})
-        INSERT (:Person {name: 'Bob', age: 25})
-        INSERT (:Person {name: 'Carol', age: 35})
+        INSERT (:Person {name: 'Alix', age: 30})
+        INSERT (:Person {name: 'Gus', age: 25})
+        INSERT (:Person {name: 'Harm', age: 35})
     """)
 
     # Create edges
     db.execute("""
-        MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
         INSERT (a)-[:KNOWS {since: 2020}]->(b)
     """)
 
     db.execute("""
-        MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Carol'})
+        MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Harm'})
         INSERT (b)-[:KNOWS {since: 2022}]->(c)
     """)
     ```
@@ -66,19 +66,19 @@ Use GQL to insert nodes and edges:
 
     // Create nodes
     session.execute(r#"
-        INSERT (:Person {name: 'Alice', age: 30})
-        INSERT (:Person {name: 'Bob', age: 25})
-        INSERT (:Person {name: 'Carol', age: 35})
+        INSERT (:Person {name: 'Alix', age: 30})
+        INSERT (:Person {name: 'Gus', age: 25})
+        INSERT (:Person {name: 'Harm', age: 35})
     "#)?;
 
     // Create edges
     session.execute(r#"
-        MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
         INSERT (a)-[:KNOWS {since: 2020}]->(b)
     "#)?;
 
     session.execute(r#"
-        MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Carol'})
+        MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Harm'})
         INSERT (b)-[:KNOWS {since: 2022}]->(c)
     "#)?;
     ```
@@ -100,18 +100,18 @@ Retrieve data using pattern matching:
     for row in result:
         print(f"{row['p.name']} is {row['p.age']} years old")
 
-    # Find who Alice knows
+    # Find who Alix knows
     result = db.execute("""
-        MATCH (a:Person {name: 'Alice'})-[:KNOWS]->(friend)
+        MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(friend)
         RETURN friend.name
     """)
 
     for row in result:
-        print(f"Alice knows {row['friend.name']}")
+        print(f"Alix knows {row['friend.name']}")
 
     # Find friends of friends
     result = db.execute("""
-        MATCH (a:Person {name: 'Alice'})-[:KNOWS]->()-[:KNOWS]->(fof)
+        MATCH (a:Person {name: 'Alix'})-[:KNOWS]->()-[:KNOWS]->(fof)
         RETURN DISTINCT fof.name
     """)
 
@@ -135,14 +135,14 @@ Retrieve data using pattern matching:
         println!("{:?}", row);
     }
 
-    // Find who Alice knows
+    // Find who Alix knows
     let result = session.execute(r#"
-        MATCH (a:Person {name: 'Alice'})-[:KNOWS]->(friend)
+        MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(friend)
         RETURN friend.name
     "#)?;
 
     for row in result.rows {
-        println!("Alice knows {:?}", row);
+        println!("Alix knows {:?}", row);
     }
     ```
 
@@ -155,14 +155,14 @@ Modify existing nodes and edges:
     ```python
     # Update a property
     db.execute("""
-        MATCH (p:Person {name: 'Alice'})
+        MATCH (p:Person {name: 'Alix'})
         SET p.age = 31
     """)
 
     # Add a new property
     db.execute("""
-        MATCH (p:Person {name: 'Bob'})
-        SET p.email = 'bob@example.com'
+        MATCH (p:Person {name: 'Gus'})
+        SET p.email = 'gus@example.com'
     """)
     ```
 
@@ -173,7 +173,7 @@ Modify existing nodes and edges:
 
     // Update a property
     session.execute(r#"
-        MATCH (p:Person {name: 'Alice'})
+        MATCH (p:Person {name: 'Alix'})
         SET p.age = 31
     "#)?;
     ```
@@ -187,13 +187,13 @@ Remove nodes and edges:
     ```python
     # Delete an edge
     db.execute("""
-        MATCH (a:Person {name: 'Alice'})-[r:KNOWS]->(b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'})-[r:KNOWS]->(b:Person {name: 'Gus'})
         DELETE r
     """)
 
     # Delete a node (must delete connected edges first)
     db.execute("""
-        MATCH (p:Person {name: 'Carol'})
+        MATCH (p:Person {name: 'Harm'})
         DETACH DELETE p
     """)
     ```
@@ -205,7 +205,7 @@ Remove nodes and edges:
 
     // Delete a node and its edges
     session.execute(r#"
-        MATCH (p:Person {name: 'Carol'})
+        MATCH (p:Person {name: 'Harm'})
         DETACH DELETE p
     "#)?;
     ```

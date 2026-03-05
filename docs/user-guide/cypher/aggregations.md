@@ -108,7 +108,7 @@ UNWIND [1, 2, 3] AS x
 RETURN x
 
 -- Create nodes from list
-UNWIND ['Alice', 'Bob', 'Carol'] AS name
+UNWIND ['Alix', 'Gus', 'Harm'] AS name
 CREATE (p:Person {name: name})
 RETURN p
 ```

@@ -44,13 +44,13 @@ store = GrafeoPropertyGraphStore(db_path="./my-graph.db")
 from llama_index.core.graph_stores.types import EntityNode, Relation
 
 nodes = [
-    EntityNode(name="Alice", label="Person", properties={"age": 30}),
-    EntityNode(name="Bob", label="Person", properties={"age": 25}),
+    EntityNode(name="Alix", label="Person", properties={"age": 30}),
+    EntityNode(name="Gus", label="Person", properties={"age": 25}),
 ]
 store.upsert_nodes(nodes)
 
 relations = [
-    Relation(source_id="Alice", target_id="Bob", label="KNOWS"),
+    Relation(source_id="Alix", target_id="Gus", label="KNOWS"),
 ]
 store.upsert_relations(relations)
 
@@ -89,7 +89,7 @@ index = PropertyGraphIndex.from_documents(
 )
 
 query_engine = index.as_query_engine()
-response = query_engine.query("What does Alice do?")
+response = query_engine.query("What does Alix do?")
 ```
 
 ## PropertyGraphStore Interface

@@ -466,7 +466,7 @@ mod tests {
         // Clique 1: 0-1-2-3 (fully connected)
         // Clique 2: 4-5-6-7 (fully connected)
         // Bridge: 3-4
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         let nodes: Vec<NodeId> = (0..8).map(|_| store.create_node(&["Node"])).collect();
 
@@ -494,7 +494,7 @@ mod tests {
     }
 
     fn create_simple_graph() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Simple chain: 0 -> 1 -> 2
         let n0 = store.create_node(&["Node"]);
@@ -534,14 +534,14 @@ mod tests {
 
     #[test]
     fn test_label_propagation_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let communities = label_propagation(&store, 100);
         assert!(communities.is_empty());
     }
 
     #[test]
     fn test_label_propagation_single_node() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         store.create_node(&["Node"]);
 
         let communities = label_propagation(&store, 100);
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_louvain_empty() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = louvain(&store, 1.0);
 
         assert!(result.communities.is_empty());
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_louvain_isolated_nodes() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);

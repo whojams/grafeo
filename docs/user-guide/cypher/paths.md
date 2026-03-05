@@ -39,12 +39,12 @@ RETURN a.name, b.name
 ```cypher
 -- Capture the path
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN path
 
 -- Path length
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
 RETURN b.name, length(path) AS distance
 ORDER BY distance
 ```
@@ -54,12 +54,12 @@ ORDER BY distance
 ```cypher
 -- Find shortest path
 MATCH path = shortestPath((a:Person)-[:KNOWS*]-(b:Person))
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN path, length(path)
 
 -- All shortest paths
 MATCH path = allShortestPaths((a:Person)-[:KNOWS*]-(b:Person))
-WHERE a.name = 'Alice' AND b.name = 'Dave'
+WHERE a.name = 'Alix' AND b.name = 'Dave'
 RETURN path
 ```
 
@@ -68,13 +68,13 @@ RETURN path
 ```cypher
 -- Filter paths by node properties
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
   AND all(n IN nodes(path) WHERE n.active = true)
 RETURN path
 
 -- Filter by relationship properties
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
   AND all(r IN relationships(path) WHERE r.strength > 0.5)
 RETURN path
 ```

@@ -37,7 +37,7 @@ fn test_execute_at_epoch_sees_old_state() {
     // Create a person inside a transaction
     session.begin_tx().unwrap();
     session
-        .execute("INSERT (:Person {name: 'Alice', age: 30})")
+        .execute("INSERT (:Person {name: 'Alix', age: 30})")
         .unwrap();
     session.commit().unwrap();
     let epoch_after_insert = db.current_epoch();
@@ -45,13 +45,13 @@ fn test_execute_at_epoch_sees_old_state() {
     // Update the person in a new transaction
     session.begin_tx().unwrap();
     session
-        .execute("MATCH (p:Person {name: 'Alice'}) SET p.age = 31")
+        .execute("MATCH (p:Person {name: 'Alix'}) SET p.age = 31")
         .unwrap();
     session.commit().unwrap();
 
     // Current state should be 31
     let result = session
-        .execute("MATCH (p:Person {name: 'Alice'}) RETURN p.age")
+        .execute("MATCH (p:Person {name: 'Alix'}) RETURN p.age")
         .unwrap();
     assert_eq!(result.rows.len(), 1);
     assert_eq!(result.rows[0][0], Value::Int64(31));
@@ -61,7 +61,7 @@ fn test_execute_at_epoch_sees_old_state() {
     // so time-travel applies to node/edge existence, not property values.
     let result = session
         .execute_at_epoch(
-            "MATCH (p:Person {name: 'Alice'}) RETURN p.age",
+            "MATCH (p:Person {name: 'Alix'}) RETURN p.age",
             epoch_after_insert,
         )
         .unwrap();
@@ -81,7 +81,7 @@ fn test_execute_at_epoch_before_creation_returns_empty() {
 
     // Insert inside a transaction (node created at epoch 1)
     session.begin_tx().unwrap();
-    session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
     session.commit().unwrap();
 
     // Verify node exists at current epoch
@@ -103,10 +103,10 @@ fn test_deleted_node_history_preserves_epoch() {
     let db = setup_db();
     let mut session = db.session();
 
-    // Insert in a transaction (Charlie created at epoch 0)
+    // Insert in a transaction (Vincent created at epoch 0)
     session.begin_tx().unwrap();
     session
-        .execute("INSERT (:Person {name: 'Charlie'})")
+        .execute("INSERT (:Person {name: 'Vincent'})")
         .unwrap();
     session.commit().unwrap();
 
@@ -116,13 +116,13 @@ fn test_deleted_node_history_preserves_epoch() {
     // Delete in a separate transaction
     session.begin_tx().unwrap();
     session
-        .execute("MATCH (p:Person {name: 'Charlie'}) DELETE p")
+        .execute("MATCH (p:Person {name: 'Vincent'}) DELETE p")
         .unwrap();
     session.commit().unwrap();
 
     // After deletion, node should not be visible at current epoch
     let result = session
-        .execute("MATCH (p:Person {name: 'Charlie'}) RETURN p")
+        .execute("MATCH (p:Person {name: 'Vincent'}) RETURN p")
         .unwrap();
     assert!(result.rows.is_empty());
 
@@ -274,7 +274,7 @@ fn test_get_node_at_epoch() {
     bump_epoch(&mut session);
 
     let id = db.create_node(&["Person"]);
-    db.set_node_property(id, "name", Value::String("Alice".into()));
+    db.set_node_property(id, "name", Value::String("Alix".into()));
     let epoch_after = db.current_epoch();
 
     // Node should exist at this epoch
@@ -315,7 +315,7 @@ fn test_node_history_single_version() {
     let db = setup_db();
 
     let id = db.create_node(&["Person"]);
-    db.set_node_property(id, "name", Value::String("Alice".into()));
+    db.set_node_property(id, "name", Value::String("Alix".into()));
 
     let history = db.get_node_history(id);
     assert_eq!(history.len(), 1);

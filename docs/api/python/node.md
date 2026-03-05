@@ -59,7 +59,7 @@ print(f"Name: {node.get('name')}")
 
 ```python
 # Create node with direct API
-node = db.create_node(["Person"], {"name": "Alice", "age": 30})
+node = db.create_node(["Person"], {"name": "Alix", "age": 30})
 print(f"Created node with ID: {node.id}")
 
 # Manage labels

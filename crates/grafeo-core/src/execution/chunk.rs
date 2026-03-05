@@ -46,7 +46,7 @@ pub struct ChunkZoneHints {
 /// use grafeo_common::types::Value;
 ///
 /// // Create columns
-/// let names = ValueVector::from_values(&[Value::from("Alice"), Value::from("Bob")]);
+/// let names = ValueVector::from_values(&[Value::from("Alix"), Value::from("Gus")]);
 /// let ages = ValueVector::from_values(&[Value::from(30i64), Value::from(25i64)]);
 ///
 /// // Bundle into a chunk

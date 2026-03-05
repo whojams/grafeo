@@ -84,6 +84,22 @@ pub enum WalRecord {
         value: Value,
     },
 
+    /// Remove a property from a node.
+    RemoveNodeProperty {
+        /// Node ID.
+        id: NodeId,
+        /// Property key.
+        key: String,
+    },
+
+    /// Remove a property from an edge.
+    RemoveEdgeProperty {
+        /// Edge ID.
+        id: EdgeId,
+        /// Property key.
+        key: String,
+    },
+
     /// Add a label to a node.
     AddNodeLabel {
         /// Node ID.
@@ -362,14 +378,14 @@ mod tests {
         let record = WalRecord::SetNodeProperty {
             id: NodeId::new(5),
             key: "name".to_string(),
-            value: Value::String("Alice".into()),
+            value: Value::String("Alix".into()),
         };
         let parsed = roundtrip(&record);
         match parsed {
             WalRecord::SetNodeProperty { id, key, value } => {
                 assert_eq!(id, NodeId::new(5));
                 assert_eq!(key, "name");
-                assert_eq!(value, Value::String("Alice".into()));
+                assert_eq!(value, Value::String("Alix".into()));
             }
             _ => panic!("Wrong variant"),
         }
@@ -388,6 +404,38 @@ mod tests {
                 assert_eq!(id, EdgeId::new(7));
                 assert_eq!(key, "weight");
                 assert_eq!(value, Value::Float64(std::f64::consts::PI));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_node_property_roundtrip() {
+        let record = WalRecord::RemoveNodeProperty {
+            id: NodeId::new(5),
+            key: "age".to_string(),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::RemoveNodeProperty { id, key } => {
+                assert_eq!(id, NodeId::new(5));
+                assert_eq!(key, "age");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_edge_property_roundtrip() {
+        let record = WalRecord::RemoveEdgeProperty {
+            id: EdgeId::new(7),
+            key: "weight".to_string(),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::RemoveEdgeProperty { id, key } => {
+                assert_eq!(id, EdgeId::new(7));
+                assert_eq!(key, "weight");
             }
             _ => panic!("Wrong variant"),
         }

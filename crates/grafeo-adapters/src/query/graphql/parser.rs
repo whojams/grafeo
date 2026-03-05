@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn test_parse_object_argument_not_supported() {
         // Object literals in arguments are not yet supported
-        let mut parser = Parser::new("{ createUser(input: {name: \"Alice\", age: 30}) { id } }");
+        let mut parser = Parser::new("{ createUser(input: {name: \"Alix\", age: 30}) { id } }");
         let result = parser.parse();
         assert!(result.is_err());
     }

@@ -14,7 +14,7 @@ GQL supports a rich type system with scalar, temporal, collection, and graph ele
 
 | Type | Aliases | Example Literals |
 |------|---------|-----------------|
-| `INTEGER` | `INT`, `INT64` | `42`, `0xFF`, `0o77` |
+| `INTEGER` | `INT`, `INT64` | `42`, `0xFF`, `0o77`, `0b1010` |
 | `FLOAT` | `FLOAT64` | `3.14`, `1.5e10` |
 | `STRING` | | `'hello'`, `"world"` |
 | `BOOLEAN` | `BOOL` | `TRUE`, `FALSE` |
@@ -25,6 +25,7 @@ GQL supports a rich type system with scalar, temporal, collection, and graph ele
 RETURN 42          -- decimal
 RETURN 0xFF        -- hexadecimal (255)
 RETURN 0o77        -- octal (63)
+RETURN 0b1010      -- binary (10)
 
 -- Float literals
 RETURN 3.14        -- decimal
@@ -86,7 +87,7 @@ Ordered collections of values. Lists can contain mixed types.
 ```sql
 -- List literal
 RETURN [1, 2, 3]
-RETURN ['Alice', 'Bob', 'Carol']
+RETURN ['Alix', 'Gus', 'Harm']
 RETURN [1, 'mixed', true, null]
 
 -- Index access (0-based)
@@ -105,10 +106,10 @@ Key-value pairs. Keys are strings, values can be any type.
 
 ```sql
 -- Map literal
-RETURN {name: 'Alice', age: 30, active: true}
+RETURN {name: 'Alix', age: 30, active: true}
 
 -- Property access
-WITH {name: 'Alice', age: 30} AS person
+WITH {name: 'Alix', age: 30} AS person
 RETURN person.name, person.age
 ```
 

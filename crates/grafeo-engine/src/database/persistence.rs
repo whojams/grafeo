@@ -293,7 +293,7 @@ impl super::GrafeoDB {
             }
         }
 
-        // Validation passed — build the database
+        // Validation passed: build the database
         let db = Self::new_in_memory();
 
         for node in snapshot.nodes {
@@ -429,14 +429,14 @@ mod tests {
         let session = db.session();
 
         // Populate
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
 
         let snapshot = db.export_snapshot().unwrap();
 
         // Modify
         session
-            .execute("INSERT (:Person {name: 'Charlie'})")
+            .execute("INSERT (:Person {name: 'Vincent'})")
             .unwrap();
         assert_eq!(db.store.node_count(), 3);
 
@@ -453,7 +453,7 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
 
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         // Corrupt snapshot: just garbage bytes
         let result = db.restore_snapshot(b"garbage");
@@ -471,7 +471,7 @@ mod tests {
         let empty_snapshot = db.export_snapshot().unwrap();
 
         let session = db.session();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         assert_eq!(db.store.node_count(), 1);
 
         db.restore_snapshot(&empty_snapshot).unwrap();
@@ -483,11 +483,11 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
 
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
         session
             .execute(
-                "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) INSERT (a)-[:KNOWS]->(b)",
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)",
             )
             .unwrap();
 
@@ -496,7 +496,7 @@ mod tests {
 
         // Modify: add more data
         session
-            .execute("INSERT (:Person {name: 'Charlie'})")
+            .execute("INSERT (:Person {name: 'Vincent'})")
             .unwrap();
 
         // Restore
@@ -510,11 +510,11 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
 
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         let snapshot = db.export_snapshot().unwrap();
 
         // Modify
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
 
         // Restore
         db.restore_snapshot(&snapshot).unwrap();
@@ -530,7 +530,7 @@ mod tests {
         let session = db.session();
 
         session
-            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
             .unwrap();
 
         let snapshot = db.export_snapshot().unwrap();
@@ -556,10 +556,10 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
         session
-            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
             .unwrap();
         session
-            .execute("INSERT (:Person {name: 'Bob', age: 25})")
+            .execute("INSERT (:Person {name: 'Gus', age: 25})")
             .unwrap();
 
         let copy = db.to_memory().unwrap();
@@ -570,17 +570,17 @@ mod tests {
             .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
             .unwrap();
         assert_eq!(result.rows.len(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
-        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
     }
 
     #[test]
     fn test_to_memory_copies_edges_and_properties() {
         let db = GrafeoDB::new_in_memory();
         let a = db.create_node(&["Person"]);
-        db.set_node_property(a, "name", "Alice".into());
+        db.set_node_property(a, "name", "Alix".into());
         let b = db.create_node(&["Person"]);
-        db.set_node_property(b, "name", "Bob".into());
+        db.set_node_property(b, "name", "Gus".into());
         let edge = db.create_edge(a, b, "KNOWS");
         db.set_edge_property(edge, "since", Value::Int64(2020));
 
@@ -597,12 +597,12 @@ mod tests {
     fn test_to_memory_is_independent() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let copy = db.to_memory().unwrap();
 
         // Mutating original should not affect copy
-        session.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
         assert_eq!(db.store.node_count(), 2);
         assert_eq!(copy.store.node_count(), 1);
     }
@@ -619,7 +619,7 @@ mod tests {
     fn test_iter_nodes_returns_all() {
         let db = GrafeoDB::new_in_memory();
         let id1 = db.create_node(&["Person"]);
-        db.set_node_property(id1, "name", "Alice".into());
+        db.set_node_property(id1, "name", "Alix".into());
         let id2 = db.create_node(&["Animal"]);
         db.set_node_property(id2, "name", "Fido".into());
 
@@ -631,7 +631,7 @@ mod tests {
             .filter_map(|n| n.properties.iter().find(|(k, _)| k.as_str() == "name"))
             .map(|(_, v)| v.clone())
             .collect();
-        assert!(names.contains(&Value::String("Alice".into())));
+        assert!(names.contains(&Value::String("Alix".into())));
         assert!(names.contains(&Value::String("Fido".into())));
     }
 
@@ -668,7 +668,7 @@ mod tests {
     fn test_restore_rejects_unsupported_version() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let snap = Snapshot {
             version: 99,
@@ -690,7 +690,7 @@ mod tests {
     fn test_restore_rejects_duplicate_node_ids() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        session.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let snap = Snapshot {
             version: 1,

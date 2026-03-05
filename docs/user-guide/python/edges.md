@@ -15,19 +15,19 @@ Learn how to create and manage relationships between nodes.
 ```python
 # First create nodes
 db.execute("""
-    INSERT (:Person {name: 'Alice'})
-    INSERT (:Person {name: 'Bob'})
+    INSERT (:Person {name: 'Alix'})
+    INSERT (:Person {name: 'Gus'})
 """)
 
 # Create an edge
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS]->(b)
 """)
 
 # Create edge with properties
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:WORKS_WITH {since: 2020, project: 'Alpha'}]->(b)
 """)
 ```
@@ -46,7 +46,7 @@ for row in result:
 
 # Get edge type
 result = db.execute("""
-    MATCH (a:Person {name: 'Alice'})-[r]->(b)
+    MATCH (a:Person {name: 'Alix'})-[r]->(b)
     RETURN type(r) AS relationship_type, b.name
 """)
 ```
@@ -56,7 +56,7 @@ result = db.execute("""
 ```python
 # Update edge properties
 db.execute("""
-    MATCH (a:Person {name: 'Alice'})-[r:KNOWS]->(b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'})-[r:KNOWS]->(b:Person {name: 'Gus'})
     SET r.strength = 'close', r.updated = true
 """)
 ```
@@ -66,7 +66,7 @@ db.execute("""
 ```python
 # Delete specific edge
 db.execute("""
-    MATCH (a:Person {name: 'Alice'})-[r:KNOWS]->(b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'})-[r:KNOWS]->(b:Person {name: 'Gus'})
     DELETE r
 """)
 

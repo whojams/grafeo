@@ -22,13 +22,13 @@ This guide compares Gremlin (Apache TinkerPop) with GQL (ISO/IEC 39075) to help 
 === "Gremlin"
 
     ```gremlin
-    g.V().hasLabel('Person').has('name', 'Alice')
+    g.V().hasLabel('Person').has('name', 'Alix')
     ```
 
 === "GQL"
 
     ```sql
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     RETURN p
     ```
 
@@ -37,13 +37,13 @@ This guide compares Gremlin (Apache TinkerPop) with GQL (ISO/IEC 39075) to help 
 === "Gremlin"
 
     ```gremlin
-    g.V().has('name', 'Alice').out('KNOWS').values('name')
+    g.V().has('name', 'Alix').out('KNOWS').values('name')
     ```
 
 === "GQL"
 
     ```sql
-    MATCH (a:Person {name: 'Alice'})-[:KNOWS]->(friend)
+    MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(friend)
     RETURN friend.name
     ```
 
@@ -52,13 +52,13 @@ This guide compares Gremlin (Apache TinkerPop) with GQL (ISO/IEC 39075) to help 
 === "Gremlin"
 
     ```gremlin
-    g.V().has('name', 'Alice').out('KNOWS').out('KNOWS').values('name')
+    g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').values('name')
     ```
 
 === "GQL"
 
     ```sql
-    MATCH (a:Person {name: 'Alice'})-[:KNOWS]->()-[:KNOWS]->(fof)
+    MATCH (a:Person {name: 'Alix'})-[:KNOWS]->()-[:KNOWS]->(fof)
     RETURN fof.name
     ```
 
@@ -131,10 +131,10 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data with GQL
-db.execute("INSERT (:Person {name: 'Alice'})")
-db.execute("INSERT (:Person {name: 'Bob'})")
+db.execute("INSERT (:Person {name: 'Alix'})")
+db.execute("INSERT (:Person {name: 'Gus'})")
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS]->(b)
 """)
 

@@ -36,8 +36,8 @@ func main() {
     }
     defer db.Close()
 
-    db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice", "age": 30})
-    db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob", "age": 25})
+    db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix", "age": 30})
+    db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus", "age": 25})
 
     result, err := db.Execute("MATCH (p:Person) RETURN p.name, p.age")
     if err != nil {
@@ -74,7 +74,7 @@ result, err := db.ExecuteSQL(query)        // SQL/PGQ
 ## Node & Edge CRUD
 
 ```go
-id, err := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+id, err := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
 eid, err := db.CreateEdge(srcID, dstID, "KNOWS", map[string]any{"since": 2024})
 
 node, err := db.GetNode(id)
@@ -91,7 +91,7 @@ db.DeleteEdge(eid)
 
 ```go
 tx, err := db.BeginTransaction()
-result, err := tx.Execute("INSERT (:Person {name: 'Carol'})")
+result, err := tx.Execute("INSERT (:Person {name: 'Harm'})")
 err = tx.Commit()   // or tx.Rollback()
 ```
 

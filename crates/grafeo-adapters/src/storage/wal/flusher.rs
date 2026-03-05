@@ -78,8 +78,12 @@ impl AdaptiveFlusher {
     ///
     /// * `wal` - The WAL manager to flush
     /// * `target_interval_ms` - Target interval between flushes in milliseconds
-    #[must_use]
-    pub fn new(wal: Arc<WalManager>, target_interval_ms: u64) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the background flusher thread cannot be spawned.
+    // FIXME: propagate Result to callers
+    pub fn new(wal: Arc<WalManager>, target_interval_ms: u64) -> Result<Self, std::io::Error> {
         let target_interval = Duration::from_millis(target_interval_ms);
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
@@ -87,14 +91,13 @@ impl AdaptiveFlusher {
             .name("grafeo-wal-flusher".to_string())
             .spawn(move || {
                 Self::flusher_loop(wal, target_interval, shutdown_rx);
-            })
-            .expect("Failed to spawn WAL flusher thread");
+            })?;
 
-        Self {
+        Ok(Self {
             target_interval,
             shutdown_tx: Some(shutdown_tx),
             handle: Some(handle),
-        }
+        })
     }
 
     /// Returns the target flush interval.
@@ -213,7 +216,7 @@ mod tests {
         let wal = Arc::new(WalManager::open(dir.path()).unwrap());
 
         // Start flusher with 50ms target
-        let mut flusher = AdaptiveFlusher::new(Arc::clone(&wal), 50);
+        let mut flusher = AdaptiveFlusher::new(Arc::clone(&wal), 50).unwrap();
 
         // Let it run for a bit (500ms gives plenty of margin for CI)
         thread::sleep(Duration::from_millis(500));
@@ -234,7 +237,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let wal = Arc::new(WalManager::open(dir.path()).unwrap());
 
-        let mut flusher = AdaptiveFlusher::new(Arc::clone(&wal), 100);
+        let mut flusher = AdaptiveFlusher::new(Arc::clone(&wal), 100).unwrap();
 
         // Immediate shutdown should work
         let stats = flusher.shutdown().unwrap();
@@ -246,7 +249,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let wal = Arc::new(WalManager::open(dir.path()).unwrap());
 
-        let flusher = AdaptiveFlusher::new(Arc::clone(&wal), 75);
+        let flusher = AdaptiveFlusher::new(Arc::clone(&wal), 75).unwrap();
         assert_eq!(flusher.target_interval(), Duration::from_millis(75));
     }
 
@@ -269,7 +272,7 @@ mod tests {
 
         // Create flusher and let it drop naturally
         {
-            let _flusher = AdaptiveFlusher::new(Arc::clone(&wal), 50);
+            let _flusher = AdaptiveFlusher::new(Arc::clone(&wal), 50).unwrap();
             thread::sleep(Duration::from_millis(100));
             // Drop should trigger shutdown
         }

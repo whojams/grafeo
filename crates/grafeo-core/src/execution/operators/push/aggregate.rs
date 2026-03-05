@@ -90,8 +90,24 @@ impl Accumulator {
             | AggregateFunction::Collect
             | AggregateFunction::StdDev
             | AggregateFunction::StdDevPop
+            | AggregateFunction::Variance
+            | AggregateFunction::VariancePop
             | AggregateFunction::PercentileDisc
-            | AggregateFunction::PercentileCont => Value::Null,
+            | AggregateFunction::PercentileCont
+            | AggregateFunction::GroupConcat
+            | AggregateFunction::Sample
+            | AggregateFunction::CovarSamp
+            | AggregateFunction::CovarPop
+            | AggregateFunction::Corr
+            | AggregateFunction::RegrSlope
+            | AggregateFunction::RegrIntercept
+            | AggregateFunction::RegrR2
+            | AggregateFunction::RegrCount
+            | AggregateFunction::RegrSxx
+            | AggregateFunction::RegrSyy
+            | AggregateFunction::RegrSxy
+            | AggregateFunction::RegrAvgx
+            | AggregateFunction::RegrAvgy => Value::Null,
         }
     }
 }

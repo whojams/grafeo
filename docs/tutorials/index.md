@@ -45,6 +45,46 @@ Learn Grafeo through practical, real-world examples.
 
 </div>
 
+## Interactive Examples
+
+Runnable [marimo](https://marimo.io/) notebooks you can launch locally. Each example includes full code with expected output.
+
+<div class="grid cards" markdown>
+
+-   :material-graph:{ .lg .middle } **Graph Visualization**
+
+    ---
+
+    PageRank, community detection, and interactive visualization with anywidget-graph.
+
+    [:octicons-arrow-right-24: View Example](examples/graph-visualization.md)
+
+-   :material-vector-point:{ .lg .middle } **Vector Search**
+
+    ---
+
+    Cosine similarity, hybrid filtering, and 3D embedding visualization.
+
+    [:octicons-arrow-right-24: View Example](examples/vector-search.md)
+
+-   :material-shield-alert:{ .lg .middle } **Fraud Detection**
+
+    ---
+
+    Ring detection, mule accounts, and risk scoring with PageRank.
+
+    [:octicons-arrow-right-24: View Example](examples/fraud-detection-example.md)
+
+-   :material-swap-horizontal:{ .lg .middle } **NetworkX Integration**
+
+    ---
+
+    Centrality, clustering, and matplotlib visualization via NetworkX.
+
+    [:octicons-arrow-right-24: View Example](examples/networkx-integration.md)
+
+</div>
+
 ## Difficulty Levels
 
 | Tutorial | Difficulty | Estimated Time |

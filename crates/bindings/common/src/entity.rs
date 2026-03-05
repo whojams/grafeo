@@ -154,11 +154,11 @@ mod tests {
     fn extracts_nodes_and_edges() {
         let mut result = QueryResult::new(vec!["n".into(), "e".into()]);
         result.rows.push(vec![
-            node_map(1, &["Person"], &[("name", Value::String("Alice".into()))]),
+            node_map(1, &["Person"], &[("name", Value::String("Alix".into()))]),
             edge_map(10, "KNOWS", 1, 2, &[("since", Value::Int64(2020))]),
         ]);
         result.rows.push(vec![
-            node_map(2, &["Person"], &[("name", Value::String("Bob".into()))]),
+            node_map(2, &["Person"], &[("name", Value::String("Gus".into()))]),
             Value::Null,
         ]);
 
@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(nodes[0].labels, vec!["Person"]);
         assert_eq!(
             nodes[0].properties.get("name"),
-            Some(&Value::String("Alice".into()))
+            Some(&Value::String("Alix".into()))
         );
         assert!(!nodes[0].properties.contains_key("_id"));
         assert_eq!(edges[0].edge_type, "KNOWS");

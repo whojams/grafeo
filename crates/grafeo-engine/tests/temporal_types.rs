@@ -17,7 +17,7 @@ fn create_test_db() -> GrafeoDB {
     session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             (
                 "birthday",
                 Value::Date(grafeo_common::types::Date::from_ymd(1990, 6, 15).unwrap()),
@@ -27,7 +27,7 @@ fn create_test_db() -> GrafeoDB {
     session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             (
                 "birthday",
                 Value::Date(grafeo_common::types::Date::from_ymd(2000, 1, 1).unwrap()),
@@ -283,7 +283,7 @@ fn gql_date_comparison_where() {
         .execute("MATCH (p:Person) WHERE p.birthday > DATE '1995-01-01' RETURN p.name AS name")
         .unwrap();
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0].as_str(), Some("Bob"));
+    assert_eq!(result.rows[0][0].as_str(), Some("Gus"));
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn cypher_date_comparison_where() {
         )
         .unwrap();
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0].as_str(), Some("Bob"));
+    assert_eq!(result.rows[0][0].as_str(), Some("Gus"));
 }
 
 // ============================================================================
@@ -329,7 +329,6 @@ fn gql_date_json_param_roundtrip() {
 
 #[test]
 #[cfg(feature = "sparql")]
-#[ignore = "SPARQL BIND does not evaluate typed literal expressions yet"]
 fn sparql_xsd_date_literal() {
     let db = GrafeoDB::new_in_memory();
     let result = db
@@ -346,7 +345,6 @@ fn sparql_xsd_date_literal() {
 
 #[test]
 #[cfg(feature = "sparql")]
-#[ignore = "SPARQL BIND does not evaluate typed literal expressions yet"]
 fn sparql_xsd_duration_literal() {
     let db = GrafeoDB::new_in_memory();
     let result = db

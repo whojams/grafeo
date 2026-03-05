@@ -28,7 +28,7 @@ cargo test --all-features --workspace --release
 ```bash
 cd crates/bindings/python
 maturin develop
-pytest tests/python/ -v
+pytest crates/bindings/python/tests/ -v
 ```
 
 ### Node.js Tests

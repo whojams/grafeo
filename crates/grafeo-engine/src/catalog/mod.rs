@@ -11,7 +11,7 @@
 //! | Edge types | Maps "KNOWS" → EdgeTypeId |
 //! | Indexes | Which properties are indexed for fast lookups |
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -189,6 +189,12 @@ impl Catalog {
         self.indexes.for_label_property(label, property_key)
     }
 
+    /// Returns all index definitions.
+    #[must_use]
+    pub fn all_indexes(&self) -> Vec<IndexDefinition> {
+        self.indexes.all()
+    }
+
     /// Returns the number of indexes.
     #[must_use]
     pub fn index_count(&self) -> usize {
@@ -290,6 +296,15 @@ impl Catalog {
         self.schema
             .as_ref()
             .map(SchemaCatalog::all_node_types)
+            .unwrap_or_default()
+    }
+
+    /// Returns all registered edge type definition names.
+    #[must_use]
+    pub fn all_edge_type_names(&self) -> Vec<String> {
+        self.schema
+            .as_ref()
+            .map(SchemaCatalog::all_edge_types)
             .unwrap_or_default()
     }
 
@@ -818,6 +833,10 @@ impl IndexCatalog {
     fn count(&self) -> usize {
         self.indexes.read().len()
     }
+
+    fn all(&self) -> Vec<IndexDefinition> {
+        self.indexes.read().values().cloned().collect()
+    }
 }
 
 // === Type Definitions ===
@@ -995,9 +1014,9 @@ pub struct ProcedureDefinition {
 /// Schema constraints and type definitions.
 pub struct SchemaCatalog {
     /// Properties that must be unique for a given label.
-    unique_constraints: RwLock<HashMap<(LabelId, PropertyKeyId), ()>>,
+    unique_constraints: RwLock<HashSet<(LabelId, PropertyKeyId)>>,
     /// Properties that are required (NOT NULL) for a given label.
-    required_properties: RwLock<HashMap<(LabelId, PropertyKeyId), ()>>,
+    required_properties: RwLock<HashSet<(LabelId, PropertyKeyId)>>,
     /// Registered node type definitions.
     node_types: RwLock<HashMap<String, NodeTypeDefinition>>,
     /// Registered edge type definitions.
@@ -1015,8 +1034,8 @@ pub struct SchemaCatalog {
 impl SchemaCatalog {
     fn new() -> Self {
         Self {
-            unique_constraints: RwLock::new(HashMap::new()),
-            required_properties: RwLock::new(HashMap::new()),
+            unique_constraints: RwLock::new(HashSet::new()),
+            required_properties: RwLock::new(HashSet::new()),
             node_types: RwLock::new(HashMap::new()),
             edge_types: RwLock::new(HashMap::new()),
             graph_types: RwLock::new(HashMap::new()),
@@ -1334,10 +1353,9 @@ impl SchemaCatalog {
     ) -> Result<(), CatalogError> {
         let mut constraints = self.unique_constraints.write();
         let key = (label, property_key);
-        if constraints.contains_key(&key) {
+        if !constraints.insert(key) {
             return Err(CatalogError::ConstraintAlreadyExists);
         }
-        constraints.insert(key, ());
         Ok(())
     }
 
@@ -1348,23 +1366,22 @@ impl SchemaCatalog {
     ) -> Result<(), CatalogError> {
         let mut required = self.required_properties.write();
         let key = (label, property_key);
-        if required.contains_key(&key) {
+        if !required.insert(key) {
             return Err(CatalogError::ConstraintAlreadyExists);
         }
-        required.insert(key, ());
         Ok(())
     }
 
     fn is_property_required(&self, label: LabelId, property_key: PropertyKeyId) -> bool {
         self.required_properties
             .read()
-            .contains_key(&(label, property_key))
+            .contains(&(label, property_key))
     }
 
     fn is_property_unique(&self, label: LabelId, property_key: PropertyKeyId) -> bool {
         self.unique_constraints
             .read()
-            .contains_key(&(label, property_key))
+            .contains(&(label, property_key))
     }
 }
 

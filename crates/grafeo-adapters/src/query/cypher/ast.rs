@@ -26,6 +26,8 @@ pub enum Statement {
         /// Whether to keep duplicates (UNION ALL vs UNION DISTINCT).
         all: bool,
     },
+    /// EXPLAIN: returns the query plan without executing.
+    Explain(Box<Statement>),
 }
 
 /// A complete Cypher query.
@@ -153,7 +155,7 @@ pub enum PathFunction {
     AllShortestPaths,
 }
 
-/// A node pattern like (n:Person {name: 'Alice'}).
+/// A node pattern like (n:Person {name: 'Alix'}).
 #[derive(Debug, Clone)]
 pub struct NodePattern {
     /// Variable name (optional).

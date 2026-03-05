@@ -29,7 +29,7 @@ Understanding the differences between Labeled Property Graph (LPG) and Resource 
 Node:
   - ID: internal identifier
   - Labels: [Person, Employee]
-  - Properties: {name: "Alice", age: 30}
+  - Properties: {name: "Alix", age: 30}
 
 Edge:
   - ID: internal identifier
@@ -44,10 +44,10 @@ Edge:
 ```
 Subject-Predicate-Object Triples:
 
-<http://example.org/Alice> <rdf:type> <http://example.org/Person>
-<http://example.org/Alice> <foaf:name> "Alice"
-<http://example.org/Alice> <foaf:age> "30"^^xsd:integer
-<http://example.org/Alice> <foaf:knows> <http://example.org/Bob>
+<http://example.org/Alix> <rdf:type> <http://example.org/Person>
+<http://example.org/Alix> <foaf:name> "Alix"
+<http://example.org/Alix> <foaf:age> "30"^^xsd:integer
+<http://example.org/Alix> <foaf:knows> <http://example.org/Gus>
 ```
 
 ## When to Use Each
@@ -87,7 +87,7 @@ Subject-Predicate-Object Triples:
     # More complex to model
     SELECT ?since ?strength
     WHERE {
-        << :Alice :knows :Bob >> :since ?since ;
+        << :Alix :knows :Gus >> :since ?since ;
                                  :strength ?strength .
     }
     ```
@@ -98,7 +98,7 @@ Subject-Predicate-Object Triples:
 
     ```sql
     -- Node with multiple labels
-    INSERT (:Person:Employee:Manager {name: 'Alice'})
+    INSERT (:Person:Employee:Manager {name: 'Alix'})
 
     MATCH (p:Person:Employee)
     RETURN p.name
@@ -109,8 +109,8 @@ Subject-Predicate-Object Triples:
     ```sparql
     # Multiple types are natural
     INSERT DATA {
-        :Alice a :Person, :Employee, :Manager ;
-               :name "Alice" .
+        :Alix a :Person, :Employee, :Manager ;
+               :name "Alix" .
     }
     ```
 
@@ -120,7 +120,7 @@ Subject-Predicate-Object Triples:
 
     ```sql
     -- Internal IDs, application-defined keys
-    INSERT (:Person {id: 'user-123', name: 'Alice'})
+    INSERT (:Person {id: 'user-123', name: 'Alix'})
     ```
 
 === "RDF"
@@ -129,7 +129,7 @@ Subject-Predicate-Object Triples:
     # Global URIs enable linking
     INSERT DATA {
         <http://example.org/user-123> a :Person ;
-            :name "Alice" .
+            :name "Alix" .
     }
     ```
 

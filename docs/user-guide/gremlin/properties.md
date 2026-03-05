@@ -55,7 +55,7 @@ Returns the internal ID of a vertex or edge:
 g.V().hasLabel('Person').id()
 
 // Get edge IDs
-g.V().has('name', 'Alice').outE('KNOWS').id()
+g.V().has('name', 'Alix').outE('KNOWS').id()
 ```
 
 ## label()
@@ -67,7 +67,7 @@ Returns the label of a vertex or edge:
 g.V().label()
 
 // Get edge labels
-g.V().has('name', 'Alice').outE().label()
+g.V().has('name', 'Alix').outE().label()
 ```
 
 ## properties()
@@ -76,10 +76,10 @@ Returns property objects (key + value) rather than just values:
 
 ```gremlin
 // All properties
-g.V().has('name', 'Alice').properties()
+g.V().has('name', 'Alix').properties()
 
 // Specific properties
-g.V().has('name', 'Alice').properties('name', 'age')
+g.V().has('name', 'Alix').properties('name', 'age')
 ```
 
 ## constant()
@@ -97,10 +97,10 @@ Use `property()` to set properties on vertices:
 
 ```gremlin
 // Set a single property
-g.addV('Person').property('name', 'Alice')
+g.addV('Person').property('name', 'Alix')
 
 // Set multiple properties
-g.addV('Person').property('name', 'Alice').property('age', 30)
+g.addV('Person').property('name', 'Alix').property('age', 30)
 ```
 
 ### Cardinality
@@ -109,13 +109,13 @@ Control how property values are stored:
 
 ```gremlin
 // Single value (replaces existing)
-g.V().has('name', 'Alice').property(single, 'email', 'alice@example.com')
+g.V().has('name', 'Alix').property(single, 'email', 'alix@example.com')
 
 // List (appends to existing values)
-g.V().has('name', 'Alice').property(list, 'phone', '555-0100')
+g.V().has('name', 'Alix').property(list, 'phone', '555-0100')
 
 // Set (adds if not already present)
-g.V().has('name', 'Alice').property(set, 'tag', 'developer')
+g.V().has('name', 'Alix').property(set, 'tag', 'developer')
 ```
 
 ## Python Example
@@ -126,13 +126,13 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data
-db.execute("INSERT (:Person {name: 'Alice', age: 30, city: 'Seattle'})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25, city: 'Portland'})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30, city: 'Utrecht'})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25, city: 'Portland'})")
 
 # Get names
 names = db.execute_gremlin("g.V().hasLabel('Person').values('name')")
 for row in names:
-    print(row)  # Alice, Bob
+    print(row)  # Alix, Gus
 
 # Get IDs
 ids = db.execute_gremlin("g.V().hasLabel('Person').id()")

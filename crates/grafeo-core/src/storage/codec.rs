@@ -348,7 +348,11 @@ impl TypeSpecificCompressor {
             CompressionCodec::None => {
                 let mut values = Vec::with_capacity(data.data.len() / 8);
                 for chunk in data.data.chunks_exact(8) {
-                    values.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+                    values.push(u64::from_le_bytes(
+                        chunk
+                            .try_into()
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+                    ));
                 }
                 Ok(values)
             }

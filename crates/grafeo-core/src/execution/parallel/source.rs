@@ -616,7 +616,7 @@ use grafeo_common::types::NodeId;
 /// use grafeo_core::graph::lpg::LpgStore;
 /// use std::sync::Arc;
 ///
-/// let store = Arc::new(LpgStore::new());
+/// let store = Arc::new(LpgStore::new().unwrap());
 /// // ... populate store ...
 ///
 /// // Scan all Person nodes in parallel
@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn test_parallel_node_scan_source() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Add some nodes with labels
         for i in 0..100 {
@@ -983,7 +983,7 @@ mod tests {
 
     #[test]
     fn test_parallel_node_scan_partition() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Add 100 nodes
         for _ in 0..100 {
@@ -1006,7 +1006,7 @@ mod tests {
 
     #[test]
     fn test_parallel_node_scan_morsels() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new());
+        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
 
         // Add 1000 nodes
         for _ in 0..1000 {

@@ -103,12 +103,12 @@ hide:
 
     # Create nodes and edges
     db.execute("""
-        INSERT (:Person {name: 'Alice', age: 30})
-        INSERT (:Person {name: 'Bob', age: 25})
+        INSERT (:Person {name: 'Alix', age: 30})
+        INSERT (:Person {name: 'Gus', age: 25})
     """)
 
     db.execute("""
-        MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
         INSERT (a)-[:KNOWS {since: 2024}]->(b)
     """)
 
@@ -139,12 +139,12 @@ hide:
         let mut session = db.session();
 
         session.execute(r#"
-            INSERT (:Person {name: 'Alice', age: 30})
-            INSERT (:Person {name: 'Bob', age: 25})
+            INSERT (:Person {name: 'Alix', age: 30})
+            INSERT (:Person {name: 'Gus', age: 25})
         "#)?;
 
         session.execute(r#"
-            MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+            MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
             INSERT (a)-[:KNOWS {since: 2024}]->(b)
         "#)?;
 
@@ -200,7 +200,7 @@ Choose the query language that fits the project:
 === "GQL"
 
     ```sql
-    MATCH (me:Person {name: 'Alice'})-[:KNOWS]->(friend)-[:KNOWS]->(fof)
+    MATCH (me:Person {name: 'Alix'})-[:KNOWS]->(friend)-[:KNOWS]->(fof)
     WHERE fof <> me
     RETURN DISTINCT fof.name
     ```
@@ -208,7 +208,7 @@ Choose the query language that fits the project:
 === "Cypher"
 
     ```cypher
-    MATCH (me:Person {name: 'Alice'})-[:KNOWS]->(friend)-[:KNOWS]->(fof)
+    MATCH (me:Person {name: 'Alix'})-[:KNOWS]->(friend)-[:KNOWS]->(fof)
     WHERE fof <> me
     RETURN DISTINCT fof.name
     ```
@@ -216,7 +216,7 @@ Choose the query language that fits the project:
 === "Gremlin"
 
     ```gremlin
-    g.V().has('name', 'Alice').out('KNOWS').out('KNOWS').
+    g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').
       where(neq('me')).values('name').dedup()
     ```
 
@@ -224,7 +224,7 @@ Choose the query language that fits the project:
 
     ```graphql
     {
-      Person(name: "Alice") {
+      Person(name: "Alix") {
         friends { friends { name } }
       }
     }
@@ -234,7 +234,7 @@ Choose the query language that fits the project:
 
     ```sparql
     SELECT DISTINCT ?fofName WHERE {
-      ?me foaf:name "Alice" .
+      ?me foaf:name "Alix" .
       ?me foaf:knows ?friend .
       ?friend foaf:knows ?fof .
       ?fof foaf:name ?fofName .

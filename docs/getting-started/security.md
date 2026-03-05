@@ -207,7 +207,7 @@ def decrypt_value(encrypted: str) -> str:
 
 # Store encrypted
 ssn_encrypted = encrypt_value("123-45-6789")
-db.create_node(["Person"], {"name": "Alice", "ssn_encrypted": ssn_encrypted})
+db.create_node(["Person"], {"name": "Alix", "ssn_encrypted": ssn_encrypted})
 
 # Retrieve and decrypt
 node = db.get_node(node_id)

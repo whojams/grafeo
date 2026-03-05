@@ -496,7 +496,7 @@ impl<'a> StreamingIter<'a> {
     }
 }
 
-impl<'a> Iterator for StreamingIter<'a> {
+impl Iterator for StreamingIter<'_> {
     type Item = RowIndices;
 
     fn next(&mut self) -> Option<Self::Item> {

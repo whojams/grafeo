@@ -24,7 +24,7 @@ MATCH (p:Person)
 RETURN p
 
 -- Match nodes with properties
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 RETURN p
 ```
 
@@ -58,8 +58,8 @@ MATCH (p:Person)
 WHERE p.age > 30
 RETURN p.name, p.age
 
--- Find Alice's friends
-MATCH (a:Person {name: 'Alice'})-[:KNOWS]->(friend)
+-- Find Alix's friends
+MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(friend)
 RETURN friend.name
 ```
 
@@ -80,6 +80,15 @@ ORDER BY p.age DESC
 MATCH (p:Person)
 RETURN p.name, p.age
 ORDER BY p.age DESC, p.name ASC
+
+-- Control null placement (ISO GA03)
+MATCH (p:Person)
+RETURN p.name, p.age
+ORDER BY p.age ASC NULLS FIRST
+
+MATCH (p:Person)
+RETURN p.name, p.age
+ORDER BY p.age DESC NULLS LAST
 ```
 
 ## Limiting Results
@@ -142,7 +151,7 @@ RETURN p.name, p.age
 
 ```sql
 -- Insert data without returning anything
-MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
 INSERT (a)-[:KNOWS]->(b)
 FINISH
 ```
@@ -153,7 +162,7 @@ FINISH
 
 ```sql
 -- Find friends, then filter by age
-MATCH (p:Person {name: 'Alice'})-[:KNOWS]->(friend)
+MATCH (p:Person {name: 'Alix'})-[:KNOWS]->(friend)
 RETURN friend
 NEXT
 MATCH (friend) WHERE friend.age > 25

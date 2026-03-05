@@ -46,13 +46,13 @@ Use `has()` to filter by property values:
 
 ```gremlin
 // Property equals value
-g.V().has('name', 'Alice')
+g.V().has('name', 'Alix')
 
 // Property exists (any value)
 g.V().has('email')
 
 // Label + property shorthand
-g.V().has('Person', 'name', 'Alice')
+g.V().has('Person', 'name', 'Alix')
 ```
 
 ## Predicate Filters
@@ -139,8 +139,8 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 
 # Basic traversal
 result = db.execute_gremlin("g.V().hasLabel('Person')")
@@ -148,7 +148,7 @@ for row in result:
     print(row)
 
 # Filter by property
-result = db.execute_gremlin("g.V().has('name', 'Alice')")
+result = db.execute_gremlin("g.V().has('name', 'Alix')")
 ```
 
 ## Supported Predicates

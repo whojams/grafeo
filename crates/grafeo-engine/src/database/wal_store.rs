@@ -1,0 +1,593 @@
+//! WAL-aware graph store wrapper.
+//!
+//! Wraps an [`LpgStore`] and logs every mutation to the WAL so that
+//! query-engine mutations (INSERT, DELETE, SET via GQL/Cypher/etc.)
+//! survive a close/reopen cycle.
+
+use std::sync::Arc;
+
+use grafeo_adapters::storage::wal::{LpgWal, WalRecord};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::utils::hash::FxHashMap;
+use grafeo_core::graph::lpg::{CompareOp, Edge, LpgStore, Node};
+use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
+use grafeo_core::statistics::Statistics;
+
+use arcstr::ArcStr;
+
+/// A [`GraphStoreMut`] decorator that delegates every call to an inner
+/// [`LpgStore`] and additionally logs mutation operations to the WAL.
+///
+/// Read-only methods are forwarded without any WAL interaction.
+pub(crate) struct WalGraphStore {
+    inner: Arc<LpgStore>,
+    wal: Arc<LpgWal>,
+}
+
+impl WalGraphStore {
+    /// Creates a new WAL-aware store wrapper.
+    pub fn new(inner: Arc<LpgStore>, wal: Arc<LpgWal>) -> Self {
+        Self { inner, wal }
+    }
+
+    /// Logs a WAL record, warning on failure (mirrors `GrafeoDB::log_wal`).
+    fn log(&self, record: &WalRecord) {
+        if let Err(e) = self.wal.log(record) {
+            tracing::warn!("WAL log failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GraphStore (read-only): pure delegation
+// ---------------------------------------------------------------------------
+
+impl GraphStore for WalGraphStore {
+    fn get_node(&self, id: NodeId) -> Option<Node> {
+        self.inner.get_node(id)
+    }
+
+    fn get_edge(&self, id: EdgeId) -> Option<Edge> {
+        self.inner.get_edge(id)
+    }
+
+    fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
+        self.inner.get_node_versioned(id, epoch, tx_id)
+    }
+
+    fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
+        self.inner.get_edge_versioned(id, epoch, tx_id)
+    }
+
+    fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+        self.inner.get_node_at_epoch(id, epoch)
+    }
+
+    fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+        self.inner.get_edge_at_epoch(id, epoch)
+    }
+
+    fn get_node_property(&self, id: NodeId, key: &PropertyKey) -> Option<Value> {
+        self.inner.get_node_property(id, key)
+    }
+
+    fn get_edge_property(&self, id: EdgeId, key: &PropertyKey) -> Option<Value> {
+        self.inner.get_edge_property(id, key)
+    }
+
+    fn get_node_property_batch(&self, ids: &[NodeId], key: &PropertyKey) -> Vec<Option<Value>> {
+        self.inner.get_node_property_batch(ids, key)
+    }
+
+    fn get_nodes_properties_batch(&self, ids: &[NodeId]) -> Vec<FxHashMap<PropertyKey, Value>> {
+        self.inner.get_nodes_properties_batch(ids)
+    }
+
+    fn get_nodes_properties_selective_batch(
+        &self,
+        ids: &[NodeId],
+        keys: &[PropertyKey],
+    ) -> Vec<FxHashMap<PropertyKey, Value>> {
+        self.inner.get_nodes_properties_selective_batch(ids, keys)
+    }
+
+    fn get_edges_properties_selective_batch(
+        &self,
+        ids: &[EdgeId],
+        keys: &[PropertyKey],
+    ) -> Vec<FxHashMap<PropertyKey, Value>> {
+        self.inner.get_edges_properties_selective_batch(ids, keys)
+    }
+
+    fn neighbors(&self, node: NodeId, direction: Direction) -> Vec<NodeId> {
+        GraphStore::neighbors(self.inner.as_ref(), node, direction)
+    }
+
+    fn edges_from(&self, node: NodeId, direction: Direction) -> Vec<(NodeId, EdgeId)> {
+        GraphStore::edges_from(self.inner.as_ref(), node, direction)
+    }
+
+    fn out_degree(&self, node: NodeId) -> usize {
+        self.inner.out_degree(node)
+    }
+
+    fn in_degree(&self, node: NodeId) -> usize {
+        self.inner.in_degree(node)
+    }
+
+    fn has_backward_adjacency(&self) -> bool {
+        self.inner.has_backward_adjacency()
+    }
+
+    fn node_ids(&self) -> Vec<NodeId> {
+        self.inner.node_ids()
+    }
+
+    fn nodes_by_label(&self, label: &str) -> Vec<NodeId> {
+        self.inner.nodes_by_label(label)
+    }
+
+    fn node_count(&self) -> usize {
+        self.inner.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.inner.edge_count()
+    }
+
+    fn edge_type(&self, id: EdgeId) -> Option<ArcStr> {
+        self.inner.edge_type(id)
+    }
+
+    fn has_property_index(&self, property: &str) -> bool {
+        self.inner.has_property_index(property)
+    }
+
+    fn find_nodes_by_property(&self, property: &str, value: &Value) -> Vec<NodeId> {
+        self.inner.find_nodes_by_property(property, value)
+    }
+
+    fn find_nodes_by_properties(&self, conditions: &[(&str, Value)]) -> Vec<NodeId> {
+        self.inner.find_nodes_by_properties(conditions)
+    }
+
+    fn find_nodes_in_range(
+        &self,
+        property: &str,
+        min: Option<&Value>,
+        max: Option<&Value>,
+        min_inclusive: bool,
+        max_inclusive: bool,
+    ) -> Vec<NodeId> {
+        self.inner
+            .find_nodes_in_range(property, min, max, min_inclusive, max_inclusive)
+    }
+
+    fn node_property_might_match(
+        &self,
+        property: &PropertyKey,
+        op: CompareOp,
+        value: &Value,
+    ) -> bool {
+        self.inner.node_property_might_match(property, op, value)
+    }
+
+    fn edge_property_might_match(
+        &self,
+        property: &PropertyKey,
+        op: CompareOp,
+        value: &Value,
+    ) -> bool {
+        self.inner.edge_property_might_match(property, op, value)
+    }
+
+    fn statistics(&self) -> Arc<Statistics> {
+        self.inner.statistics()
+    }
+
+    fn estimate_label_cardinality(&self, label: &str) -> f64 {
+        self.inner.estimate_label_cardinality(label)
+    }
+
+    fn estimate_avg_degree(&self, edge_type: &str, outgoing: bool) -> f64 {
+        self.inner.estimate_avg_degree(edge_type, outgoing)
+    }
+
+    fn current_epoch(&self) -> EpochId {
+        self.inner.current_epoch()
+    }
+
+    fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
+        self.inner.get_node_history(id)
+    }
+
+    fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
+        self.inner.get_edge_history(id)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GraphStoreMut: delegate + WAL log
+// ---------------------------------------------------------------------------
+
+impl GraphStoreMut for WalGraphStore {
+    fn create_node(&self, labels: &[&str]) -> NodeId {
+        let id = self.inner.create_node(labels);
+        self.log(&WalRecord::CreateNode {
+            id,
+            labels: labels.iter().map(|s| (*s).to_string()).collect(),
+        });
+        id
+    }
+
+    fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
+        let id = self.inner.create_node_versioned(labels, epoch, tx_id);
+        self.log(&WalRecord::CreateNode {
+            id,
+            labels: labels.iter().map(|s| (*s).to_string()).collect(),
+        });
+        id
+    }
+
+    fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
+        let id = self.inner.create_edge(src, dst, edge_type);
+        self.log(&WalRecord::CreateEdge {
+            id,
+            src,
+            dst,
+            edge_type: edge_type.to_string(),
+        });
+        id
+    }
+
+    fn create_edge_versioned(
+        &self,
+        src: NodeId,
+        dst: NodeId,
+        edge_type: &str,
+        epoch: EpochId,
+        tx_id: TxId,
+    ) -> EdgeId {
+        let id = self
+            .inner
+            .create_edge_versioned(src, dst, edge_type, epoch, tx_id);
+        self.log(&WalRecord::CreateEdge {
+            id,
+            src,
+            dst,
+            edge_type: edge_type.to_string(),
+        });
+        id
+    }
+
+    fn batch_create_edges(&self, edges: &[(NodeId, NodeId, &str)]) -> Vec<EdgeId> {
+        let ids = self.inner.batch_create_edges(edges);
+        for (id, (src, dst, edge_type)) in ids.iter().zip(edges) {
+            self.log(&WalRecord::CreateEdge {
+                id: *id,
+                src: *src,
+                dst: *dst,
+                edge_type: (*edge_type).to_string(),
+            });
+        }
+        ids
+    }
+
+    fn delete_node(&self, id: NodeId) -> bool {
+        let deleted = self.inner.delete_node(id);
+        if deleted {
+            self.log(&WalRecord::DeleteNode { id });
+        }
+        deleted
+    }
+
+    fn delete_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> bool {
+        let deleted = self.inner.delete_node_versioned(id, epoch, tx_id);
+        if deleted {
+            self.log(&WalRecord::DeleteNode { id });
+        }
+        deleted
+    }
+
+    fn delete_node_edges(&self, node_id: NodeId) {
+        // Collect edge IDs before deletion so we can log them
+        let outgoing: Vec<EdgeId> = self
+            .inner
+            .edges_from(node_id, Direction::Outgoing)
+            .map(|(_, eid)| eid)
+            .collect();
+        let incoming: Vec<EdgeId> = self
+            .inner
+            .edges_from(node_id, Direction::Incoming)
+            .map(|(_, eid)| eid)
+            .collect();
+
+        self.inner.delete_node_edges(node_id);
+
+        for id in outgoing.into_iter().chain(incoming) {
+            self.log(&WalRecord::DeleteEdge { id });
+        }
+    }
+
+    fn delete_edge(&self, id: EdgeId) -> bool {
+        let deleted = self.inner.delete_edge(id);
+        if deleted {
+            self.log(&WalRecord::DeleteEdge { id });
+        }
+        deleted
+    }
+
+    fn delete_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> bool {
+        let deleted = self.inner.delete_edge_versioned(id, epoch, tx_id);
+        if deleted {
+            self.log(&WalRecord::DeleteEdge { id });
+        }
+        deleted
+    }
+
+    fn set_node_property(&self, id: NodeId, key: &str, value: Value) {
+        self.log(&WalRecord::SetNodeProperty {
+            id,
+            key: key.to_string(),
+            value: value.clone(),
+        });
+        self.inner.set_node_property(id, key, value);
+    }
+
+    fn set_edge_property(&self, id: EdgeId, key: &str, value: Value) {
+        self.log(&WalRecord::SetEdgeProperty {
+            id,
+            key: key.to_string(),
+            value: value.clone(),
+        });
+        self.inner.set_edge_property(id, key, value);
+    }
+
+    fn remove_node_property(&self, id: NodeId, key: &str) -> Option<Value> {
+        let removed = self.inner.remove_node_property(id, key);
+        if removed.is_some() {
+            self.log(&WalRecord::RemoveNodeProperty {
+                id,
+                key: key.to_string(),
+            });
+        }
+        removed
+    }
+
+    fn remove_edge_property(&self, id: EdgeId, key: &str) -> Option<Value> {
+        let removed = self.inner.remove_edge_property(id, key);
+        if removed.is_some() {
+            self.log(&WalRecord::RemoveEdgeProperty {
+                id,
+                key: key.to_string(),
+            });
+        }
+        removed
+    }
+
+    fn add_label(&self, node_id: NodeId, label: &str) -> bool {
+        let added = self.inner.add_label(node_id, label);
+        if added {
+            self.log(&WalRecord::AddNodeLabel {
+                id: node_id,
+                label: label.to_string(),
+            });
+        }
+        added
+    }
+
+    fn remove_label(&self, node_id: NodeId, label: &str) -> bool {
+        let removed = self.inner.remove_label(node_id, label);
+        if removed {
+            self.log(&WalRecord::RemoveNodeLabel {
+                id: node_id,
+                label: label.to_string(),
+            });
+        }
+        removed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grafeo_adapters::storage::wal::TypedWal;
+
+    fn setup() -> (WalGraphStore, Arc<LpgWal>) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(LpgStore::new().unwrap());
+        let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
+        let wal_ref = Arc::clone(&wal);
+        (WalGraphStore::new(store, wal), wal_ref)
+    }
+
+    #[test]
+    fn create_node_delegates_and_logs() {
+        let (ws, wal) = setup();
+        let id = ws.create_node(&["Person", "Employee"]);
+
+        assert!(ws.get_node(id).is_some());
+        assert_eq!(ws.node_count(), 1);
+        assert_eq!(wal.record_count(), 1);
+    }
+
+    #[test]
+    fn create_edge_delegates_and_logs() {
+        let (ws, wal) = setup();
+        let a = ws.create_node(&["Node"]);
+        let b = ws.create_node(&["Node"]);
+        let eid = ws.create_edge(a, b, "KNOWS");
+
+        assert!(ws.get_edge(eid).is_some());
+        assert_eq!(ws.edge_count(), 1);
+        // 2 CreateNode + 1 CreateEdge
+        assert_eq!(wal.record_count(), 3);
+    }
+
+    #[test]
+    fn set_property_delegates_and_logs() {
+        let (ws, wal) = setup();
+        let nid = ws.create_node(&["Person"]);
+        ws.set_node_property(nid, "name", Value::String("Alix".into()));
+
+        assert_eq!(
+            ws.get_node_property(nid, &PropertyKey::from("name")),
+            Some(Value::String("Alix".into()))
+        );
+        // CreateNode + SetNodeProperty
+        assert_eq!(wal.record_count(), 2);
+
+        let a = ws.create_node(&["Node"]);
+        let b = ws.create_node(&["Node"]);
+        let eid = ws.create_edge(a, b, "LINK");
+        ws.set_edge_property(eid, "weight", Value::Int64(42));
+
+        assert_eq!(
+            ws.get_edge_property(eid, &PropertyKey::from("weight")),
+            Some(Value::Int64(42))
+        );
+        // +2 CreateNode + 1 CreateEdge + 1 SetEdgeProperty = 6 total
+        assert_eq!(wal.record_count(), 6);
+    }
+
+    #[test]
+    fn delete_node_only_logs_on_success() {
+        let (ws, wal) = setup();
+        let id = ws.create_node(&["Person"]);
+        assert_eq!(wal.record_count(), 1);
+
+        // Delete nonexistent: no new record
+        assert!(!ws.delete_node(NodeId::new(999)));
+        assert_eq!(wal.record_count(), 1);
+
+        // Delete real node: logs
+        assert!(ws.delete_node(id));
+        assert_eq!(wal.record_count(), 2);
+        assert!(ws.get_node(id).is_none());
+    }
+
+    #[test]
+    fn delete_edge_only_logs_on_success() {
+        let (ws, wal) = setup();
+        let a = ws.create_node(&["Node"]);
+        let b = ws.create_node(&["Node"]);
+        let eid = ws.create_edge(a, b, "LINK");
+        assert_eq!(wal.record_count(), 3);
+
+        // Delete nonexistent: no new record
+        assert!(!ws.delete_edge(EdgeId::new(999)));
+        assert_eq!(wal.record_count(), 3);
+
+        // Delete real edge: logs
+        assert!(ws.delete_edge(eid));
+        assert_eq!(wal.record_count(), 4);
+        assert!(ws.get_edge(eid).is_none());
+    }
+
+    #[test]
+    fn remove_property_only_logs_on_success() {
+        let (ws, wal) = setup();
+        let id = ws.create_node(&["Person"]);
+        ws.set_node_property(id, "age", Value::Int64(30));
+        assert_eq!(wal.record_count(), 2);
+
+        // Remove nonexistent: no log
+        assert!(ws.remove_node_property(id, "missing").is_none());
+        assert_eq!(wal.record_count(), 2);
+
+        // Remove real property: logs
+        assert_eq!(ws.remove_node_property(id, "age"), Some(Value::Int64(30)));
+        assert_eq!(wal.record_count(), 3);
+
+        // Edge property variant
+        let a = ws.create_node(&["Node"]);
+        let b = ws.create_node(&["Node"]);
+        let eid = ws.create_edge(a, b, "X");
+        ws.set_edge_property(eid, "w", Value::Int64(1));
+        let before = wal.record_count();
+
+        assert!(ws.remove_edge_property(eid, "missing").is_none());
+        assert_eq!(wal.record_count(), before);
+
+        assert_eq!(ws.remove_edge_property(eid, "w"), Some(Value::Int64(1)));
+        assert_eq!(wal.record_count(), before + 1);
+    }
+
+    #[test]
+    fn add_remove_label_conditional_logging() {
+        let (ws, wal) = setup();
+        let id = ws.create_node(&["Person"]);
+        assert_eq!(wal.record_count(), 1);
+
+        // Add duplicate label: no log
+        assert!(!ws.add_label(id, "Person"));
+        assert_eq!(wal.record_count(), 1);
+
+        // Add new label: logs
+        assert!(ws.add_label(id, "Employee"));
+        assert_eq!(wal.record_count(), 2);
+
+        // Remove label: logs
+        assert!(ws.remove_label(id, "Employee"));
+        assert_eq!(wal.record_count(), 3);
+
+        // Remove absent label: no log
+        assert!(!ws.remove_label(id, "Employee"));
+        assert_eq!(wal.record_count(), 3);
+    }
+
+    #[test]
+    fn batch_create_edges_logs_each() {
+        let (ws, wal) = setup();
+        let a = ws.create_node(&["Node"]);
+        let b = ws.create_node(&["Node"]);
+        let c = ws.create_node(&["Node"]);
+        assert_eq!(wal.record_count(), 3);
+
+        let eids = ws.batch_create_edges(&[(a, b, "X"), (b, c, "Y")]);
+        assert_eq!(eids.len(), 2);
+        assert_eq!(ws.edge_count(), 2);
+        // One WAL record per edge
+        assert_eq!(wal.record_count(), 5);
+    }
+
+    #[test]
+    fn delete_node_edges_logs_each_edge() {
+        let (ws, wal) = setup();
+        let a = ws.create_node(&["Node"]);
+        let b = ws.create_node(&["Node"]);
+        let c = ws.create_node(&["Node"]);
+        ws.create_edge(a, b, "X");
+        ws.create_edge(c, a, "Y");
+        assert_eq!(wal.record_count(), 5);
+
+        ws.delete_node_edges(a);
+        // 2 DeleteEdge records (one outgoing, one incoming)
+        assert_eq!(wal.record_count(), 7);
+        assert_eq!(ws.edge_count(), 0);
+    }
+
+    #[test]
+    fn read_operations_do_not_log() {
+        let (ws, wal) = setup();
+        let id = ws.create_node(&["Person"]);
+        ws.set_node_property(id, "name", Value::String("Alix".into()));
+        assert_eq!(wal.record_count(), 2);
+
+        // Exercise read-only methods
+        let _ = ws.get_node(id);
+        let _ = ws.node_count();
+        let _ = ws.node_ids();
+        let _ = ws.nodes_by_label("Person");
+        let _ = ws.get_node_property(id, &PropertyKey::from("name"));
+        let _ = ws.neighbors(id, Direction::Outgoing);
+        let _ = ws.edge_count();
+        let _ = ws.out_degree(id);
+        let _ = ws.in_degree(id);
+        let _ = ws.has_backward_adjacency();
+        let _ = ws.statistics();
+
+        // No additional records
+        assert_eq!(wal.record_count(), 2);
+    }
+}

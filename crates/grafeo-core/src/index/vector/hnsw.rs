@@ -9,7 +9,7 @@
 //! This index is **topology-only**: it stores only the neighbor graph
 //! structure, not the vectors themselves. Vectors are read on-the-fly
 //! through a [`VectorAccessor`], which typically reads from property
-//! storage — the single source of truth — halving memory usage for
+//! storage, the single source of truth, halving memory usage for
 //! vector workloads.
 //!
 //! # Algorithm Overview
@@ -105,7 +105,7 @@ impl Ord for FurthestCandidate {
     }
 }
 
-/// Node data stored in the HNSW index (topology only — no vector data).
+/// Node data stored in the HNSW index (topology only, no vector data).
 #[derive(Debug, Clone)]
 struct HnswNode {
     /// Neighbors at each layer (layer 0 is the bottom).
@@ -225,7 +225,7 @@ impl HnswIndex {
             return;
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("entry_point confirmed Some above");
         let current_max_level = *max_level;
 
         // Insert the node first so we can reference it
@@ -373,7 +373,7 @@ impl HnswIndex {
             return Vec::new();
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("entry_point confirmed Some above");
 
         // Greedy search from top layer to layer 1
         let mut current_ep = ep;
@@ -396,7 +396,7 @@ impl HnswIndex {
     /// Searches for the k nearest neighbors with an allowlist filter.
     ///
     /// Only nodes in the `allowlist` can appear in results. The HNSW graph
-    /// is still fully traversed for connectivity — the filter only restricts
+    /// is still fully traversed for connectivity; the filter only restricts
     /// the result set. The search beam width (`ef`) is automatically scaled
     /// based on the allowlist selectivity to maintain recall.
     ///
@@ -460,7 +460,7 @@ impl HnswIndex {
             return Vec::new();
         }
 
-        let ep = entry_point.unwrap();
+        let ep = entry_point.expect("entry_point confirmed Some above");
 
         // Greedy search from top layer to layer 1
         let mut current_ep = ep;
@@ -1411,7 +1411,7 @@ mod tests {
 
     #[test]
     fn test_hnsw_recall_euclidean() {
-        // 1000 vectors, 20 dimensions — matches ann-benchmarks random-xs profile
+        // 1000 vectors, 20 dimensions, matches ann-benchmarks random-xs profile
         let n = 1000;
         let dim = 20;
         let k = 10;
@@ -1551,7 +1551,7 @@ mod tests {
         // Outlier in a different direction
         index.insert(NodeId::new(5), &[0.0, 1.0, 0.0, 0.0], &accessor);
 
-        // Search for the outlier — it should be findable
+        // Search for the outlier; it should be findable
         let results = index.search(&[0.0, 0.9, 0.0, 0.0], 1, &accessor);
         assert_eq!(results[0].0, NodeId::new(5));
     }
@@ -1970,7 +1970,7 @@ mod tests {
             index.insert(NodeId::new(i as u64), vec, &accessor);
         }
 
-        // 20% allowlist — moderate selectivity
+        // 20% allowlist, moderate selectivity
         let allowlist: HashSet<NodeId> = (0..n)
             .filter(|i| i % 5 == 0)
             .map(|i| NodeId::new(i as u64))

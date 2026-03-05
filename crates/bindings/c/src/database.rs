@@ -847,7 +847,10 @@ pub extern "C" fn grafeo_find_nodes_by_property(
 pub extern "C" fn grafeo_free_node_ids(ids: *mut u64, count: usize) {
     if !ids.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in find_nodes_by_property.
-        unsafe { drop(Vec::from_raw_parts(ids, count, count)) };
+        unsafe {
+            let slice = std::ptr::slice_from_raw_parts_mut(ids, count);
+            drop(Box::from_raw(slice));
+        }
     }
 }
 
@@ -1143,11 +1146,17 @@ pub extern "C" fn grafeo_batch_create_nodes(
 pub extern "C" fn grafeo_free_vector_results(ids: *mut u64, distances: *mut f32, count: usize) {
     if !ids.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in vector_search.
-        unsafe { drop(Vec::from_raw_parts(ids, count, count)) };
+        unsafe {
+            let slice = std::ptr::slice_from_raw_parts_mut(ids, count);
+            drop(Box::from_raw(slice));
+        }
     }
     if !distances.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in vector_search.
-        unsafe { drop(Vec::from_raw_parts(distances, count, count)) };
+        unsafe {
+            let slice = std::ptr::slice_from_raw_parts_mut(distances, count);
+            drop(Box::from_raw(slice));
+        }
     }
 }
 
@@ -1473,7 +1482,7 @@ mod tests {
     fn test_create_node_and_get() {
         let db = grafeo_open_memory();
         let labels = CString::new(r#"["Person"]"#).unwrap();
-        let props = CString::new(r#"{"name":"Alice","age":30}"#).unwrap();
+        let props = CString::new(r#"{"name":"Alix","age":30}"#).unwrap();
         let id = grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
         assert_ne!(id, u64::MAX);
         assert_eq!(grafeo_node_count(db), 1);
@@ -1523,7 +1532,7 @@ mod tests {
     #[test]
     fn test_execute_query() {
         let db = grafeo_open_memory();
-        let create = CString::new("CREATE (:Person {name: 'Alice', age: 30})").unwrap();
+        let create = CString::new("CREATE (:Person {name: 'Alix', age: 30})").unwrap();
         let result = grafeo_execute(db, create.as_ptr());
         // CREATE returns a result (possibly empty rows).
         if !result.is_null() {
@@ -1541,7 +1550,7 @@ mod tests {
         let json_str = unsafe { std::ffi::CStr::from_ptr(json_ptr) }
             .to_str()
             .unwrap();
-        assert!(json_str.contains("Alice"));
+        assert!(json_str.contains("Alix"));
 
         grafeo_free_result(result);
         grafeo_close(db);
@@ -1739,7 +1748,7 @@ mod tests {
         let db = grafeo_open_memory();
 
         // Create a node first
-        let create = CString::new("CREATE (:Person {name: 'Alice', age: 30})").unwrap();
+        let create = CString::new("CREATE (:Person {name: 'Alix', age: 30})").unwrap();
         let result = grafeo_execute(db, create.as_ptr());
         if !result.is_null() {
             grafeo_free_result(result);
@@ -1747,7 +1756,7 @@ mod tests {
 
         // Query with parameters
         let query = CString::new("MATCH (n:Person) WHERE n.name = $name RETURN n.age").unwrap();
-        let params = CString::new(r#"{"name":"Alice"}"#).unwrap();
+        let params = CString::new(r#"{"name":"Alix"}"#).unwrap();
         let result = grafeo_execute_with_params(db, query.as_ptr(), params.as_ptr());
         assert!(!result.is_null());
         assert_eq!(grafeo_result_row_count(result), 1);
@@ -1774,11 +1783,11 @@ mod tests {
 
         // Create node with the property
         let labels = CString::new(r#"["Person"]"#).unwrap();
-        let props = CString::new(r#"{"name":"Alice"}"#).unwrap();
+        let props = CString::new(r#"{"name":"Alix"}"#).unwrap();
         grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
 
         // Find by property
-        let value = CString::new(r#""Alice""#).unwrap();
+        let value = CString::new(r#""Alix""#).unwrap();
         let mut out_ids: *mut u64 = std::ptr::null_mut();
         let mut out_count: usize = 0;
         let status = grafeo_find_nodes_by_property(
@@ -1809,7 +1818,7 @@ mod tests {
     fn test_database_info() {
         let db = grafeo_open_memory();
         let labels = CString::new(r#"["Person"]"#).unwrap();
-        let props = CString::new(r#"{"name":"Alice"}"#).unwrap();
+        let props = CString::new(r#"{"name":"Alix"}"#).unwrap();
         grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
 
         let info = grafeo_info(db);

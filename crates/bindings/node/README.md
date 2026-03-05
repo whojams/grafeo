@@ -20,8 +20,8 @@ const db = GrafeoDB.create();
 // const db = GrafeoDB.create('./my-graph');
 
 // Create nodes
-db.createNode(['Person'], { name: 'Alice', age: 30 });
-db.createNode(['Person'], { name: 'Bob', age: 25 });
+db.createNode(['Person'], { name: 'Alix', age: 30 });
+db.createNode(['Person'], { name: 'Gus', age: 25 });
 db.createEdge(0, 1, 'KNOWS', { since: 2024 });
 
 // Query with GQL
@@ -43,9 +43,9 @@ const db = GrafeoDB.create();           // in-memory
 const db = GrafeoDB.create('./path');    // persistent
 const db = GrafeoDB.open('./path');      // open existing
 
-// Properties
-db.nodeCount;   // number of nodes
-db.edgeCount;   // number of edges
+// Counts
+db.nodeCount();   // number of nodes
+db.edgeCount();   // number of edges
 ```
 
 ### Query Languages
@@ -81,7 +81,7 @@ db.deleteEdge(id);  // returns boolean
 ```typescript
 const tx = db.beginTransaction();
 try {
-  await tx.execute("INSERT (:Person {name: 'Carol'})");
+  await tx.execute("INSERT (:Person {name: 'Harm'})");
   tx.commit();
 } catch (e) {
   tx.rollback();
@@ -89,7 +89,7 @@ try {
 
 // Node.js 22+ with explicit resource management:
 using tx = db.beginTransaction();
-await tx.execute("INSERT (:Person {name: 'Carol'})");
+await tx.execute("INSERT (:Person {name: 'Harm'})");
 tx.commit(); // auto-rollback if not committed
 ```
 

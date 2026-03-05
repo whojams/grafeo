@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// let mut works_at = Edge::new(
 ///     EdgeId::new(1),
-///     NodeId::new(10),  // Alice
+///     NodeId::new(10),  // Alix
 ///     NodeId::new(20),  // Acme Corp
 ///     "WORKS_AT"
 /// );

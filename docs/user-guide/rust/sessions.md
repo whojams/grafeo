@@ -19,7 +19,7 @@ let db = GrafeoDB::new_in_memory()?;
 let session = db.session()?;
 
 // Use the session
-session.execute("INSERT (:Person {name: 'Alice'})")?;
+session.execute("INSERT (:Person {name: 'Alix'})")?;
 ```
 
 ## Transactions
@@ -30,8 +30,8 @@ let session = db.session()?;
 // Begin explicit transaction
 session.begin_tx()?;
 
-session.execute("INSERT (:Person {name: 'Alice'})")?;
-session.execute("INSERT (:Person {name: 'Bob'})")?;
+session.execute("INSERT (:Person {name: 'Alix'})")?;
+session.execute("INSERT (:Person {name: 'Gus'})")?;
 
 // Commit
 session.commit()?;
@@ -43,7 +43,7 @@ session.commit()?;
 let session = db.session()?;
 
 session.begin_tx()?;
-session.execute("INSERT (:Person {name: 'Alice'})")?;
+session.execute("INSERT (:Person {name: 'Alix'})")?;
 
 // Something went wrong, rollback
 session.rollback()?;
@@ -56,8 +56,8 @@ let session = db.session()?;
 
 // Execute in transaction with automatic commit/rollback
 session.transaction(|tx| {
-    tx.execute("INSERT (:Person {name: 'Alice'})")?;
-    tx.execute("INSERT (:Person {name: 'Bob'})")?;
+    tx.execute("INSERT (:Person {name: 'Alix'})")?;
+    tx.execute("INSERT (:Person {name: 'Gus'})")?;
     Ok(())
 })?;
 ```
@@ -72,9 +72,9 @@ let session1 = db.session()?;
 let session2 = db.session()?;
 
 session1.begin_tx()?;
-session1.execute("INSERT (:Person {name: 'Alice'})")?;
-// session2 won't see Alice until session1 commits
+session1.execute("INSERT (:Person {name: 'Alix'})")?;
+// session2 won't see Alix until session1 commits
 
 session1.commit()?;
-// Now session2 can see Alice
+// Now session2 can see Alix
 ```

@@ -183,22 +183,24 @@ impl BitVector {
     /// Converts back to a `Vec<bool>`.
     #[must_use]
     pub fn to_bools(&self) -> Vec<bool> {
-        (0..self.len).map(|i| self.get(i).unwrap()).collect()
+        (0..self.len)
+            .map(|i| self.get(i).expect("index within len"))
+            .collect()
     }
 
     /// Returns an iterator over the bits.
     pub fn iter(&self) -> impl Iterator<Item = bool> + '_ {
-        (0..self.len).map(move |i| self.get(i).unwrap())
+        (0..self.len).map(move |i| self.get(i).expect("index within len"))
     }
 
     /// Returns an iterator over indices where bits are true.
     pub fn ones_iter(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.len).filter(move |&i| self.get(i).unwrap())
+        (0..self.len).filter(move |&i| self.get(i).expect("index within len"))
     }
 
     /// Returns an iterator over indices where bits are false.
     pub fn zeros_iter(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.len).filter(move |&i| !self.get(i).unwrap())
+        (0..self.len).filter(move |&i| !self.get(i).expect("index within len"))
     }
 
     /// Returns the raw data.
@@ -310,7 +312,11 @@ impl BitVector {
             ));
         }
 
-        let len = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(
+            bytes[0..4]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        ) as usize;
         let num_words = (len + 63) / 64;
 
         if bytes.len() < 4 + num_words * 8 {
@@ -323,7 +329,11 @@ impl BitVector {
         let mut data = Vec::with_capacity(num_words);
         for i in 0..num_words {
             let offset = 4 + i * 8;
-            let word = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            let word = u64::from_le_bytes(
+                bytes[offset..offset + 8]
+                    .try_into()
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            );
             data.push(word);
         }
 

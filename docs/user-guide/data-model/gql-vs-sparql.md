@@ -78,7 +78,7 @@ Comparing the ISO standard GQL with W3C standard SPARQL.
 
     ```sql
     MATCH path = (a:Person)-[:KNOWS*1..3]->(b:Person)
-    WHERE a.name = 'Alice'
+    WHERE a.name = 'Alix'
     RETURN path
     ```
 
@@ -88,7 +88,7 @@ Comparing the ISO standard GQL with W3C standard SPARQL.
     PREFIX : <http://example.org/>
     SELECT ?path
     WHERE {
-        :Alice :knows+ ?b .
+        :Alix :knows+ ?b .
         ?b a :Person .
     }
     ```
@@ -123,7 +123,7 @@ Comparing the ISO standard GQL with W3C standard SPARQL.
 === "GQL"
 
     ```sql
-    INSERT (:Person {name: 'Alice', age: 30})
+    INSERT (:Person {name: 'Alix', age: 30})
     ```
 
 === "SPARQL"
@@ -131,8 +131,8 @@ Comparing the ISO standard GQL with W3C standard SPARQL.
     ```sparql
     PREFIX : <http://example.org/>
     INSERT DATA {
-        :Alice a :Person ;
-               :name "Alice" ;
+        :Alix a :Person ;
+               :name "Alix" ;
                :age 30 .
     }
     ```

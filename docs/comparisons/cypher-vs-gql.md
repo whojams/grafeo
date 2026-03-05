@@ -15,14 +15,14 @@ Both Cypher and GQL are supported in Grafeo. This page documents the syntax diff
 === "Cypher"
 
     ```cypher
-    CREATE (n:Person {name: 'Alice', age: 30})
+    CREATE (n:Person {name: 'Alix', age: 30})
     RETURN n
     ```
 
 === "GQL"
 
     ```sql
-    INSERT (:Person {name: 'Alice', age: 30})
+    INSERT (:Person {name: 'Alix', age: 30})
     ```
 
 !!! tip
@@ -33,7 +33,7 @@ Both Cypher and GQL are supported in Grafeo. This page documents the syntax diff
 === "Cypher"
 
     ```cypher
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     CREATE (a)-[r:KNOWS {since: 2020}]->(b)
     RETURN r
     ```
@@ -41,7 +41,7 @@ Both Cypher and GQL are supported in Grafeo. This page documents the syntax diff
 === "GQL"
 
     ```sql
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS {since: 2020}]->(b)
     ```
 

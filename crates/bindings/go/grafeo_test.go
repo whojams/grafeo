@@ -51,7 +51,7 @@ func TestCreateNode(t *testing.T) {
 	}
 	defer db.Close()
 
-	node, err := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice", "age": 30})
+	node, err := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix", "age": 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,13 +70,13 @@ func TestGetNode(t *testing.T) {
 	}
 	defer db.Close()
 
-	created, _ := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+	created, _ := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
 	fetched, err := db.GetNode(created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fetched.Properties["name"] != "Alice" {
-		t.Errorf("expected name Alice, got %v", fetched.Properties["name"])
+	if fetched.Properties["name"] != "Alix" {
+		t.Errorf("expected name Alix, got %v", fetched.Properties["name"])
 	}
 }
 
@@ -168,8 +168,8 @@ func TestCreateEdge(t *testing.T) {
 	}
 	defer db.Close()
 
-	a, _ := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
-	b, _ := db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob"})
+	a, _ := db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
+	b, _ := db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus"})
 
 	edge, err := db.CreateEdge(a.ID, b.ID, "KNOWS", map[string]any{"since": 2020})
 	if err != nil {
@@ -254,8 +254,8 @@ func TestExecuteGQL(t *testing.T) {
 	}
 	defer db.Close()
 
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice", "age": 30})
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob", "age": 25})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix", "age": 30})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus", "age": 25})
 
 	result, err := db.Execute("MATCH (p:Person) RETURN p.name, p.age")
 	if err != nil {
@@ -378,10 +378,10 @@ func TestPropertyIndex(t *testing.T) {
 		t.Error("expected property index to exist")
 	}
 
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus"})
 
-	ids, err := db.FindNodesByProperty("name", "Alice")
+	ids, err := db.FindNodesByProperty("name", "Alix")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,12 +472,12 @@ func TestExecuteWithParams(t *testing.T) {
 	}
 	defer db.Close()
 
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice", "age": 30})
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob", "age": 25})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix", "age": 30})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus", "age": 25})
 
 	result, err := db.ExecuteWithParams(
 		"MATCH (n:Person) WHERE n.name = $name RETURN n.age",
-		`{"name":"Alice"}`,
+		`{"name":"Alix"}`,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -497,7 +497,7 @@ func TestExecuteCypher(t *testing.T) {
 	defer db.Close()
 
 	// Create data via GQL
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
 
 	result, err := db.ExecuteCypher("MATCH (p:Person) RETURN p.name")
 	if err != nil {
@@ -560,8 +560,8 @@ func TestQueryResultMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Gus"})
 
 	result, err := db.Execute("MATCH (n:Person) RETURN n.name")
 	if err != nil {
@@ -632,7 +632,7 @@ func TestTransactionWithParams(t *testing.T) {
 	}
 	defer db.Close()
 
-	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alix"})
 
 	tx, err := db.BeginTransaction()
 	if err != nil {
@@ -641,7 +641,7 @@ func TestTransactionWithParams(t *testing.T) {
 
 	result, err := tx.ExecuteWithParams(
 		"MATCH (n:Person) WHERE n.name = $name RETURN n.name",
-		`{"name":"Alice"}`,
+		`{"name":"Alix"}`,
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -43,9 +43,9 @@ db.execute("""
 
 # Users
 db.execute("""
-    INSERT (:User {id: 'U1', name: 'Alice'})
-    INSERT (:User {id: 'U2', name: 'Bob'})
-    INSERT (:User {id: 'U3', name: 'Carol'})
+    INSERT (:User {id: 'U1', name: 'Alix'})
+    INSERT (:User {id: 'U2', name: 'Gus'})
+    INSERT (:User {id: 'U3', name: 'Harm'})
     INSERT (:User {id: 'U4', name: 'Dave'})
     INSERT (:User {id: 'U5', name: 'Eve'})
 """)
@@ -54,7 +54,7 @@ db.execute("""
 ## Create Purchase History
 
 ```python
-# Alice bought Laptop, Headphones, Mouse
+# Alix bought Laptop, Headphones, Mouse
 db.execute("""
     MATCH (u:User {id: 'U1'}), (p:Product {id: 'P1'})
     INSERT (u)-[:PURCHASED {date: '2024-01-10'}]->(p)
@@ -68,7 +68,7 @@ db.execute("""
     INSERT (u)-[:PURCHASED {date: '2024-01-12'}]->(p)
 """)
 
-# Bob bought Laptop, Keyboard, Mouse
+# Gus bought Laptop, Keyboard, Mouse
 db.execute("""
     MATCH (u:User {id: 'U2'}), (p:Product {id: 'P1'})
     INSERT (u)-[:PURCHASED]->(p)
@@ -82,7 +82,7 @@ db.execute("""
     INSERT (u)-[:PURCHASED]->(p)
 """)
 
-# Carol bought Laptop, Monitor, USB Hub
+# Harm bought Laptop, Monitor, USB Hub
 db.execute("""
     MATCH (u:User {id: 'U3'}), (p:Product {id: 'P1'})
     INSERT (u)-[:PURCHASED]->(p)
@@ -134,7 +134,7 @@ def get_recommendations(db, user_id: str, limit: int = 5):
     return list(result)
 
 recs = get_recommendations(db, 'U1')
-print("Recommendations for Alice:")
+print("Recommendations for Alix:")
 for r in recs:
     print(f"  {r['product']} (${r['price']}) - score: {r['score']}")
 ```

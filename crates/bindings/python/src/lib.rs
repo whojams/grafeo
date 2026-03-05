@@ -12,10 +12,10 @@
 //! db = GrafeoDB()
 //!
 //! # Create some people
-//! db.execute("INSERT (:Person {name: 'Alice', role: 'Engineer'})")
-//! db.execute("INSERT (:Person {name: 'Bob', role: 'Manager'})")
+//! db.execute("INSERT (:Person {name: 'Alix', role: 'Engineer'})")
+//! db.execute("INSERT (:Person {name: 'Gus', role: 'Manager'})")
 //! db.execute("""
-//!     MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+//!     MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
 //!     INSERT (a)-[:REPORTS_TO]->(b)
 //! """)
 //!

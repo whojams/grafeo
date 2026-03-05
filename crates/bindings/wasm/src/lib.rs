@@ -7,9 +7,9 @@
 //!
 //! await init();
 //! const db = new Database();
-//! db.execute("INSERT (:Person {name: 'Alice', age: 30})");
+//! db.execute("INSERT (:Person {name: 'Alix', age: 30})");
 //! const result = db.execute("MATCH (p:Person) RETURN p.name, p.age");
-//! console.log(result); // [{name: "Alice", age: 30}]
+//! console.log(result); // [{name: "Alix", age: 30}]
 //! ```
 
 mod types;
@@ -51,7 +51,7 @@ impl Database {
     ///
     /// ```js
     /// const results = db.execute("MATCH (p:Person) RETURN p.name, p.age");
-    /// // [{name: "Alice", age: 30}, {name: "Bob", age: 25}]
+    /// // [{name: "Alix", age: 30}, {name: "Gus", age: 25}]
     /// ```
     pub fn execute(&self, query: &str) -> Result<JsValue, JsError> {
         let result = self
@@ -312,7 +312,7 @@ impl Database {
     /// ```js
     /// const results = db.executeWithParams(
     ///   "MATCH (p:Person {name: $name}) RETURN p.name, p.age",
-    ///   { name: "Alice" }
+    ///   { name: "Alix" }
     /// );
     /// ```
     #[wasm_bindgen(js_name = "executeWithParams")]
@@ -328,7 +328,7 @@ impl Database {
     /// const results = db.executeWithLanguageAndParams(
     ///   "MATCH (p:Person {name: $name}) RETURN p.name",
     ///   "cypher",
-    ///   { name: "Alice" }
+    ///   { name: "Alix" }
     /// );
     /// ```
     #[wasm_bindgen(js_name = "executeWithLanguageAndParams")]
@@ -412,7 +412,7 @@ impl Database {
     ///
     /// ```js
     /// const raw = db.executeRawWithLanguage("MATCH (p:Person) RETURN p.name", "cypher");
-    /// // { columns: ["p.name"], rows: [["Alice"], ["Bob"]], executionTimeMs: 0.5 }
+    /// // { columns: ["p.name"], rows: [["Alix"], ["Gus"]], executionTimeMs: 0.5 }
     /// ```
     #[wasm_bindgen(js_name = "executeRawWithLanguage")]
     pub fn execute_raw_with_language(

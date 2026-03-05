@@ -187,11 +187,11 @@ impl super::GrafeoDB {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     pub fn execute_sparql(&self, query: &str) -> Result<QueryResult> {
         use crate::query::{
-            Executor, optimizer::Optimizer, planner_rdf::RdfPlanner, sparql_translator,
+            Executor, optimizer::Optimizer, planner::rdf::RdfPlanner, translators::sparql,
         };
 
         // Parse and translate the SPARQL query to a logical plan
-        let logical_plan = sparql_translator::translate(query)?;
+        let logical_plan = sparql::translate(query)?;
 
         // Optimize the plan
         let optimizer = Optimizer::from_store(&self.store);

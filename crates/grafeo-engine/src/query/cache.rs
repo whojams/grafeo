@@ -83,7 +83,8 @@ struct CacheEntry<T> {
     value: T,
     /// Number of times this entry was accessed.
     access_count: u64,
-    /// Last access time.
+    /// Last access time (not available on WASM).
+    #[cfg(not(target_arch = "wasm32"))]
     last_accessed: Instant,
 }
 
@@ -92,13 +93,17 @@ impl<T: Clone> CacheEntry<T> {
         Self {
             value,
             access_count: 0,
+            #[cfg(not(target_arch = "wasm32"))]
             last_accessed: Instant::now(),
         }
     }
 
     fn access(&mut self) -> T {
         self.access_count += 1;
-        self.last_accessed = Instant::now();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.last_accessed = Instant::now();
+        }
         self.value.clone()
     }
 }

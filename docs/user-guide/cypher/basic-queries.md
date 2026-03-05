@@ -24,7 +24,7 @@ MATCH (p:Person)
 RETURN p
 
 -- Match nodes with properties
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 RETURN p
 ```
 
@@ -58,8 +58,8 @@ MATCH (p:Person)
 WHERE p.age > 30
 RETURN p.name, p.age
 
--- Find Alice's friends
-MATCH (a:Person {name: 'Alice'})-[:KNOWS]->(friend)
+-- Find Alix's friends
+MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(friend)
 RETURN friend.name
 ```
 

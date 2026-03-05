@@ -6,7 +6,7 @@
 //! const { GrafeoDB } = require('@grafeo-db/js');
 //!
 //! const db = GrafeoDB.create();
-//! await db.execute("INSERT (:Person {name: 'Alice'})");
+//! await db.execute("INSERT (:Person {name: 'Alix'})");
 //! const result = await db.execute("MATCH (p:Person) RETURN p.name");
 //! console.log(result.toArray());
 //! ```

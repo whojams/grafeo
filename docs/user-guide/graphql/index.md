@@ -33,13 +33,13 @@ GraphQL support is optional and requires a feature flag:
 |-----------|--------|
 | Query type | `{ Person { ... } }` |
 | Get fields | `{ Person { name age } }` |
-| Filter | `{ Person(name: "Alice") { ... } }` |
+| Filter | `{ Person(name: "Alix") { ... } }` |
 | Where clause | `{ Person(where: { age_gt: 30 }) { ... } }` |
 | Pagination | `{ Person(first: 10, skip: 5) { ... } }` |
 | Ordering | `{ Person(orderBy: { name: ASC }) { ... } }` |
 | Nested relations | `{ Person { friends { name } } }` |
-| Aliases | `{ alice: Person(name: "Alice") { ... } }` |
-| Create mutation | `mutation { createPerson(name: "Alice") { id } }` |
+| Aliases | `{ alix: Person(name: "Alix") { ... } }` |
+| Create mutation | `mutation { createPerson(name: "Alix") { id } }` |
 | Delete mutation | `mutation { deletePerson(id: 123) }` |
 
 ## Basic Examples
@@ -69,7 +69,7 @@ GraphQL support is optional and requires a feature flag:
 ```graphql
 # Find person by name
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     age
   }
@@ -77,7 +77,7 @@ GraphQL support is optional and requires a feature flag:
 
 # Filter by multiple properties
 {
-  Person(age: 30, city: "Seattle") {
+  Person(age: 30, city: "Utrecht") {
     name
     email
   }
@@ -118,7 +118,7 @@ Use the `where` argument for advanced filtering with comparison operators:
 
 | Suffix | Operator | Example |
 |--------|----------|---------|
-| (none) | Equals | `name: "Alice"` |
+| (none) | Equals | `name: "Alix"` |
 | `_gt` | Greater than | `age_gt: 30` |
 | `_gte` | Greater than or equal | `age_gte: 30` |
 | `_lt` | Less than | `age_lt: 50` |
@@ -200,7 +200,7 @@ Use `orderBy` to sort results:
 ```graphql
 # Get person and their friends
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name
@@ -211,7 +211,7 @@ Use `orderBy` to sort results:
 
 # Multiple levels deep
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name
@@ -228,11 +228,11 @@ Use `orderBy` to sort results:
 ```graphql
 # Query multiple people with aliases
 {
-  alice: Person(name: "Alice") {
+  alix: Person(name: "Alix") {
     name
     age
   }
-  bob: Person(name: "Bob") {
+  gus: Person(name: "Gus") {
     name
     age
   }
@@ -250,7 +250,7 @@ Use `create<Type>` to create new nodes:
 ```graphql
 # Create a new person
 mutation {
-  createPerson(name: "Alice", age: 30) {
+  createPerson(name: "Alix", age: 30) {
     id
     name
   }
@@ -258,7 +258,7 @@ mutation {
 
 # Create with multiple properties
 mutation {
-  createUser(name: "Bob", email: "bob@example.com", active: true) {
+  createUser(name: "Gus", email: "gus@example.com", active: true) {
     id
     name
     email
@@ -280,7 +280,7 @@ mutation {
 
 # Delete by property
 mutation {
-  deleteUser(email: "bob@example.com")
+  deleteUser(email: "gus@example.com")
 }
 ```
 
@@ -294,7 +294,7 @@ db = grafeo.GrafeoDB()
 # Create a node with GraphQL
 result = db.execute_graphql('''
 mutation {
-  createPerson(name: "Alice", age: 30) {
+  createPerson(name: "Alix", age: 30) {
     id
     name
   }
@@ -304,7 +304,7 @@ mutation {
 # Query the created node
 result = db.execute_graphql('''
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     age
   }
@@ -314,7 +314,7 @@ result = db.execute_graphql('''
 # Delete the node
 db.execute_graphql('''
 mutation {
-  deletePerson(name: "Alice")
+  deletePerson(name: "Alix")
 }
 ''')
 ```
@@ -327,17 +327,17 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create some data using GQL
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:friends]->(b)
 """)
 
 # Query with GraphQL
 result = db.execute_graphql('''
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     age
     friends {
@@ -359,7 +359,7 @@ use grafeo_engine::GrafeoDB;
 let db = GrafeoDB::new_in_memory();
 
 // Create data
-db.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+db.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
 // Query with GraphQL
 let result = db.execute_graphql(r#"
@@ -386,7 +386,7 @@ GraphQL queries are translated to graph traversals:
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     age
     friends {
       name
@@ -397,7 +397,7 @@ GraphQL queries are translated to graph traversals:
 
 Translates to:
 
-1. Find nodes with label `Person` where `name = "Alice"`
+1. Find nodes with label `Person` where `name = "Alix"`
 2. Return the `age` property
 3. Traverse `friends` edges
 4. Return `name` property of connected nodes

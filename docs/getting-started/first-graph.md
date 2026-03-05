@@ -42,17 +42,17 @@ A social network with:
     ```python
     db.execute("""
         INSERT (:Person {
-            name: 'Alice',
+            name: 'Alix',
             age: 30,
             location: 'New York'
         })
         INSERT (:Person {
-            name: 'Bob',
+            name: 'Gus',
             age: 25,
             location: 'San Francisco'
         })
         INSERT (:Person {
-            name: 'Carol',
+            name: 'Harm',
             age: 35,
             location: 'New York'
         })
@@ -71,17 +71,17 @@ A social network with:
 
     session.execute(r#"
         INSERT (:Person {
-            name: 'Alice',
+            name: 'Alix',
             age: 30,
             location: 'New York'
         })
         INSERT (:Person {
-            name: 'Bob',
+            name: 'Gus',
             age: 25,
             location: 'San Francisco'
         })
         INSERT (:Person {
-            name: 'Carol',
+            name: 'Harm',
             age: 35,
             location: 'New York'
         })
@@ -98,26 +98,26 @@ A social network with:
 === "Python"
 
     ```python
-    # Alice knows Bob and Carol
+    # Alix knows Gus and Harm
     db.execute("""
-        MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
         INSERT (a)-[:FRIENDS_WITH {since: 2020}]->(b)
     """)
 
     db.execute("""
-        MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Carol'})
+        MATCH (a:Person {name: 'Alix'}), (c:Person {name: 'Harm'})
         INSERT (a)-[:FRIENDS_WITH {since: 2019}]->(c)
     """)
 
-    # Bob knows Dave
+    # Gus knows Dave
     db.execute("""
-        MATCH (b:Person {name: 'Bob'}), (d:Person {name: 'Dave'})
+        MATCH (b:Person {name: 'Gus'}), (d:Person {name: 'Dave'})
         INSERT (b)-[:FRIENDS_WITH {since: 2021}]->(d)
     """)
 
-    # Carol knows Dave
+    # Harm knows Dave
     db.execute("""
-        MATCH (c:Person {name: 'Carol'}), (d:Person {name: 'Dave'})
+        MATCH (c:Person {name: 'Harm'}), (d:Person {name: 'Dave'})
         INSERT (c)-[:FRIENDS_WITH {since: 2022}]->(d)
     """)
     ```
@@ -128,22 +128,22 @@ A social network with:
     let mut session = db.session();
 
     session.execute(r#"
-        MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
         INSERT (a)-[:FRIENDS_WITH {since: 2020}]->(b)
     "#)?;
 
     session.execute(r#"
-        MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Carol'})
+        MATCH (a:Person {name: 'Alix'}), (c:Person {name: 'Harm'})
         INSERT (a)-[:FRIENDS_WITH {since: 2019}]->(c)
     "#)?;
 
     session.execute(r#"
-        MATCH (b:Person {name: 'Bob'}), (d:Person {name: 'Dave'})
+        MATCH (b:Person {name: 'Gus'}), (d:Person {name: 'Dave'})
         INSERT (b)-[:FRIENDS_WITH {since: 2021}]->(d)
     "#)?;
 
     session.execute(r#"
-        MATCH (c:Person {name: 'Carol'}), (d:Person {name: 'Dave'})
+        MATCH (c:Person {name: 'Harm'}), (d:Person {name: 'Dave'})
         INSERT (c)-[:FRIENDS_WITH {since: 2022}]->(d)
     "#)?;
     ```
@@ -173,17 +173,17 @@ A social network with:
 
     # Connect posts to authors
     db.execute("""
-        MATCH (a:Person {name: 'Alice'}), (p:Post {id: 1})
+        MATCH (a:Person {name: 'Alix'}), (p:Post {id: 1})
         INSERT (a)-[:POSTED]->(p)
     """)
 
     db.execute("""
-        MATCH (b:Person {name: 'Bob'}), (p:Post {id: 2})
+        MATCH (b:Person {name: 'Gus'}), (p:Post {id: 2})
         INSERT (b)-[:POSTED]->(p)
     """)
 
     db.execute("""
-        MATCH (c:Person {name: 'Carol'}), (p:Post {id: 3})
+        MATCH (c:Person {name: 'Harm'}), (p:Post {id: 3})
         INSERT (c)-[:POSTED]->(p)
     """)
     ```
@@ -193,15 +193,15 @@ A social network with:
 === "Python"
 
     ```python
-    # Bob likes Alice's post
+    # Gus likes Alix's post
     db.execute("""
-        MATCH (b:Person {name: 'Bob'}), (p:Post {id: 1})
+        MATCH (b:Person {name: 'Gus'}), (p:Post {id: 1})
         INSERT (b)-[:LIKES]->(p)
     """)
 
-    # Carol likes Alice's and Bob's posts
+    # Harm likes Alix's and Gus's posts
     db.execute("""
-        MATCH (c:Person {name: 'Carol'}), (p:Post)
+        MATCH (c:Person {name: 'Harm'}), (p:Post)
         WHERE p.id IN [1, 2]
         INSERT (c)-[:LIKES]->(p)
     """)
@@ -217,17 +217,17 @@ A social network with:
 
 Now let's explore the social network:
 
-### Find All Friends of Alice
+### Find All Friends of Alix
 
 === "Python"
 
     ```python
     result = db.execute("""
-        MATCH (a:Person {name: 'Alice'})-[:FRIENDS_WITH]->(friend)
+        MATCH (a:Person {name: 'Alix'})-[:FRIENDS_WITH]->(friend)
         RETURN friend.name, friend.location
     """)
 
-    print("Alice's friends:")
+    print("Alix's friends:")
     for row in result:
         print(f"  - {row['friend.name']} from {row['friend.location']}")
     ```
@@ -238,12 +238,12 @@ Now let's explore the social network:
 
     ```python
     result = db.execute("""
-        MATCH (a:Person {name: 'Alice'})-[:FRIENDS_WITH]->()-[:FRIENDS_WITH]->(fof)
+        MATCH (a:Person {name: 'Alix'})-[:FRIENDS_WITH]->()-[:FRIENDS_WITH]->(fof)
         WHERE fof <> a
         RETURN DISTINCT fof.name
     """)
 
-    print("Friends of Alice's friends:")
+    print("Friends of Alix's friends:")
     for row in result:
         print(f"  - {row['fof.name']}")
     ```
@@ -286,11 +286,11 @@ Now let's explore the social network:
 
     ```python
     result = db.execute("""
-        MATCH (a:Person {name: 'Alice'})-[:FRIENDS_WITH]->(mutual)<-[:FRIENDS_WITH]-(b:Person {name: 'Bob'})
+        MATCH (a:Person {name: 'Alix'})-[:FRIENDS_WITH]->(mutual)<-[:FRIENDS_WITH]-(b:Person {name: 'Gus'})
         RETURN mutual.name
     """)
 
-    print("Mutual friends of Alice and Bob:")
+    print("Mutual friends of Alix and Gus:")
     for row in result:
         print(f"  - {row['mutual.name']}")
     ```
@@ -301,18 +301,18 @@ Here is a visualization of the completed graph:
 
 ```mermaid
 graph LR
-    Alice((Alice)) -->|FRIENDS_WITH| Bob((Bob))
-    Alice -->|FRIENDS_WITH| Carol((Carol))
-    Bob -->|FRIENDS_WITH| Dave((Dave))
-    Carol -->|FRIENDS_WITH| Dave
+    Alix((Alix)) -->|FRIENDS_WITH| Gus((Gus))
+    Alix -->|FRIENDS_WITH| Harm((Harm))
+    Gus -->|FRIENDS_WITH| Dave((Dave))
+    Harm -->|FRIENDS_WITH| Dave
 
-    Alice -->|POSTED| P1[Post 1]
-    Bob -->|POSTED| P2[Post 2]
-    Carol -->|POSTED| P3[Post 3]
+    Alix -->|POSTED| P1[Post 1]
+    Gus -->|POSTED| P2[Post 2]
+    Harm -->|POSTED| P3[Post 3]
 
-    Bob -->|LIKES| P1
-    Carol -->|LIKES| P1
-    Carol -->|LIKES| P2
+    Gus -->|LIKES| P1
+    Harm -->|LIKES| P1
+    Harm -->|LIKES| P2
     Dave -->|LIKES| P1
     Dave -->|LIKES| P2
     Dave -->|LIKES| P3

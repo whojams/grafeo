@@ -77,7 +77,7 @@ impl LpgStore {
     /// ```
     /// # use grafeo_core::graph::lpg::LpgStore;
     /// # use grafeo_common::types::Value;
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     /// let a = store.create_node(&["Node"]);
     /// let b = store.create_node(&["Node"]);
     /// let c = store.create_node(&["Node"]);

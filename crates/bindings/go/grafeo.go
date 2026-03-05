@@ -11,7 +11,7 @@
 //	}
 //	defer db.Close()
 //
-//	db.Execute(`CREATE (:Person {name: 'Alice', age: 30})`)
+//	db.Execute(`CREATE (:Person {name: 'Alix', age: 30})`)
 //	result, _ := db.Execute(`MATCH (p:Person) RETURN p.name`)
 package grafeo
 

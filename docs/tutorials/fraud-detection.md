@@ -38,9 +38,9 @@ db = grafeo.GrafeoDB()
 ```python
 # Accounts
 db.execute("""
-    INSERT (:Account {id: 'A1', name: 'Alice Corp', created: '2023-01-01'})
-    INSERT (:Account {id: 'A2', name: 'Bob LLC', created: '2023-01-15'})
-    INSERT (:Account {id: 'A3', name: 'Carol Inc', created: '2023-02-01'})
+    INSERT (:Account {id: 'A1', name: 'Alix Corp', created: '2023-01-01'})
+    INSERT (:Account {id: 'A2', name: 'Gus LLC', created: '2023-01-15'})
+    INSERT (:Account {id: 'A3', name: 'Harm Inc', created: '2023-02-01'})
     INSERT (:Account {id: 'A4', name: 'Suspicious Ltd', created: '2024-01-01'})
     INSERT (:Account {id: 'A5', name: 'Shell Corp', created: '2024-01-02'})
     INSERT (:Account {id: 'A6', name: 'Fake Inc', created: '2024-01-03'})

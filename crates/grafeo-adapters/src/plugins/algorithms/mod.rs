@@ -19,7 +19,7 @@
 //! use grafeo_core::graph::lpg::LpgStore;
 //! use grafeo_common::types::NodeId;
 //!
-//! let store = LpgStore::new();
+//! let store = LpgStore::new().unwrap();
 //! let n0 = store.create_node(&["Node"]);
 //! let n1 = store.create_node(&["Node"]);
 //! store.create_edge(n0, n1, "CONNECTS");

@@ -19,7 +19,7 @@ use crate::execution::chunk::DataChunkBuilder;
 
 /// State for a single aggregation computation.
 #[derive(Debug, Clone)]
-enum AggregateState {
+pub(crate) enum AggregateState {
     /// Count state.
     Count(i64),
     /// Count distinct state (count, seen values).
@@ -56,11 +56,36 @@ enum AggregateState {
     PercentileDisc { values: Vec<f64>, percentile: f64 },
     /// Continuous percentile state (values, percentile).
     PercentileCont { values: Vec<f64>, percentile: f64 },
+    /// GROUP_CONCAT state (collected string values, separator defaults to space).
+    GroupConcat(Vec<String>),
+    /// GROUP_CONCAT distinct state (collected string values, seen).
+    GroupConcatDistinct(Vec<String>, HashSet<HashableValue>),
+    /// SAMPLE state (first non-null value encountered).
+    Sample(Option<Value>),
+    /// Sample variance state using Welford's algorithm (count, mean, M2).
+    Variance { count: i64, mean: f64, m2: f64 },
+    /// Population variance state using Welford's algorithm (count, mean, M2).
+    VariancePop { count: i64, mean: f64, m2: f64 },
+    /// Two-variable online statistics (Welford generalization for covariance/regression).
+    Bivariate {
+        /// Which binary set function this state will finalize to.
+        kind: AggregateFunction,
+        count: i64,
+        mean_x: f64,
+        mean_y: f64,
+        m2_x: f64,
+        m2_y: f64,
+        c_xy: f64,
+    },
 }
 
 impl AggregateState {
     /// Creates initial state for an aggregation function.
-    fn new(function: AggregateFunction, distinct: bool, percentile: Option<f64>) -> Self {
+    pub(crate) fn new(
+        function: AggregateFunction,
+        distinct: bool,
+        percentile: Option<f64>,
+    ) -> Self {
         match (function, distinct) {
             (AggregateFunction::Count | AggregateFunction::CountNonNull, false) => {
                 AggregateState::Count(0)
@@ -99,11 +124,50 @@ impl AggregateState {
                 values: Vec::new(),
                 percentile: percentile.unwrap_or(0.5),
             },
+            (AggregateFunction::GroupConcat, false) => AggregateState::GroupConcat(Vec::new()),
+            (AggregateFunction::GroupConcat, true) => {
+                AggregateState::GroupConcatDistinct(Vec::new(), HashSet::new())
+            }
+            (AggregateFunction::Sample, _) => AggregateState::Sample(None),
+            // Binary set functions (all share the same Bivariate state)
+            (
+                AggregateFunction::CovarSamp
+                | AggregateFunction::CovarPop
+                | AggregateFunction::Corr
+                | AggregateFunction::RegrSlope
+                | AggregateFunction::RegrIntercept
+                | AggregateFunction::RegrR2
+                | AggregateFunction::RegrCount
+                | AggregateFunction::RegrSxx
+                | AggregateFunction::RegrSyy
+                | AggregateFunction::RegrSxy
+                | AggregateFunction::RegrAvgx
+                | AggregateFunction::RegrAvgy,
+                _,
+            ) => AggregateState::Bivariate {
+                kind: function,
+                count: 0,
+                mean_x: 0.0,
+                mean_y: 0.0,
+                m2_x: 0.0,
+                m2_y: 0.0,
+                c_xy: 0.0,
+            },
+            (AggregateFunction::Variance, _) => AggregateState::Variance {
+                count: 0,
+                mean: 0.0,
+                m2: 0.0,
+            },
+            (AggregateFunction::VariancePop, _) => AggregateState::VariancePop {
+                count: 0,
+                mean: 0.0,
+                m2: 0.0,
+            },
         }
     }
 
     /// Updates the state with a new value.
-    fn update(&mut self, value: Option<Value>) {
+    pub(crate) fn update(&mut self, value: Option<Value>) {
         match self {
             AggregateState::Count(count) => {
                 *count += 1;
@@ -136,7 +200,7 @@ impl AggregateState {
                         if let Value::Int64(i) = v {
                             *sum += i;
                         } else if let Value::Float64(f) = v {
-                            // Convert to float distinct — move the seen set instead of cloning
+                            // Convert to float distinct: move the seen set instead of cloning
                             let moved_seen = std::mem::take(seen);
                             *self = AggregateState::SumFloatDistinct(*sum as f64 + f, moved_seen);
                         } else if let Some(num) = value_to_f64(v) {
@@ -233,7 +297,9 @@ impl AggregateState {
             }
             // Statistical functions using Welford's online algorithm
             AggregateState::StdDev { count, mean, m2 }
-            | AggregateState::StdDevPop { count, mean, m2 } => {
+            | AggregateState::StdDevPop { count, mean, m2 }
+            | AggregateState::Variance { count, mean, m2 }
+            | AggregateState::VariancePop { count, mean, m2 } => {
                 if let Some(ref v) = value
                     && let Some(x) = value_to_f64(v)
                 {
@@ -252,11 +318,67 @@ impl AggregateState {
                     values.push(x);
                 }
             }
+            AggregateState::GroupConcat(list) => {
+                if let Some(v) = value {
+                    list.push(agg_value_to_string(&v));
+                }
+            }
+            AggregateState::GroupConcatDistinct(list, seen) => {
+                if let Some(v) = value {
+                    let hashable = HashableValue::from(&v);
+                    if seen.insert(hashable) {
+                        list.push(agg_value_to_string(&v));
+                    }
+                }
+            }
+            AggregateState::Sample(sample) => {
+                if sample.is_none() {
+                    *sample = value;
+                }
+            }
+            AggregateState::Bivariate { .. } => {
+                // Bivariate functions require two values; use update_bivariate() instead.
+                // Single-value update is a no-op for bivariate state.
+            }
+        }
+    }
+
+    /// Updates a bivariate (two-variable) aggregate state with a pair of values.
+    ///
+    /// Uses the two-variable Welford online algorithm for numerically stable computation
+    /// of covariance and related statistics. Skips the update if either value is null.
+    fn update_bivariate(&mut self, y_val: Option<Value>, x_val: Option<Value>) {
+        if let AggregateState::Bivariate {
+            count,
+            mean_x,
+            mean_y,
+            m2_x,
+            m2_y,
+            c_xy,
+            ..
+        } = self
+        {
+            // Skip if either value is null (SQL semantics: exclude non-pairs)
+            if let (Some(y), Some(x)) = (&y_val, &x_val)
+                && let (Some(y_f), Some(x_f)) = (value_to_f64(y), value_to_f64(x))
+            {
+                *count += 1;
+                let n = *count as f64;
+                let dx = x_f - *mean_x;
+                let dy = y_f - *mean_y;
+                *mean_x += dx / n;
+                *mean_y += dy / n;
+                let dx2 = x_f - *mean_x; // post-update delta
+                let dy2 = y_f - *mean_y; // post-update delta
+                *m2_x += dx * dx2;
+                *m2_y += dy * dy2;
+                *c_xy += dx * dy2;
+            }
         }
     }
 
     /// Finalizes the state and returns the result value.
-    fn finalize(&self) -> Value {
+    pub(crate) fn finalize(&self) -> Value {
         match self {
             AggregateState::Count(count) | AggregateState::CountDistinct(count, _) => {
                 Value::Int64(*count)
@@ -297,6 +419,22 @@ impl AggregateState {
                     Value::Float64((*m2 / *count as f64).sqrt())
                 }
             }
+            // Sample variance: M2 / (n - 1)
+            AggregateState::Variance { count, m2, .. } => {
+                if *count < 2 {
+                    Value::Null
+                } else {
+                    Value::Float64(*m2 / (*count - 1) as f64)
+                }
+            }
+            // Population variance: M2 / n
+            AggregateState::VariancePop { count, m2, .. } => {
+                if *count == 0 {
+                    Value::Null
+                } else {
+                    Value::Float64(*m2 / *count as f64)
+                }
+            }
             // Discrete percentile: return actual value at percentile position
             AggregateState::PercentileDisc { values, percentile } => {
                 if values.is_empty() {
@@ -330,11 +468,123 @@ impl AggregateState {
                     }
                 }
             }
+            // GROUP_CONCAT: join strings with space separator (SPARQL default)
+            AggregateState::GroupConcat(list) | AggregateState::GroupConcatDistinct(list, _) => {
+                Value::String(list.join(" ").into())
+            }
+            // SAMPLE: return the first non-null value seen
+            AggregateState::Sample(sample) => sample.clone().unwrap_or(Value::Null),
+            // Binary set functions: dispatch on kind
+            AggregateState::Bivariate {
+                kind,
+                count,
+                mean_x,
+                mean_y,
+                m2_x,
+                m2_y,
+                c_xy,
+            } => {
+                let n = *count;
+                match kind {
+                    AggregateFunction::CovarSamp => {
+                        if n < 2 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*c_xy / (n - 1) as f64)
+                        }
+                    }
+                    AggregateFunction::CovarPop => {
+                        if n == 0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*c_xy / n as f64)
+                        }
+                    }
+                    AggregateFunction::Corr => {
+                        if n == 0 || *m2_x == 0.0 || *m2_y == 0.0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*c_xy / (*m2_x * *m2_y).sqrt())
+                        }
+                    }
+                    AggregateFunction::RegrSlope => {
+                        if n == 0 || *m2_x == 0.0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*c_xy / *m2_x)
+                        }
+                    }
+                    AggregateFunction::RegrIntercept => {
+                        if n == 0 || *m2_x == 0.0 {
+                            Value::Null
+                        } else {
+                            let slope = *c_xy / *m2_x;
+                            Value::Float64(*mean_y - slope * *mean_x)
+                        }
+                    }
+                    AggregateFunction::RegrR2 => {
+                        if n == 0 || *m2_x == 0.0 || *m2_y == 0.0 {
+                            Value::Null
+                        } else {
+                            Value::Float64((*c_xy * *c_xy) / (*m2_x * *m2_y))
+                        }
+                    }
+                    AggregateFunction::RegrCount => Value::Int64(n),
+                    AggregateFunction::RegrSxx => {
+                        if n == 0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*m2_x)
+                        }
+                    }
+                    AggregateFunction::RegrSyy => {
+                        if n == 0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*m2_y)
+                        }
+                    }
+                    AggregateFunction::RegrSxy => {
+                        if n == 0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*c_xy)
+                        }
+                    }
+                    AggregateFunction::RegrAvgx => {
+                        if n == 0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*mean_x)
+                        }
+                    }
+                    AggregateFunction::RegrAvgy => {
+                        if n == 0 {
+                            Value::Null
+                        } else {
+                            Value::Float64(*mean_y)
+                        }
+                    }
+                    _ => Value::Null, // non-bivariate functions never reach here
+                }
+            }
         }
     }
 }
 
 use super::value_utils::{compare_values, value_to_f64};
+
+/// Converts a Value to its string representation for GROUP_CONCAT.
+fn agg_value_to_string(val: &Value) -> String {
+    match val {
+        Value::String(s) => s.to_string(),
+        Value::Int64(i) => i.to_string(),
+        Value::Float64(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => String::new(),
+        other => format!("{other:?}"),
+    }
+}
 
 /// A group key for hash-based aggregation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -445,6 +695,18 @@ impl HashAggregateOperator {
 
                 // Update each aggregate
                 for (i, agg) in self.aggregates.iter().enumerate() {
+                    // Binary set functions: read two column values
+                    if agg.column2.is_some() {
+                        let y_val = agg
+                            .column
+                            .and_then(|col| chunk.column(col).and_then(|c| c.get_value(row)));
+                        let x_val = agg
+                            .column2
+                            .and_then(|col| chunk.column(col).and_then(|c| c.get_value(row)));
+                        states[i].update_bivariate(y_val, x_val);
+                        continue;
+                    }
+
                     let value = match (agg.function, agg.distinct) {
                         // COUNT(*) without DISTINCT doesn't need a value
                         (AggregateFunction::Count, false) => None,
@@ -613,6 +875,18 @@ impl Operator for SimpleAggregateOperator {
         while let Some(chunk) = self.child.next()? {
             for row in chunk.selected_indices() {
                 for (i, agg) in self.aggregates.iter().enumerate() {
+                    // Binary set functions: read two column values
+                    if agg.column2.is_some() {
+                        let y_val = agg
+                            .column
+                            .and_then(|col| chunk.column(col).and_then(|c| c.get_value(row)));
+                        let x_val = agg
+                            .column2
+                            .and_then(|col| chunk.column(col).and_then(|c| c.get_value(row)));
+                        self.states[i].update_bivariate(y_val, x_val);
+                        continue;
+                    }
+
                     let value = match (agg.function, agg.distinct) {
                         // COUNT(*) without DISTINCT doesn't need a value
                         (AggregateFunction::Count, false) => None,

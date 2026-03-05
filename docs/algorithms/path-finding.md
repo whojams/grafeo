@@ -84,7 +84,7 @@ weighted by an edge property. Compatible with LDBC Graphanalytics.
 
 ```python
 algs = db.algorithms()
-results = algs.sssp(source="Alice", weight_attr="cost")
+results = algs.sssp(source="Alix", weight_attr="cost")
 for node_id, distance in results:
     print(f"Node {node_id}: distance {distance}")
 ```
@@ -92,7 +92,7 @@ for node_id, distance in results:
 ### GQL / Cypher / SQL/PGQ
 
 ```sql
-CALL grafeo.sssp('Alice', 'cost') YIELD node_id, distance
+CALL grafeo.sssp('Alix', 'cost') YIELD node_id, distance
 ```
 
 ## Algorithm Complexity

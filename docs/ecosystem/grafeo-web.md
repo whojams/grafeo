@@ -32,10 +32,10 @@ const db = await GrafeoDB.create();
 const db = await GrafeoDB.create({ persist: 'my-database' });
 
 // Create data
-await db.execute(`INSERT (:Person {name: 'Alice', age: 30})`);
-await db.execute(`INSERT (:Person {name: 'Bob', age: 25})`);
+await db.execute(`INSERT (:Person {name: 'Alix', age: 30})`);
+await db.execute(`INSERT (:Person {name: 'Gus', age: 25})`);
 await db.execute(`
-  MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+  MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
   INSERT (a)-[:KNOWS {since: 2020}]->(b)
 `);
 
@@ -102,12 +102,12 @@ Data persists to IndexedDB automatically when `persist` is set. Persistence only
 ```typescript
 // First visit
 const db = await GrafeoDB.create({ persist: 'my-app' });
-await db.execute(`INSERT (:User {name: 'Alice'})`);
+await db.execute(`INSERT (:User {name: 'Alix'})`);
 
 // Later visit, data is still there
 const db = await GrafeoDB.create({ persist: 'my-app' });
 const result = await db.execute(`MATCH (u:User) RETURN u.name`);
-// -> [{ 'u.name': 'Alice' }]
+// -> [{ 'u.name': 'Alix' }]
 ```
 
 ### Storage Management

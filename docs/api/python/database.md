@@ -170,7 +170,7 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Execute queries
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
 
 result = db.execute("MATCH (p:Person) RETURN p.name")
 for row in result:
@@ -178,6 +178,6 @@ for row in result:
 
 # Use transactions
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Bob'})")
+    tx.execute("INSERT (:Person {name: 'Gus'})")
     tx.commit()
 ```

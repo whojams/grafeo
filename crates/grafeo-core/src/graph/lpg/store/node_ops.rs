@@ -30,7 +30,7 @@ impl LpgStore {
         // Store labels in node_labels map and label_index
         let mut node_label_set = FxHashSet::default();
         for label in labels {
-            let label_id = self.get_or_create_label_id(*label);
+            let label_id = self.get_or_create_label_id(label);
             node_label_set.insert(label_id);
 
             // Update label index
@@ -64,7 +64,7 @@ impl LpgStore {
         // Store labels in node_labels map and label_index
         let mut node_label_set = FxHashSet::default();
         for label in labels {
-            let label_id = self.get_or_create_label_id(*label);
+            let label_id = self.get_or_create_label_id(label);
             node_label_set.insert(label_id);
 
             // Update label index
@@ -79,8 +79,13 @@ impl LpgStore {
         self.node_labels.write().insert(id, node_label_set);
 
         // Allocate record in arena and get offset (create epoch if needed)
-        let arena = self.arena_allocator.arena_or_create(epoch);
-        let (offset, _stored) = arena.alloc_value_with_offset(record);
+        let arena = self
+            .arena_allocator
+            .arena_or_create(epoch)
+            .expect("failed to create arena for epoch");
+        let (offset, _stored) = arena
+            .alloc_value_with_offset(record)
+            .expect("arena allocation failed for node record");
 
         // Create HotVersionRef pointing to arena data
         let hot_ref = HotVersionRef::new(epoch, offset, tx_id);
@@ -390,7 +395,10 @@ impl LpgStore {
     pub(super) fn read_node_record(&self, version_ref: &VersionRef) -> Option<NodeRecord> {
         match version_ref {
             VersionRef::Hot(hot_ref) => {
-                let arena = self.arena_allocator.arena(hot_ref.epoch);
+                let arena = self
+                    .arena_allocator
+                    .arena(hot_ref.epoch)
+                    .expect("epoch must exist for hot version ref");
                 // SAFETY: The offset was returned by alloc_value_with_offset for a NodeRecord
                 let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                 Some(*record)

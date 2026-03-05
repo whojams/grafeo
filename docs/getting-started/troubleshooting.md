@@ -145,7 +145,7 @@ uv add --upgrade grafeo  # or: pip install --upgrade grafeo
    db.create_property_index("email")
 
    # Now lookups are O(1) instead of O(n)
-   db.find_nodes_by_property("email", "alice@example.com")
+   db.find_nodes_by_property("email", "alix@example.com")
    ```
 
 2. **Use batch operations** instead of loops:
@@ -217,17 +217,17 @@ uv add --upgrade grafeo  # or: pip install --upgrade grafeo
 ```python
 # Wrong
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Alice'})")
+    tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
-    tx.execute("INSERT (:Person {name: 'Bob'})")  # Error!
+    tx.execute("INSERT (:Person {name: 'Gus'})")  # Error!
 
 # Correct: Start a new transaction
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Alice'})")
+    tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
 
 with db.begin_transaction() as tx:
-    tx.execute("INSERT (:Person {name: 'Bob'})")
+    tx.execute("INSERT (:Person {name: 'Gus'})")
     tx.commit()
 ```
 

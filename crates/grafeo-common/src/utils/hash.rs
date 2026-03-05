@@ -4,18 +4,18 @@
 //! for better performance. For hashes that need to be stable across runs
 //! (like in the WAL), use [`stable_hash()`].
 
-use ahash::AHasher;
+use foldhash::fast::FoldHasher;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::OnceLock;
 
-/// A fast hasher based on aHash.
+/// A fast hasher based on foldhash.
 ///
 /// This hasher is optimized for speed rather than cryptographic security.
 /// It's suitable for hash tables, bloom filters, and other internal uses.
-pub type FxHasher = AHasher;
+pub type FxHasher = FoldHasher<'static>;
 
-/// A fast hash builder using aHash.
-pub type FxBuildHasher = ahash::RandomState;
+/// A fast hash builder using foldhash.
+pub type FxBuildHasher = foldhash::fast::RandomState;
 
 /// A `HashMap` using fast hashing.
 pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
@@ -24,10 +24,10 @@ pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
 pub type FxHashSet<T> = hashbrown::HashSet<T, FxBuildHasher>;
 
 /// Static `RandomState` used for consistent hashing within a program run.
-static HASH_STATE: OnceLock<ahash::RandomState> = OnceLock::new();
+static HASH_STATE: OnceLock<foldhash::fast::RandomState> = OnceLock::new();
 
-fn get_hash_state() -> &'static ahash::RandomState {
-    HASH_STATE.get_or_init(ahash::RandomState::new)
+fn get_hash_state() -> &'static foldhash::fast::RandomState {
+    HASH_STATE.get_or_init(foldhash::fast::RandomState::default)
 }
 
 /// Computes a 64-bit hash of the given value.

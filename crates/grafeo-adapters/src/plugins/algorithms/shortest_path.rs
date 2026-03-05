@@ -628,7 +628,7 @@ impl GraphAlgorithm for DijkstraAlgorithm {
         if let Some(target_id) = params.get_int("target") {
             // Single-pair shortest path
             let target = NodeId::new(target_id as u64);
-            match dijkstra_path(store, source, target, weight_prop.as_deref()) {
+            match dijkstra_path(store, source, target, weight_prop) {
                 Some((distance, path)) => {
                     let mut result = AlgorithmResult::new(vec![
                         "source".to_string(),
@@ -670,7 +670,7 @@ impl GraphAlgorithm for DijkstraAlgorithm {
             }
         } else {
             // Single-source shortest paths
-            let dijkstra_result = dijkstra(store, source, weight_prop.as_deref());
+            let dijkstra_result = dijkstra(store, source, weight_prop);
 
             let mut result =
                 AlgorithmResult::new(vec!["node_id".to_string(), "distance".to_string()]);
@@ -814,7 +814,7 @@ impl GraphAlgorithm for BellmanFordAlgorithm {
         let source = NodeId::new(source_id as u64);
         let weight_prop = params.get_string("weight");
 
-        let bf_result = bellman_ford(store, source, weight_prop.as_deref());
+        let bf_result = bellman_ford(store, source, weight_prop);
 
         let mut result = AlgorithmResult::new(vec![
             "node_id".to_string(),
@@ -868,7 +868,7 @@ impl GraphAlgorithm for FloydWarshallAlgorithm {
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
         let weight_prop = params.get_string("weight");
 
-        let fw_result = floyd_warshall(store, weight_prop.as_deref());
+        let fw_result = floyd_warshall(store, weight_prop);
 
         let mut result = AlgorithmResult::new(vec![
             "source".to_string(),
@@ -903,7 +903,7 @@ mod tests {
     use super::*;
 
     fn create_weighted_graph() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Create a weighted graph:
         //   0 --2--> 1 --3--> 2
@@ -968,7 +968,7 @@ mod tests {
 
     #[test]
     fn test_dijkstra_unreachable() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let _n1 = store.create_node(&["Node"]); // Disconnected
 
@@ -1036,14 +1036,14 @@ mod tests {
 
     #[test]
     fn test_dijkstra_nonexistent_source() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let result = dijkstra(&store, NodeId::new(999), None);
         assert!(result.distances.is_empty());
     }
 
     #[test]
     fn test_unweighted_defaults() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -1058,28 +1058,28 @@ mod tests {
 
     #[test]
     fn test_sssp_with_named_nodes() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
-        store.set_node_property(n0, "name", Value::from("alice"));
-        store.set_node_property(n1, "name", Value::from("bob"));
-        store.set_node_property(n2, "name", Value::from("carol"));
+        store.set_node_property(n0, "name", Value::from("alix"));
+        store.set_node_property(n1, "name", Value::from("gus"));
+        store.set_node_property(n2, "name", Value::from("harm"));
         store.create_edge_with_props(n0, n1, "KNOWS", [("weight", Value::Float64(1.0))]);
         store.create_edge_with_props(n1, n2, "KNOWS", [("weight", Value::Float64(2.0))]);
 
         let mut params = Parameters::new();
-        params.set_string("source", "alice");
+        params.set_string("source", "alix");
         params.set_string("weight", "weight");
 
         let result = SsspAlgorithm.execute(&store, &params).unwrap();
         assert_eq!(result.columns, vec!["node_id", "distance"]);
-        assert_eq!(result.row_count(), 3); // alice, bob, carol
+        assert_eq!(result.row_count(), 3); // alix, gus, harm
     }
 
     #[test]
     fn test_sssp_with_numeric_source() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n1, "EDGE");
@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn test_sssp_nonexistent_name() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let _n0 = store.create_node(&["Node"]);
 
         let mut params = Parameters::new();

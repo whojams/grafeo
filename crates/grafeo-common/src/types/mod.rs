@@ -29,3 +29,6 @@ pub use timestamp::Timestamp;
 pub use validity::ValidityTs;
 pub use value::{HashableValue, OrderableValue, OrderedFloat64, PropertyKey, Value};
 pub use zoned_datetime::ZonedDatetime;
+
+// Re-export ArcStr so downstream crates don't need a direct arcstr dependency.
+pub use arcstr::ArcStr;

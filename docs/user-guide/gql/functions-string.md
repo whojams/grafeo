@@ -16,6 +16,7 @@ tags:
 | `toUpper(str)` / `upper(str)` | Convert to uppercase |
 | `toLower(str)` / `lower(str)` | Convert to lowercase |
 | `trim(str)` | Remove leading/trailing whitespace |
+| `TRIM(BOTH\|LEADING\|TRAILING 'chars' FROM str)` | Trim specific characters |
 | `ltrim(str)` | Remove leading whitespace |
 | `rtrim(str)` | Remove trailing whitespace |
 | `substring(str, start, len)` | Extract substring |
@@ -46,6 +47,11 @@ RETURN lower('HELLO')     -- 'hello'
 RETURN trim('  hello  ')    -- 'hello'
 RETURN ltrim('  hello  ')   -- 'hello  '
 RETURN rtrim('  hello  ')   -- '  hello'
+
+-- ISO enhanced TRIM with trim specification (GF05)
+RETURN TRIM(BOTH 'xy' FROM 'xxyhelloxyy')     -- 'hello'
+RETURN TRIM(LEADING '0' FROM '000123')         -- '123'
+RETURN TRIM(TRAILING '.' FROM 'hello...')      -- 'hello'
 ```
 
 ## Substring and Length
@@ -105,8 +111,8 @@ RETURN normalize('café')   -- 'café'
 Join a list of strings with a separator:
 
 ```sql
-RETURN string_join(['Alice', 'Bob', 'Carol'], ', ')
--- 'Alice, Bob, Carol'
+RETURN string_join(['Alix', 'Gus', 'Harm'], ', ')
+-- 'Alix, Gus, Harm'
 
 -- Practical: collect names and join
 MATCH (p:Person)-[:WORKS_AT]->(c:Company)

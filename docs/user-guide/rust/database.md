@@ -46,7 +46,7 @@ fn main() -> Result<(), grafeo_common::utils::error::Error> {
 
     // Use the database
     let mut session = db.session();
-    session.execute("INSERT (:Person {name: 'Alice'})")?;
+    session.execute("INSERT (:Person {name: 'Alix'})")?;
 
     // Database is dropped and closed when it goes out of scope
     Ok(())

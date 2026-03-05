@@ -21,8 +21,8 @@ g.V().count()
 // Count people
 g.V().hasLabel('Person').count()
 
-// Count Alice's friends
-g.V().has('name', 'Alice').out('KNOWS').count()
+// Count Alix's friends
+g.V().has('name', 'Alix').out('KNOWS').count()
 ```
 
 ## sum()
@@ -70,7 +70,7 @@ Collects all elements into a single list:
 g.V().hasLabel('Person').values('name').fold()
 
 // Collect friend names
-g.V().has('name', 'Alice').out('KNOWS').values('name').fold()
+g.V().has('name', 'Alix').out('KNOWS').values('name').fold()
 ```
 
 ## unfold()
@@ -127,7 +127,7 @@ Label a step for later reference:
 
 ```gremlin
 // Label vertices for later use
-g.V().has('name', 'Alice').as('a').out('KNOWS').as('b').select('a', 'b')
+g.V().has('name', 'Alix').as('a').out('KNOWS').as('b').select('a', 'b')
 ```
 
 ### select()
@@ -136,7 +136,7 @@ Retrieve labeled elements:
 
 ```gremlin
 // Select specific labeled elements
-g.V().has('name', 'Alice').as('person').out('KNOWS').as('friend').select('person', 'friend')
+g.V().has('name', 'Alix').as('person').out('KNOWS').as('friend').select('person', 'friend')
 ```
 
 ### project()
@@ -165,8 +165,8 @@ g.V().hasLabel('Person').store('people')
 Return the full traversal path:
 
 ```gremlin
-// Get the path from Alice to her friends' friends
-g.V().has('name', 'Alice').out('KNOWS').out('KNOWS').path()
+// Get the path from Alix to her friends' friends
+g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').path()
 ```
 
 ## Python Example
@@ -177,9 +177,9 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data
-db.execute("INSERT (:Person {name: 'Alice', age: 30, city: 'Seattle'})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25, city: 'Portland'})")
-db.execute("INSERT (:Person {name: 'Charlie', age: 35, city: 'Seattle'})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30, city: 'Utrecht'})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25, city: 'Portland'})")
+db.execute("INSERT (:Person {name: 'Vincent', age: 35, city: 'Utrecht'})")
 
 # Count
 result = db.execute_gremlin("g.V().hasLabel('Person').count()")
@@ -199,7 +199,7 @@ for row in result:
 # Collect names
 result = db.execute_gremlin("g.V().hasLabel('Person').values('name').fold()")
 for row in result:
-    print(row)  # ['Alice', 'Bob', 'Charlie']
+    print(row)  # ['Alix', 'Gus', 'Vincent']
 ```
 
 ## Aggregation Reference

@@ -117,7 +117,10 @@ impl Operator for ProcedureCallOperator {
             self.execute_algorithm()?;
         }
 
-        let result = self.result.as_ref().unwrap();
+        let result = self
+            .result
+            .as_ref()
+            .expect("result populated by execute_algorithm");
 
         if self.row_index >= result.rows.len() {
             return Ok(None);

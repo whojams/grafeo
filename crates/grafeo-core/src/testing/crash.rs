@@ -6,7 +6,7 @@
 //! deterministic point, then verify that recovery produces a consistent state.
 //!
 //! Thread-local storage ensures that concurrent tests never interfere with
-//! each other — only the thread that calls [`enable_crash_at`] is affected.
+//! each other; only the thread that calls [`enable_crash_at`] is affected.
 //!
 //! When the feature is **disabled**, all functions compile to no-ops with zero
 //! runtime overhead.

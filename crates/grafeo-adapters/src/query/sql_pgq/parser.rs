@@ -316,7 +316,11 @@ impl<'a> Parser<'a> {
             }
             _ => GqlSortOrder::Asc,
         };
-        Ok(OrderByItem { expression, order })
+        Ok(OrderByItem {
+            expression,
+            order,
+            nulls: None,
+        })
     }
 
     // ==================== GRAPH_TABLE Parsing ====================
@@ -1373,7 +1377,7 @@ mod tests {
     fn test_node_with_properties() {
         let s = select(parse_ok(
             "SELECT * FROM GRAPH_TABLE (
-                MATCH (n:Person {name: 'Alice'})
+                MATCH (n:Person {name: 'Alix'})
                 COLUMNS (n.name AS name)
             )",
         ));
@@ -1411,7 +1415,7 @@ mod tests {
                 MATCH (n:Person)
                 COLUMNS (n.name AS name)
             ) AS g
-            WHERE g.name = 'Alice'",
+            WHERE g.name = 'Alix'",
         ));
         assert!(s.where_clause.is_some());
         if let Some(Expression::Binary { op, .. }) = &s.where_clause {

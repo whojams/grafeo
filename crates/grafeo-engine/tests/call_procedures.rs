@@ -5,19 +5,19 @@
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
-/// Creates a small test graph: Alice -> Bob -> Carol (all :Person, connected via :KNOWS).
+/// Creates a small test graph: Alix -> Gus -> Harm (all :Person, connected via :KNOWS).
 fn setup_graph() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
-    let alice = db.create_node(&["Person"]);
-    let bob = db.create_node(&["Person"]);
-    let carol = db.create_node(&["Person"]);
+    let alix = db.create_node(&["Person"]);
+    let gus = db.create_node(&["Person"]);
+    let harm = db.create_node(&["Person"]);
 
-    db.set_node_property(alice, "name", Value::from("Alice"));
-    db.set_node_property(bob, "name", Value::from("Bob"));
-    db.set_node_property(carol, "name", Value::from("Carol"));
+    db.set_node_property(alix, "name", Value::from("Alix"));
+    db.set_node_property(gus, "name", Value::from("Gus"));
+    db.set_node_property(harm, "name", Value::from("Harm"));
 
-    db.create_edge(alice, bob, "KNOWS");
-    db.create_edge(bob, carol, "KNOWS");
+    db.create_edge(alix, gus, "KNOWS");
+    db.create_edge(gus, harm, "KNOWS");
 
     db
 }

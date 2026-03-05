@@ -23,7 +23,7 @@ Pattern matching is the core of Cypher. This guide covers node and edge patterns
 (e:Person:Employee)
 
 -- Node with properties
-(p:Person {name: 'Alice'})
+(p:Person {name: 'Alix'})
 
 -- Anonymous node (no variable)
 (:Person)

@@ -38,7 +38,7 @@ impl LpgStore {
             edges.retain(|_, chain| !chain.is_empty());
         }
 
-        // Counters may be out of sync after rollback — force full recompute
+        // Counters may be out of sync after rollback: force full recompute
         self.needs_stats_recompute.store(true, Ordering::Relaxed);
     }
 
@@ -67,7 +67,7 @@ impl LpgStore {
             versions.retain(|_, index| !index.is_empty());
         }
 
-        // Counters may be out of sync after rollback — force full recompute
+        // Counters may be out of sync after rollback: force full recompute
         self.needs_stats_recompute.store(true, Ordering::Relaxed);
     }
 
@@ -144,7 +144,10 @@ impl LpgStore {
             let versions = self.node_versions.read();
             for (node_id, index) in versions.iter() {
                 for hot_ref in index.hot_refs_for_epoch(epoch) {
-                    let arena = self.arena_allocator.arena(hot_ref.epoch);
+                    let arena = self
+                        .arena_allocator
+                        .arena(hot_ref.epoch)
+                        .expect("epoch must exist for hot version ref");
                     // SAFETY: The offset was returned by alloc_value_with_offset for a NodeRecord
                     let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                     node_records.push((node_id.as_u64(), *record));
@@ -161,7 +164,10 @@ impl LpgStore {
             let versions = self.edge_versions.read();
             for (edge_id, index) in versions.iter() {
                 for hot_ref in index.hot_refs_for_epoch(epoch) {
-                    let arena = self.arena_allocator.arena(hot_ref.epoch);
+                    let arena = self
+                        .arena_allocator
+                        .arena(hot_ref.epoch)
+                        .expect("epoch must exist for hot version ref");
                     // SAFETY: The offset was returned by alloc_value_with_offset for an EdgeRecord
                     let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                     edge_records.push((edge_id.as_u64(), *record));
@@ -255,7 +261,7 @@ impl LpgStore {
         // Store labels in node_labels map and label_index
         let mut node_label_set = FxHashSet::default();
         for label in labels {
-            let label_id = self.get_or_create_label_id(*label);
+            let label_id = self.get_or_create_label_id(label);
             node_label_set.insert(label_id);
 
             // Update label index
@@ -299,7 +305,7 @@ impl LpgStore {
         // Store labels in node_labels map and label_index
         let mut node_label_set = FxHashSet::default();
         for label in labels {
-            let label_id = self.get_or_create_label_id(*label);
+            let label_id = self.get_or_create_label_id(label);
             node_label_set.insert(label_id);
 
             // Update label index
@@ -314,8 +320,13 @@ impl LpgStore {
         self.node_labels.write().insert(id, node_label_set);
 
         // Allocate record in arena and get offset (create epoch if needed)
-        let arena = self.arena_allocator.arena_or_create(epoch);
-        let (offset, _stored) = arena.alloc_value_with_offset(record);
+        let arena = self
+            .arena_allocator
+            .arena_or_create(epoch)
+            .expect("failed to create arena for epoch");
+        let (offset, _stored) = arena
+            .alloc_value_with_offset(record)
+            .expect("arena allocation failed for node record");
 
         // Create HotVersionRef (using SYSTEM tx for recovery)
         let hot_ref = HotVersionRef::new(epoch, offset, TxId::SYSTEM);
@@ -382,8 +393,13 @@ impl LpgStore {
         let record = EdgeRecord::new(id, src, dst, type_id, epoch);
 
         // Allocate record in arena and get offset (create epoch if needed)
-        let arena = self.arena_allocator.arena_or_create(epoch);
-        let (offset, _stored) = arena.alloc_value_with_offset(record);
+        let arena = self
+            .arena_allocator
+            .arena_or_create(epoch)
+            .expect("failed to create arena for epoch");
+        let (offset, _stored) = arena
+            .alloc_value_with_offset(record)
+            .expect("arena allocation failed for edge record");
 
         // Create HotVersionRef (using SYSTEM tx for recovery)
         let hot_ref = HotVersionRef::new(epoch, offset, TxId::SYSTEM);

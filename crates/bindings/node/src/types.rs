@@ -232,8 +232,8 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
                 check_napi(unsafe { sys::napi_set_element(env, edges_arr, i as u32, val) })?;
             }
 
-            let nodes_key = CString::new("nodes").unwrap();
-            let edges_key = CString::new("edges").unwrap();
+            let nodes_key = CString::new("nodes").expect("static string has no null bytes");
+            let edges_key = CString::new("edges").expect("static string has no null bytes");
             check_napi(unsafe {
                 sys::napi_set_named_property(env, obj, nodes_key.as_ptr(), nodes_arr)
             })?;

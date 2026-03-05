@@ -461,7 +461,7 @@ mod tests {
     use super::*;
 
     fn create_dag() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Create a DAG:
         //   0 -> 1 -> 3
@@ -484,7 +484,7 @@ mod tests {
     }
 
     fn create_cyclic_graph() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Create a cycle: 0 -> 1 -> 2 -> 0
         let n0 = store.create_node(&["Node"]);
@@ -499,7 +499,7 @@ mod tests {
     }
 
     fn create_disconnected_graph() -> LpgStore {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
 
         // Two disconnected components: {0, 1} and {2, 3}
         let n0 = store.create_node(&["Node"]);

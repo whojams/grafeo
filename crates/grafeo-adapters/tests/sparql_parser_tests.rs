@@ -99,7 +99,7 @@ mod tests {
         let query = r#"
             PREFIX foaf: <http://xmlns.com/foaf/0.1/>
             ASK {
-                ?person foaf:name "Alice" .
+                ?person foaf:name "Alix" .
                 ?person foaf:knows ?friend
             }
         "#;
@@ -135,7 +135,7 @@ mod tests {
             PREFIX foaf: <http://xmlns.com/foaf/0.1/>
             DESCRIBE ?person
             WHERE {
-                ?person foaf:name "Alice"
+                ?person foaf:name "Alix"
             }
         "#;
         let result = sparql::parse(query);
@@ -169,7 +169,7 @@ mod tests {
         let query = r#"
             SELECT ?name
             WHERE {
-                VALUES ?person { <http://example.org/alice> <http://example.org/bob> }
+                VALUES ?person { <http://example.org/alix> <http://example.org/gus> }
                 ?person <http://xmlns.com/foaf/0.1/name> ?name
             }
         "#;
@@ -184,7 +184,7 @@ mod tests {
             WHERE {
                 ?person <http://xmlns.com/foaf/0.1/name> ?name
                 MINUS {
-                    ?person <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob>
+                    ?person <http://xmlns.com/foaf/0.1/knows> <http://example.org/gus>
                 }
             }
         "#;
@@ -225,7 +225,7 @@ mod tests {
             SELECT ?name (STRLEN(?name) AS ?len) (UCASE(?name) AS ?upper)
             WHERE {
                 ?x <http://xmlns.com/foaf/0.1/name> ?name
-                FILTER(CONTAINS(?name, "Alice"))
+                FILTER(CONTAINS(?name, "Alix"))
                 FILTER(STRSTARTS(?name, "A"))
             }
         "#;

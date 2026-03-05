@@ -17,7 +17,7 @@ In Grafeo, nested fields in a GraphQL query map to edge traversals. The field na
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name
@@ -29,7 +29,7 @@ In Grafeo, nested fields in a GraphQL query map to edge traversals. The field na
 
 This query:
 
-1. Finds nodes with label `Person` where `name = "Alice"`
+1. Finds nodes with label `Person` where `name = "Alix"`
 2. Returns the `name` property
 3. Traverses outgoing `friends` edges
 4. Returns `name` and `age` of connected nodes
@@ -49,7 +49,7 @@ Query multiple levels of relationships:
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name
@@ -61,7 +61,7 @@ Query multiple levels of relationships:
 }
 ```
 
-This traverses two hops: Alice's friends, then their friends.
+This traverses two hops: Alix's friends, then their friends.
 
 ## Filtering Nested Results
 
@@ -69,7 +69,7 @@ Apply arguments to nested fields to filter related nodes:
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends(age: 30) {
       name
@@ -85,7 +85,7 @@ Query different relationship types in the same query:
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name
@@ -106,22 +106,22 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create a social graph
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
-db.execute("INSERT (:Person {name: 'Charlie', age: 35})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
+db.execute("INSERT (:Person {name: 'Vincent', age: 35})")
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:friends]->(b)
 """)
 db.execute("""
-    MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'})
+    MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'})
     INSERT (b)-[:friends]->(c)
 """)
 
 # Query relationships
 result = db.execute_graphql("""
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name
@@ -144,16 +144,16 @@ use grafeo_engine::GrafeoDB;
 let db = GrafeoDB::new_in_memory();
 
 // Create data
-db.execute("INSERT (:Person {name: 'Alice'})").unwrap();
-db.execute("INSERT (:Person {name: 'Bob'})").unwrap();
+db.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+db.execute("INSERT (:Person {name: 'Gus'})").unwrap();
 db.execute(
-    "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) INSERT (a)-[:friends]->(b)"
+    "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:friends]->(b)"
 ).unwrap();
 
 // Query with nested relationships
 let result = db.execute_graphql(r#"
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     friends {
       name

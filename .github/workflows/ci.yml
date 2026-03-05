@@ -190,7 +190,7 @@ jobs:
           uv pip install --system pytest pytest-asyncio networkx numpy scipy solvor
 
       - name: Run Python tests
-        run: pytest tests/python/ -v --ignore=tests/python/benchmark_grafeo.py --ignore=tests/python/benchmark_phases.py
+        run: pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py
 
   # Node.js tests
   node-test:

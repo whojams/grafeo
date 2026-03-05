@@ -249,8 +249,8 @@ enum DataCommands {
         output: PathBuf,
 
         /// Export format (parquet, turtle, json)
-        #[arg(long)]
-        format: Option<String>,
+        #[arg(long = "export-format")]
+        export_format: Option<String>,
     },
 
     /// Import data from a dump
@@ -368,7 +368,7 @@ fn main() {
             if e.downcast_ref::<commands::validate::ValidationFailed>()
                 .is_some()
             {
-                // Validation already printed results — just set the exit code.
+                // Validation already printed results, just set the exit code.
                 ExitCode::ValidationFailed
             } else {
                 output::error(&e.to_string());

@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = GrafeoDB::new_in_memory()?;
     let session = db.session()?;
 
-    session.execute("INSERT (:Person {name: 'Alice'})")?;
+    session.execute("INSERT (:Person {name: 'Alix'})")?;
 
     Ok(())
 }

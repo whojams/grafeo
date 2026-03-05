@@ -19,7 +19,7 @@ uv add grafeo
 import grafeo
 
 db = grafeo.GrafeoDB()
-db.execute("INSERT (:Person {name: 'Alice'})")
+db.execute("INSERT (:Person {name: 'Alix'})")
 ```
 
 ## Classes

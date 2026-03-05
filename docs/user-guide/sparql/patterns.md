@@ -35,7 +35,7 @@ WHERE { ?s ?p ?o }
 
 # Mix of variables and constants
 SELECT ?name
-WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }
+WHERE { <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> ?name }
 ```
 
 ## IRIs (Resources)
@@ -45,14 +45,14 @@ IRIs identify resources:
 ```sparql
 # Full IRI
 SELECT ?name
-WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }
+WHERE { <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> ?name }
 
 # Prefixed IRI
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 PREFIX ex: <http://example.org/>
 
 SELECT ?name
-WHERE { ex:alice foaf:name ?name }
+WHERE { ex:alix foaf:name ?name }
 ```
 
 ## Literals
@@ -62,7 +62,7 @@ Literals represent data values:
 ```sparql
 # Plain literal
 SELECT ?person
-WHERE { ?person foaf:name "Alice" }
+WHERE { ?person foaf:name "Alix" }
 
 # Language-tagged literal
 SELECT ?label
@@ -111,12 +111,12 @@ Exclude matching patterns:
 ```sparql
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
-# Find people who don't know Bob
+# Find people who don't know Gus
 SELECT ?name
 WHERE {
     ?person foaf:name ?name
     MINUS {
-        ?person foaf:knows <http://example.org/bob>
+        ?person foaf:knows <http://example.org/gus>
     }
 }
 ```
@@ -185,7 +185,7 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
 SELECT ?name ?email
 WHERE {
-    VALUES ?person { <http://example.org/alice> <http://example.org/bob> }
+    VALUES ?person { <http://example.org/alix> <http://example.org/gus> }
     ?person foaf:name ?name .
     OPTIONAL { ?person foaf:mbox ?email }
 }

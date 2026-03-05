@@ -40,8 +40,8 @@ from langchain_core.documents import Document
 store = GrafeoGraphStore()
 
 # Add knowledge graph triples
-store.upsert_triplet(("Alice", "KNOWS", "Bob"))
-store.upsert_triplet(("Bob", "WORKS_AT", "Acme"))
+store.upsert_triplet(("Alix", "KNOWS", "Gus"))
+store.upsert_triplet(("Gus", "WORKS_AT", "Acme"))
 
 # Query with GQL or Cypher
 result = store.query("MATCH (a)-[:KNOWS]->(b) RETURN a, b")
@@ -61,8 +61,8 @@ store = GrafeoGraphVectorStore(
 # Add documents with graph links
 docs = [
     Document(
-        page_content="Alice is an engineer at Acme.",
-        metadata={"__graph_links__": [{"kind": "bidir", "tag": "MENTIONS", "id": "alice"}]},
+        page_content="Alix is an engineer at Acme.",
+        metadata={"__graph_links__": [{"kind": "bidir", "tag": "MENTIONS", "id": "alix"}]},
     ),
 ]
 store.add_documents(docs)

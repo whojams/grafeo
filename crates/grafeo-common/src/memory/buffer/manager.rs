@@ -35,7 +35,7 @@ impl BufferManagerConfig {
     /// Returns a conservative estimate if detection fails.
     #[must_use]
     pub fn detect_system_memory() -> usize {
-        // Under Miri, file I/O is blocked by isolation — use fallback directly
+        // Under Miri, file I/O is blocked by isolation: use fallback directly
         #[cfg(miri)]
         {
             return Self::fallback_system_memory();

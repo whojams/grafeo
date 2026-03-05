@@ -143,6 +143,21 @@ CREATE OR REPLACE GRAPH TYPE social_network (
     NODE TYPE Person (name STRING NOT NULL, age INTEGER),
     EDGE TYPE KNOWS (since INTEGER)
 )
+
+-- With key label sets (GG21)
+CREATE GRAPH TYPE labeled_type (
+    NODE TYPE Person KEY (PersonLabel) (name STRING NOT NULL, age INTEGER),
+    EDGE TYPE KNOWS
+)
+```
+
+### Graph Type from Existing Graph (LIKE)
+
+Clone a graph type from an existing graph's bound type:
+
+```sql
+-- Create a type that matches an existing graph's schema
+CREATE GRAPH TYPE cloned_type LIKE my_existing_graph
 ```
 
 ### Altering Graph Types
@@ -298,12 +313,12 @@ AS {
 
 ```sql
 -- Call with YIELD to select output fields
-CALL find_friends('Alice') YIELD friend_name, mutual_count
+CALL find_friends('Alix') YIELD friend_name, mutual_count
 RETURN friend_name, mutual_count
 ORDER BY mutual_count DESC
 
 -- Filter yielded results
-CALL find_friends('Alice') YIELD friend_name, mutual_count
+CALL find_friends('Alix') YIELD friend_name, mutual_count
 WHERE mutual_count > 3
 RETURN friend_name
 ```

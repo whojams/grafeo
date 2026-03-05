@@ -80,7 +80,7 @@ impl LpgStore {
         *self.statistics.write() = Arc::new(stats);
     }
 
-    /// Full recomputation from storage — used after rollback when counters
+    /// Full recomputation from storage: used after rollback when counters
     /// may be out of sync. Also resyncs the atomic counters.
     #[cfg(not(feature = "tiered-storage"))]
     fn recompute_statistics_full(&self) {
@@ -125,7 +125,7 @@ impl LpgStore {
         self.compute_statistics();
     }
 
-    /// Full recomputation from storage — used after rollback when counters
+    /// Full recomputation from storage: used after rollback when counters
     /// may be out of sync. Also resyncs the atomic counters.
     /// (Tiered storage version)
     #[cfg(feature = "tiered-storage")]

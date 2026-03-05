@@ -3,7 +3,6 @@
 use std::path::Path;
 
 use anyhow::Result;
-use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
 use crate::OutputFormat;
@@ -24,7 +23,7 @@ struct StatsOutput {
 
 /// Run the stats command.
 pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
-    let db = GrafeoDB::open(path)?;
+    let db = super::open_existing(path)?;
     let stats = db.detailed_stats();
 
     let output = StatsOutput {

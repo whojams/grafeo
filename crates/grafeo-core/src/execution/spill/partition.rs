@@ -558,7 +558,7 @@ fn write_u64<W: Write>(writer: &mut W, value: u64) -> std::io::Result<()> {
 /// Adapter to read from SpillFileReader through std::io::Read.
 struct SpillReaderAdapter<'a>(&'a mut super::file::SpillFileReader);
 
-impl<'a> Read for SpillReaderAdapter<'a> {
+impl Read for SpillReaderAdapter<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.0.read_exact(buf)?;
         Ok(buf.len())

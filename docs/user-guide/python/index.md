@@ -16,7 +16,7 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Execute queries
-db.execute("INSERT (:Person {name: 'Alice'})")
+db.execute("INSERT (:Person {name: 'Alix'})")
 
 result = db.execute("MATCH (p:Person) RETURN p.name")
 for row in result:

@@ -34,8 +34,8 @@ Subject --Predicate--> Object
 
 Example triples:
 ```
-<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
-<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .
+<http://example.org/alix> <http://xmlns.com/foaf/0.1/name> "Alix" .
+<http://example.org/alix> <http://xmlns.com/foaf/0.1/knows> <http://example.org/gus> .
 ```
 
 ## Using SPARQL
@@ -52,15 +52,15 @@ SPARQL is enabled by default in Grafeo:
     # Insert RDF triples
     db.execute_sparql("""
         INSERT DATA {
-            <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
-            <http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .
+            <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> "Alix" .
+            <http://example.org/alix> <http://xmlns.com/foaf/0.1/knows> <http://example.org/gus> .
         }
     """)
 
     # Query triples
     result = db.execute_sparql("""
         SELECT ?name WHERE {
-            <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name .
+            <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> ?name .
         }
     """)
     for row in result:

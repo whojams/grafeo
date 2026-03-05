@@ -3,7 +3,7 @@
 //! This module provides the [`VectorAccessor`] trait, which decouples vector
 //! storage from vector indexing. The HNSW index is topology-only (neighbor
 //! lists only, no stored vectors) and reads vectors through this trait from
-//! [`PropertyStorage`] — the single source of truth — halving memory usage
+//! [`PropertyStorage`], the single source of truth, halving memory usage
 //! for vector workloads.
 //!
 //! # Example
@@ -28,7 +28,7 @@ use crate::graph::GraphStore;
 
 /// Trait for reading vectors by node ID.
 ///
-/// HNSW is topology-only — vectors live in property storage, not in
+/// HNSW is topology-only: vectors live in property storage, not in
 /// HNSW nodes. This trait provides the bridge for reading them.
 pub trait VectorAccessor: Send + Sync {
     /// Returns the vector associated with the given node ID, if it exists.
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_property_vector_accessor() {
-        let store = LpgStore::new();
+        let store = LpgStore::new().unwrap();
         let id = store.create_node(&["Test"]);
         let vec_data: Arc<[f32]> = vec![1.0, 2.0, 3.0].into();
         store.set_node_property(id, "embedding", Value::Vector(vec_data.clone()));

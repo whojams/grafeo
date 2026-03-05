@@ -323,13 +323,13 @@ impl JsGrafeoDB {
     }
 
     /// Get the number of nodes.
-    #[napi(getter, js_name = "nodeCount")]
+    #[napi(js_name = "nodeCount")]
     pub fn node_count(&self) -> u32 {
         self.inner.read().node_count() as u32
     }
 
     /// Get the number of edges.
-    #[napi(getter, js_name = "edgeCount")]
+    #[napi(js_name = "edgeCount")]
     pub fn edge_count(&self) -> u32 {
         self.inner.read().edge_count() as u32
     }

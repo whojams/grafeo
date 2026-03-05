@@ -283,8 +283,16 @@ impl MmapStorage {
             ));
         }
 
-        let dimensions = u64::from_le_bytes(header[8..16].try_into().unwrap()) as usize;
-        let count = u64::from_le_bytes(header[16..24].try_into().unwrap()) as usize;
+        let dimensions = u64::from_le_bytes(
+            header[8..16]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        ) as usize;
+        let count = u64::from_le_bytes(
+            header[16..24]
+                .try_into()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        ) as usize;
 
         // Read index (stored after header)
         let mut index = HashMap::with_capacity(count);
@@ -417,7 +425,13 @@ impl VectorStorage for MmapStorage {
         // Convert bytes to f32
         let vector: Vec<f32> = bytes
             .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+            .map(|chunk| {
+                f32::from_le_bytes(
+                    chunk
+                        .try_into()
+                        .expect("chunks_exact(4) yields 4-byte slices"),
+                )
+            })
             .collect();
 
         let arc: Arc<[f32]> = vector.into();

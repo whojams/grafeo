@@ -15,13 +15,13 @@ Learn how to create, read, update and delete nodes using the Python API.
 ```python
 # Create a single node
 db.execute("""
-    INSERT (:Person {name: 'Alice', age: 30})
+    INSERT (:Person {name: 'Alix', age: 30})
 """)
 
 # Create multiple nodes
 db.execute("""
-    INSERT (:Person {name: 'Bob', age: 25})
-    INSERT (:Person {name: 'Carol', age: 35})
+    INSERT (:Person {name: 'Gus', age: 25})
+    INSERT (:Person {name: 'Harm', age: 35})
 """)
 
 # Create with multiple labels
@@ -34,7 +34,7 @@ db.execute("""
 
 ```python
 # Create a node using the direct API
-node = db.create_node(["Person"], {"name": "Alice", "age": 30})
+node = db.create_node(["Person"], {"name": "Alix", "age": 30})
 print(f"Created node with ID: {node.id}")
 
 # Add labels
@@ -59,7 +59,7 @@ for row in result:
 
 # Find specific node
 result = db.execute("""
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     RETURN p
 """)
 ```
@@ -69,13 +69,13 @@ result = db.execute("""
 ```python
 # Update properties
 db.execute("""
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     SET p.age = 31, p.city = 'New York'
 """)
 
 # Remove a property
 db.execute("""
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     REMOVE p.temporary_field
 """)
 
@@ -88,13 +88,13 @@ db.remove_node_label(node.id, "Contractor")
 ```python
 # Delete a node (must have no edges)
 db.execute("""
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     DELETE p
 """)
 
 # Delete node and its edges
 db.execute("""
-    MATCH (p:Person {name: 'Bob'})
+    MATCH (p:Person {name: 'Gus'})
     DETACH DELETE p
 """)
 ```

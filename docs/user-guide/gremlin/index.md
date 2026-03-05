@@ -34,7 +34,7 @@ Gremlin support is optional and requires a feature flag:
 | All vertices | `g.V()` |
 | Vertex by ID | `g.V(id)` |
 | Filter by label | `g.V().hasLabel('Person')` |
-| Filter by property | `g.V().has('name', 'Alice')` |
+| Filter by property | `g.V().has('name', 'Alix')` |
 | Outgoing edges | `g.V().out('KNOWS')` |
 | Incoming edges | `g.V().in('KNOWS')` |
 | Both directions | `g.V().both('KNOWS')` |
@@ -54,7 +54,7 @@ g.V()
 g.V().hasLabel('Person')
 
 // Vertex with specific property
-g.V().has('name', 'Alice')
+g.V().has('name', 'Alix')
 
 // Multiple conditions
 g.V().hasLabel('Person').has('age', gt(25))
@@ -63,14 +63,14 @@ g.V().hasLabel('Person').has('age', gt(25))
 ### Traversing Edges
 
 ```gremlin
-// Friends of Alice
-g.V().has('name', 'Alice').out('KNOWS')
+// Friends of Alix
+g.V().has('name', 'Alix').out('KNOWS')
 
-// People who know Bob
-g.V().has('name', 'Bob').in('KNOWS')
+// People who know Gus
+g.V().has('name', 'Gus').in('KNOWS')
 
 // Two-hop traversal
-g.V().has('name', 'Alice').out('KNOWS').out('KNOWS')
+g.V().has('name', 'Alix').out('KNOWS').out('KNOWS')
 ```
 
 ### Getting Properties
@@ -90,7 +90,7 @@ g.V().hasLabel('Person').valueMap('name', 'age')
 g.V().hasLabel('Person').count()
 
 // Count friends
-g.V().has('name', 'Alice').out('KNOWS').count()
+g.V().has('name', 'Alix').out('KNOWS').count()
 ```
 
 ## Python Usage
@@ -101,10 +101,10 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create some data
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:KNOWS {since: 2020}]->(b)
 """)
 
@@ -114,7 +114,7 @@ for row in result:
     print(row)
 
 # Traverse relationships
-friends = db.execute_gremlin("g.V().has('name', 'Alice').out('KNOWS').values('name')")
+friends = db.execute_gremlin("g.V().has('name', 'Alix').out('KNOWS').values('name')")
 ```
 
 ## Rust Usage
@@ -125,7 +125,7 @@ use grafeo_engine::GrafeoDB;
 let db = GrafeoDB::new_in_memory();
 
 // Create data with GQL
-db.execute("INSERT (:Person {name: 'Alice'})").unwrap();
+db.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
 // Query with Gremlin
 let result = db.execute_gremlin("g.V().hasLabel('Person')").unwrap();

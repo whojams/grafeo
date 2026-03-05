@@ -19,7 +19,7 @@ Aliases rename fields in the result or query the same type multiple times:
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     fullName: name
     yearsOld: age
   }
@@ -34,11 +34,11 @@ Query the same type with different filters using aliases:
 
 ```graphql
 {
-  alice: Person(name: "Alice") {
+  alix: Person(name: "Alix") {
     name
     age
   }
-  bob: Person(name: "Bob") {
+  gus: Person(name: "Gus") {
     name
     age
   }
@@ -49,7 +49,7 @@ Query the same type with different filters using aliases:
 
 ```graphql
 {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     closeFriends: friends {
       name
@@ -66,7 +66,7 @@ Fragments define reusable sets of fields:
 
 ```graphql
 query {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     ...PersonFields
   }
 }
@@ -84,10 +84,10 @@ The fragment's fields are included wherever the spread (`...PersonFields`) appea
 
 ```graphql
 query {
-  alice: Person(name: "Alice") {
+  alix: Person(name: "Alix") {
     ...PersonInfo
   }
-  bob: Person(name: "Bob") {
+  gus: Person(name: "Gus") {
     ...PersonInfo
   }
 }
@@ -143,7 +143,7 @@ Conditionally include fields:
 
 ```graphql
 query GetPerson($withAge: Boolean!) {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     age @include(if: $withAge)
   }
@@ -156,7 +156,7 @@ Conditionally skip fields:
 
 ```graphql
 query GetPerson($hideEmail: Boolean!) {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     name
     email @skip(if: $hideEmail)
   }
@@ -171,17 +171,17 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data
-db.execute("INSERT (:Person {name: 'Alice', age: 30, city: 'Seattle'})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25, city: 'Portland'})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30, city: 'Utrecht'})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25, city: 'Portland'})")
 
 # Using aliases
 result = db.execute_graphql("""
 {
-  alice: Person(name: "Alice") {
+  alix: Person(name: "Alix") {
     name
     age
   }
-  bob: Person(name: "Bob") {
+  gus: Person(name: "Gus") {
     name
     age
   }
@@ -193,7 +193,7 @@ for row in result:
 # Using fragments
 result = db.execute_graphql("""
 query {
-  Person(name: "Alice") {
+  Person(name: "Alix") {
     ...PersonDetails
   }
 }

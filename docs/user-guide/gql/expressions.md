@@ -103,7 +103,7 @@ RETURN p
 # Python
 result = db.execute(
     "MATCH (p:Person) WHERE p.name = $name RETURN p",
-    {"name": "Alice"}
+    {"name": "Alix"}
 )
 ```
 
@@ -111,7 +111,7 @@ result = db.execute(
 // Node.js
 const result = await db.execute(
     "MATCH (p:Person) WHERE p.name = $name RETURN p",
-    { name: "Alice" }
+    { name: "Alix" }
 );
 ```
 
@@ -170,7 +170,7 @@ RETURN single(x IN [1, 2, 3] WHERE x = 2)  -- true
 
 -- Practical example: check path properties
 MATCH path = (a:Person)-[:KNOWS*]->(b:Person)
-WHERE a.name = 'Alice'
+WHERE a.name = 'Alix'
     AND all(n IN nodes(path) WHERE n.active = true)
 RETURN path
 ```
@@ -185,7 +185,7 @@ RETURN reduce(acc = 0, x IN [1, 2, 3, 4, 5] | acc + x) AS total
 -- 15
 
 -- Build a string
-RETURN reduce(s = '', name IN ['Alice', 'Bob', 'Carol'] | s + name + ', ') AS names
+RETURN reduce(s = '', name IN ['Alix', 'Gus', 'Harm'] | s + name + ', ') AS names
 
 -- Compute from graph data
 MATCH (p:Person)
@@ -256,14 +256,14 @@ Create and access map (dictionary) values:
 
 ```sql
 -- Map literal
-RETURN {name: 'Alice', age: 30, active: true} AS person
+RETURN {name: 'Alix', age: 30, active: true} AS person
 
 -- Access map properties
-WITH {name: 'Alice', age: 30} AS person
+WITH {name: 'Alix', age: 30} AS person
 RETURN person.name, person.age
 
 -- Maps in mutations
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 SET p += {city: 'NYC', role: 'engineer'}
 ```
 

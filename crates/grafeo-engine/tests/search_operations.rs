@@ -56,7 +56,7 @@ mod vector {
         let n = db.create_node(&["Doc"]);
         db.set_node_property(n, "emb", vec3(1.0, 0.0, 0.0));
 
-        // No vector index created — search should fail
+        // No vector index created: search should fail
         let result = db.vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 5, None, None);
         assert!(result.is_err(), "search without index should error");
     }
@@ -221,7 +221,7 @@ mod text {
         let n = db.create_node(&["Article"]);
         db.set_node_property(n, "title", Value::String("test".into()));
 
-        // No text index — should error
+        // No text index: should error
         let result = db.text_search("Article", "title", "test", 10);
         assert!(result.is_err(), "text search without index should error");
     }
@@ -358,7 +358,7 @@ mod hybrid {
     fn test_hybrid_search_text_only() {
         let db = setup_hybrid_db();
 
-        // No vector query — only text search contributes
+        // No vector query: only text search contributes
         let results = db
             .hybrid_search("Doc", "content", "emb", "Rust", None, 4, None)
             .expect("text-only hybrid");

@@ -16,7 +16,7 @@ fn main() -> Result<(), grafeo_common::utils::error::Error> {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
 
-    session.execute("INSERT (:Person {name: 'Alice'})")?;
+    session.execute("INSERT (:Person {name: 'Alix'})")?;
 
     let result = session.execute("MATCH (p:Person) RETURN p.name")?;
     for row in result.rows {

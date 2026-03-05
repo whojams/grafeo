@@ -27,7 +27,7 @@ for row in result:
 
 ```python
 result = db.execute("""
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     RETURN p.name, p.age, p.active
 """)
 
@@ -76,7 +76,7 @@ result = db.execute("""
 
 # Results have columns
 for row in result:
-    print(row)  # {'name': 'Alice', 'age': 30}
+    print(row)  # {'name': 'Alix', 'age': 30}
 ```
 
 ## Empty Results

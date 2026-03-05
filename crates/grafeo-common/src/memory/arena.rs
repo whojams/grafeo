@@ -11,6 +11,7 @@
 #![allow(unsafe_code)]
 
 use std::alloc::{Layout, alloc, dealloc};
+use std::fmt;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -20,6 +21,44 @@ use crate::types::EpochId;
 
 /// Default chunk size for arena allocations (1 MB).
 const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// Errors from arena allocation operations.
+#[derive(Debug, Clone)]
+pub enum AllocError {
+    /// The system allocator returned null (out of memory).
+    OutOfMemory,
+    /// The requested epoch does not exist.
+    EpochNotFound(EpochId),
+    /// Arena chunk has insufficient space for the allocation.
+    InsufficientSpace,
+}
+
+impl fmt::Display for AllocError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OutOfMemory => write!(f, "arena allocation failed: out of memory"),
+            Self::EpochNotFound(id) => write!(f, "epoch {id} not found in arena allocator"),
+            Self::InsufficientSpace => {
+                write!(f, "arena chunk has insufficient space for allocation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AllocError {}
+
+impl From<AllocError> for crate::Error {
+    fn from(e: AllocError) -> Self {
+        match e {
+            AllocError::OutOfMemory | AllocError::InsufficientSpace => {
+                crate::Error::Storage(crate::utils::error::StorageError::Full)
+            }
+            AllocError::EpochNotFound(id) => {
+                crate::Error::Internal(format!("epoch {id} not found in arena allocator"))
+            }
+        }
+    }
+}
 
 /// A memory chunk in the arena.
 struct Chunk {
@@ -33,17 +72,21 @@ struct Chunk {
 
 impl Chunk {
     /// Creates a new chunk with the given capacity.
-    fn new(capacity: usize) -> Self {
-        let layout = Layout::from_size_align(capacity, 16).expect("Invalid layout");
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if the system allocator fails.
+    fn new(capacity: usize) -> Result<Self, AllocError> {
+        let layout = Layout::from_size_align(capacity, 16).map_err(|_| AllocError::OutOfMemory)?;
         // SAFETY: We're allocating a valid layout
         let ptr = unsafe { alloc(layout) };
-        let ptr = NonNull::new(ptr).expect("Allocation failed");
+        let ptr = NonNull::new(ptr).ok_or(AllocError::OutOfMemory)?;
 
-        Self {
+        Ok(Self {
             ptr,
             capacity,
             offset: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Tries to allocate `size` bytes with the given alignment.
@@ -122,21 +165,27 @@ pub struct Arena {
 
 impl Arena {
     /// Creates a new arena for the given epoch.
-    #[must_use]
-    pub fn new(epoch: EpochId) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if the initial chunk allocation fails.
+    pub fn new(epoch: EpochId) -> Result<Self, AllocError> {
         Self::with_chunk_size(epoch, DEFAULT_CHUNK_SIZE)
     }
 
     /// Creates a new arena with a custom chunk size.
-    #[must_use]
-    pub fn with_chunk_size(epoch: EpochId, chunk_size: usize) -> Self {
-        let initial_chunk = Chunk::new(chunk_size);
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if the initial chunk allocation fails.
+    pub fn with_chunk_size(epoch: EpochId, chunk_size: usize) -> Result<Self, AllocError> {
+        let initial_chunk = Chunk::new(chunk_size)?;
+        Ok(Self {
             epoch,
             chunks: RwLock::new(vec![initial_chunk]),
             chunk_size,
             total_allocated: AtomicUsize::new(chunk_size),
-        }
+        })
     }
 
     /// Returns the epoch this arena belongs to.
@@ -147,16 +196,17 @@ impl Arena {
 
     /// Allocates `size` bytes with the given alignment.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if allocation fails (out of memory).
-    pub fn alloc(&self, size: usize, align: usize) -> NonNull<u8> {
+    /// Returns `AllocError::OutOfMemory` if a new chunk is needed and
+    /// the system allocator fails.
+    pub fn alloc(&self, size: usize, align: usize) -> Result<NonNull<u8>, AllocError> {
         // First try to allocate from existing chunks
         {
             let chunks = self.chunks.read();
             for chunk in chunks.iter().rev() {
                 if let Some(ptr) = chunk.try_alloc(size, align) {
-                    return ptr;
+                    return Ok(ptr);
                 }
             }
         }
@@ -166,32 +216,40 @@ impl Arena {
     }
 
     /// Allocates a value of type T.
-    pub fn alloc_value<T>(&self, value: T) -> &mut T {
-        let ptr = self.alloc(std::mem::size_of::<T>(), std::mem::align_of::<T>());
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if allocation fails.
+    pub fn alloc_value<T>(&self, value: T) -> Result<&mut T, AllocError> {
+        let ptr = self.alloc(std::mem::size_of::<T>(), std::mem::align_of::<T>())?;
         // SAFETY: We've allocated the correct size and alignment
-        unsafe {
+        Ok(unsafe {
             let typed_ptr = ptr.as_ptr() as *mut T;
             typed_ptr.write(value);
             &mut *typed_ptr
-        }
+        })
     }
 
     /// Allocates a slice of values.
-    pub fn alloc_slice<T: Copy>(&self, values: &[T]) -> &mut [T] {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if allocation fails.
+    pub fn alloc_slice<T: Copy>(&self, values: &[T]) -> Result<&mut [T], AllocError> {
         if values.is_empty() {
-            return &mut [];
+            return Ok(&mut []);
         }
 
         let size = std::mem::size_of::<T>() * values.len();
         let align = std::mem::align_of::<T>();
-        let ptr = self.alloc(size, align);
+        let ptr = self.alloc(size, align)?;
 
         // SAFETY: We've allocated the correct size and alignment
-        unsafe {
+        Ok(unsafe {
             let typed_ptr = ptr.as_ptr() as *mut T;
             std::ptr::copy_nonoverlapping(values.as_ptr(), typed_ptr, values.len());
             std::slice::from_raw_parts_mut(typed_ptr, values.len())
-        }
+        })
     }
 
     /// Allocates a value and returns its offset within the primary chunk.
@@ -199,12 +257,12 @@ impl Arena {
     /// This is used by tiered storage to store values in the arena and track
     /// their locations via compact u32 offsets in `HotVersionRef`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if allocation would require a new chunk. Ensure chunk size is
-    /// large enough for your use case.
+    /// Returns `AllocError::InsufficientSpace` if the primary chunk does not
+    /// have enough room. Increase the chunk size for your use case.
     #[cfg(feature = "tiered-storage")]
-    pub fn alloc_value_with_offset<T>(&self, value: T) -> (u32, &mut T) {
+    pub fn alloc_value_with_offset<T>(&self, value: T) -> Result<(u32, &mut T), AllocError> {
         let size = std::mem::size_of::<T>();
         let align = std::mem::align_of::<T>();
 
@@ -216,14 +274,14 @@ impl Arena {
 
         let (offset, ptr) = chunk
             .try_alloc_with_offset(size, align)
-            .expect("Allocation would create new chunk - increase chunk size");
+            .ok_or(AllocError::InsufficientSpace)?;
 
         // SAFETY: We've allocated the correct size and alignment
-        unsafe {
+        Ok(unsafe {
             let typed_ptr = ptr.as_ptr().cast::<T>();
             typed_ptr.write(value);
             (offset, &mut *typed_ptr)
-        }
+        })
     }
 
     /// Reads a value at the given offset in the primary chunk.
@@ -302,21 +360,22 @@ impl Arena {
     }
 
     /// Allocates a new chunk and performs the allocation.
-    fn alloc_new_chunk(&self, size: usize, align: usize) -> NonNull<u8> {
+    fn alloc_new_chunk(&self, size: usize, align: usize) -> Result<NonNull<u8>, AllocError> {
         let chunk_size = self.chunk_size.max(size + align);
-        let chunk = Chunk::new(chunk_size);
+        let chunk = Chunk::new(chunk_size)?;
 
         self.total_allocated
             .fetch_add(chunk_size, Ordering::Relaxed);
 
+        // The chunk was sized to fit this allocation, so this cannot fail.
         let ptr = chunk
             .try_alloc(size, align)
-            .expect("Fresh chunk should have space");
+            .expect("fresh chunk sized to fit");
 
         let mut chunks = self.chunks.write();
         chunks.push(chunk);
 
-        ptr
+        Ok(ptr)
     }
 
     /// Returns the total memory allocated by this arena.
@@ -373,14 +432,20 @@ pub struct ArenaAllocator {
 
 impl ArenaAllocator {
     /// Creates a new arena allocator.
-    #[must_use]
-    pub fn new() -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if the initial arena allocation fails.
+    pub fn new() -> Result<Self, AllocError> {
         Self::with_chunk_size(DEFAULT_CHUNK_SIZE)
     }
 
     /// Creates a new arena allocator with a custom chunk size.
-    #[must_use]
-    pub fn with_chunk_size(chunk_size: usize) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if the initial arena allocation fails.
+    pub fn with_chunk_size(chunk_size: usize) -> Result<Self, AllocError> {
         let allocator = Self {
             arenas: RwLock::new(hashbrown::HashMap::new()),
             current_epoch: AtomicUsize::new(0),
@@ -392,9 +457,9 @@ impl ArenaAllocator {
         allocator
             .arenas
             .write()
-            .insert(epoch, Arena::with_chunk_size(epoch, chunk_size));
+            .insert(epoch, Arena::with_chunk_size(epoch, chunk_size)?);
 
-        allocator
+        Ok(allocator)
     }
 
     /// Returns the current epoch.
@@ -404,36 +469,51 @@ impl ArenaAllocator {
     }
 
     /// Creates a new epoch and returns its ID.
-    pub fn new_epoch(&self) -> EpochId {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if the arena allocation fails.
+    pub fn new_epoch(&self) -> Result<EpochId, AllocError> {
         let new_id = self.current_epoch.fetch_add(1, Ordering::AcqRel) as u64 + 1;
         let epoch = EpochId::new(new_id);
 
-        let arena = Arena::with_chunk_size(epoch, self.chunk_size);
+        let arena = Arena::with_chunk_size(epoch, self.chunk_size)?;
         self.arenas.write().insert(epoch, arena);
 
-        epoch
+        Ok(epoch)
     }
 
     /// Gets the arena for a specific epoch.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the epoch doesn't exist.
-    pub fn arena(&self, epoch: EpochId) -> impl std::ops::Deref<Target = Arena> + '_ {
-        parking_lot::RwLockReadGuard::map(self.arenas.read(), |arenas| {
-            arenas.get(&epoch).expect("Epoch should exist")
-        })
+    /// Returns `AllocError::EpochNotFound` if the epoch doesn't exist.
+    pub fn arena(
+        &self,
+        epoch: EpochId,
+    ) -> Result<impl std::ops::Deref<Target = Arena> + '_, AllocError> {
+        let arenas = self.arenas.read();
+        if !arenas.contains_key(&epoch) {
+            return Err(AllocError::EpochNotFound(epoch));
+        }
+        Ok(parking_lot::RwLockReadGuard::map(arenas, |arenas| {
+            &arenas[&epoch]
+        }))
     }
 
     /// Ensures an arena exists for the given epoch, creating it if necessary.
     /// Returns whether a new arena was created.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError::OutOfMemory` if a new arena allocation fails.
     #[cfg(feature = "tiered-storage")]
-    pub fn ensure_epoch(&self, epoch: EpochId) -> bool {
+    pub fn ensure_epoch(&self, epoch: EpochId) -> Result<bool, AllocError> {
         // Fast path: check if epoch already exists
         {
             let arenas = self.arenas.read();
             if arenas.contains_key(&epoch) {
-                return false;
+                return Ok(false);
             }
         }
 
@@ -441,28 +521,39 @@ impl ArenaAllocator {
         let mut arenas = self.arenas.write();
         // Double-check after acquiring write lock
         if arenas.contains_key(&epoch) {
-            return false;
+            return Ok(false);
         }
 
-        let arena = Arena::with_chunk_size(epoch, self.chunk_size);
+        let arena = Arena::with_chunk_size(epoch, self.chunk_size)?;
         arenas.insert(epoch, arena);
-        true
+        Ok(true)
     }
 
     /// Gets or creates an arena for a specific epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError` if the arena allocation fails.
     #[cfg(feature = "tiered-storage")]
-    pub fn arena_or_create(&self, epoch: EpochId) -> impl std::ops::Deref<Target = Arena> + '_ {
-        self.ensure_epoch(epoch);
+    pub fn arena_or_create(
+        &self,
+        epoch: EpochId,
+    ) -> Result<impl std::ops::Deref<Target = Arena> + '_, AllocError> {
+        self.ensure_epoch(epoch)?;
         self.arena(epoch)
     }
 
     /// Allocates in the current epoch.
-    pub fn alloc(&self, size: usize, align: usize) -> NonNull<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AllocError` if allocation fails.
+    pub fn alloc(&self, size: usize, align: usize) -> Result<NonNull<u8>, AllocError> {
         let epoch = self.current_epoch();
         let arenas = self.arenas.read();
         arenas
             .get(&epoch)
-            .expect("Current epoch exists")
+            .expect("current epoch always exists")
             .alloc(size, align)
     }
 
@@ -485,8 +576,13 @@ impl ArenaAllocator {
 }
 
 impl Default for ArenaAllocator {
+    /// Creates a default arena allocator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the initial arena allocation fails (out of memory).
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("failed to allocate default arena")
     }
 }
 
@@ -496,11 +592,11 @@ mod tests {
 
     #[test]
     fn test_arena_basic_allocation() {
-        let arena = Arena::new(EpochId::INITIAL);
+        let arena = Arena::new(EpochId::INITIAL).unwrap();
 
         // Allocate some bytes
-        let ptr1 = arena.alloc(100, 8);
-        let ptr2 = arena.alloc(200, 8);
+        let ptr1 = arena.alloc(100, 8).unwrap();
+        let ptr2 = arena.alloc(200, 8).unwrap();
 
         // Pointers should be different
         assert_ne!(ptr1.as_ptr(), ptr2.as_ptr());
@@ -508,9 +604,9 @@ mod tests {
 
     #[test]
     fn test_arena_value_allocation() {
-        let arena = Arena::new(EpochId::INITIAL);
+        let arena = Arena::new(EpochId::INITIAL).unwrap();
 
-        let value = arena.alloc_value(42u64);
+        let value = arena.alloc_value(42u64).unwrap();
         assert_eq!(*value, 42);
 
         *value = 100;
@@ -519,9 +615,9 @@ mod tests {
 
     #[test]
     fn test_arena_slice_allocation() {
-        let arena = Arena::new(EpochId::INITIAL);
+        let arena = Arena::new(EpochId::INITIAL).unwrap();
 
-        let slice = arena.alloc_slice(&[1u32, 2, 3, 4, 5]);
+        let slice = arena.alloc_slice(&[1u32, 2, 3, 4, 5]).unwrap();
         assert_eq!(slice, &[1, 2, 3, 4, 5]);
 
         slice[0] = 10;
@@ -530,10 +626,10 @@ mod tests {
 
     #[test]
     fn test_arena_large_allocation() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 1024);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 1024).unwrap();
 
         // Allocate something larger than the chunk size
-        let _ptr = arena.alloc(2048, 8);
+        let _ptr = arena.alloc(2048, 8).unwrap();
 
         // Should have created a new chunk
         assert!(arena.stats().chunk_count >= 2);
@@ -541,15 +637,15 @@ mod tests {
 
     #[test]
     fn test_arena_allocator_epochs() {
-        let allocator = ArenaAllocator::new();
+        let allocator = ArenaAllocator::new().unwrap();
 
         let epoch0 = allocator.current_epoch();
         assert_eq!(epoch0, EpochId::INITIAL);
 
-        let epoch1 = allocator.new_epoch();
+        let epoch1 = allocator.new_epoch().unwrap();
         assert_eq!(epoch1, EpochId::new(1));
 
-        let epoch2 = allocator.new_epoch();
+        let epoch2 = allocator.new_epoch().unwrap();
         assert_eq!(epoch2, EpochId::new(2));
 
         // Current epoch should be the latest
@@ -558,25 +654,25 @@ mod tests {
 
     #[test]
     fn test_arena_allocator_allocation() {
-        let allocator = ArenaAllocator::new();
+        let allocator = ArenaAllocator::new().unwrap();
 
-        let ptr1 = allocator.alloc(100, 8);
-        let ptr2 = allocator.alloc(100, 8);
+        let ptr1 = allocator.alloc(100, 8).unwrap();
+        let ptr2 = allocator.alloc(100, 8).unwrap();
 
         assert_ne!(ptr1.as_ptr(), ptr2.as_ptr());
     }
 
     #[test]
     fn test_arena_drop_epoch() {
-        let allocator = ArenaAllocator::new();
+        let allocator = ArenaAllocator::new().unwrap();
 
         let initial_mem = allocator.total_allocated();
 
-        let epoch1 = allocator.new_epoch();
+        let epoch1 = allocator.new_epoch().unwrap();
         // Allocate some memory in the new epoch
         {
-            let arena = allocator.arena(epoch1);
-            arena.alloc(10000, 8);
+            let arena = allocator.arena(epoch1).unwrap();
+            arena.alloc(10000, 8).unwrap();
         }
 
         let after_alloc = allocator.total_allocated();
@@ -592,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_arena_stats() {
-        let arena = Arena::with_chunk_size(EpochId::new(5), 4096);
+        let arena = Arena::with_chunk_size(EpochId::new(5), 4096).unwrap();
 
         let stats = arena.stats();
         assert_eq!(stats.epoch, EpochId::new(5));
@@ -600,7 +696,7 @@ mod tests {
         assert_eq!(stats.total_allocated, 4096);
         assert_eq!(stats.total_used, 0);
 
-        arena.alloc(100, 8);
+        arena.alloc(100, 8).unwrap();
         let stats = arena.stats();
         assert!(stats.total_used >= 100);
     }
@@ -612,10 +708,10 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_alloc_value_with_offset_basic() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
-        let (offset1, val1) = arena.alloc_value_with_offset(42u64);
-        let (offset2, val2) = arena.alloc_value_with_offset(100u64);
+        let (offset1, val1) = arena.alloc_value_with_offset(42u64).unwrap();
+        let (offset2, val2) = arena.alloc_value_with_offset(100u64).unwrap();
 
         // First allocation should be at offset 0 (aligned)
         assert_eq!(offset1, 0);
@@ -634,9 +730,9 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_read_at_basic() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
-        let (offset, _) = arena.alloc_value_with_offset(12345u64);
+        let (offset, _) = arena.alloc_value_with_offset(12345u64).unwrap();
 
         // Read it back
         let value: &u64 = unsafe { arena.read_at(offset) };
@@ -645,9 +741,9 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_read_at_mut_basic() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
-        let (offset, _) = arena.alloc_value_with_offset(42u64);
+        let (offset, _) = arena.alloc_value_with_offset(42u64).unwrap();
 
         // Read and modify
         let value: &mut u64 = unsafe { arena.read_at_mut(offset) };
@@ -668,7 +764,7 @@ mod tiered_storage_tests {
             value: i32,
         }
 
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
         let node = TestNode {
             id: 12345,
@@ -676,7 +772,7 @@ mod tiered_storage_tests {
             value: -999,
         };
 
-        let (offset, stored) = arena.alloc_value_with_offset(node.clone());
+        let (offset, stored) = arena.alloc_value_with_offset(node.clone()).unwrap();
         assert_eq!(stored.id, 12345);
         assert_eq!(stored.value, -999);
 
@@ -689,14 +785,14 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_alloc_value_with_offset_alignment() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
         // Allocate a byte first to potentially misalign
-        let (offset1, _) = arena.alloc_value_with_offset(1u8);
+        let (offset1, _) = arena.alloc_value_with_offset(1u8).unwrap();
         assert_eq!(offset1, 0);
 
         // Now allocate a u64 which requires 8-byte alignment
-        let (offset2, val) = arena.alloc_value_with_offset(42u64);
+        let (offset2, val) = arena.alloc_value_with_offset(42u64).unwrap();
 
         // offset2 should be 8-byte aligned
         assert_eq!(offset2 % 8, 0);
@@ -705,11 +801,11 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_alloc_value_with_offset_multiple() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
         let mut offsets = Vec::new();
         for i in 0..100u64 {
-            let (offset, val) = arena.alloc_value_with_offset(i);
+            let (offset, val) = arena.alloc_value_with_offset(i).unwrap();
             offsets.push(offset);
             assert_eq!(*val, i);
         }
@@ -728,12 +824,12 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_arena_allocator_with_offset() {
-        let allocator = ArenaAllocator::with_chunk_size(4096);
+        let allocator = ArenaAllocator::with_chunk_size(4096).unwrap();
 
         let epoch = allocator.current_epoch();
-        let arena = allocator.arena(epoch);
+        let arena = allocator.arena(epoch).unwrap();
 
-        let (offset, val) = arena.alloc_value_with_offset(42u64);
+        let (offset, val) = arena.alloc_value_with_offset(42u64).unwrap();
         assert_eq!(*val, 42);
 
         let read: &u64 = unsafe { arena.read_at(offset) };
@@ -744,10 +840,10 @@ mod tiered_storage_tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "exceeds chunk used bytes")]
     fn test_read_at_out_of_bounds() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
-        let (_offset, _) = arena.alloc_value_with_offset(42u64);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
+        let (_offset, _) = arena.alloc_value_with_offset(42u64).unwrap();
 
-        // Read way past the allocated region — should panic in debug
+        // Read way past the allocated region: should panic in debug
         unsafe {
             let _: &u64 = arena.read_at(4000);
         }
@@ -757,11 +853,11 @@ mod tiered_storage_tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "is not aligned")]
     fn test_read_at_misaligned() {
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
         // Allocate a u8 at offset 0
-        let (_offset, _) = arena.alloc_value_with_offset(0xFFu8);
+        let (_offset, _) = arena.alloc_value_with_offset(0xFFu8).unwrap();
         // Also allocate some bytes so offset 1 is within used range
-        let _ = arena.alloc_value_with_offset(0u64);
+        let _ = arena.alloc_value_with_offset(0u64).unwrap();
 
         // Try to read a u64 at offset 1 (misaligned for u64)
         unsafe {
@@ -774,7 +870,7 @@ mod tiered_storage_tests {
     fn test_concurrent_read_stress() {
         use std::sync::Arc;
 
-        let arena = Arc::new(Arena::with_chunk_size(EpochId::INITIAL, 1024 * 1024));
+        let arena = Arc::new(Arena::with_chunk_size(EpochId::INITIAL, 1024 * 1024).unwrap());
         let num_threads = 8;
         let values_per_thread = 1000;
 
@@ -784,7 +880,7 @@ mod tiered_storage_tests {
             let base = (t * values_per_thread) as u64;
             let mut offsets = Vec::with_capacity(values_per_thread);
             for i in 0..values_per_thread as u64 {
-                let (offset, _) = arena.alloc_value_with_offset(base + i);
+                let (offset, _) = arena.alloc_value_with_offset(base + i).unwrap();
                 offsets.push(offset);
             }
             all_offsets.push(offsets);
@@ -809,6 +905,19 @@ mod tiered_storage_tests {
     }
 
     #[test]
+    fn test_alloc_value_with_offset_insufficient_space() {
+        // Create a tiny arena where a large allocation will fail
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 64).unwrap();
+
+        // Fill up the chunk
+        let _ = arena.alloc_value_with_offset([0u8; 48]).unwrap();
+
+        // This should return InsufficientSpace, not panic
+        let result = arena.alloc_value_with_offset([0u8; 32]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_multi_type_interleaved() {
         #[derive(Debug, Clone, PartialEq)]
         #[repr(C)]
@@ -818,17 +927,19 @@ mod tiered_storage_tests {
             weight: f32,
         }
 
-        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096);
+        let arena = Arena::with_chunk_size(EpochId::INITIAL, 4096).unwrap();
 
         // Interleave different types
-        let (off_u8, _) = arena.alloc_value_with_offset(0xAAu8);
-        let (off_u32, _) = arena.alloc_value_with_offset(0xBBBBu32);
-        let (off_u64, _) = arena.alloc_value_with_offset(0xCCCCCCCCu64);
-        let (off_rec, _) = arena.alloc_value_with_offset(Record {
-            id: 42,
-            flags: 0xFF,
-            weight: std::f32::consts::PI,
-        });
+        let (off_u8, _) = arena.alloc_value_with_offset(0xAAu8).unwrap();
+        let (off_u32, _) = arena.alloc_value_with_offset(0xBBBBu32).unwrap();
+        let (off_u64, _) = arena.alloc_value_with_offset(0xCCCCCCCCu64).unwrap();
+        let (off_rec, _) = arena
+            .alloc_value_with_offset(Record {
+                id: 42,
+                flags: 0xFF,
+                weight: std::f32::consts::PI,
+            })
+            .unwrap();
 
         // Read them all back
         unsafe {

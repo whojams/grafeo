@@ -24,7 +24,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 
     ```graphql
     {
-      Person(name: "Alice") {
+      Person(name: "Alix") {
         name
         age
       }
@@ -34,7 +34,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 === "GQL"
 
     ```sql
-    MATCH (p:Person {name: 'Alice'})
+    MATCH (p:Person {name: 'Alix'})
     RETURN p.name, p.age
     ```
 
@@ -44,7 +44,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 
     ```graphql
     {
-      Person(name: "Alice") {
+      Person(name: "Alix") {
         name
         friends {
           name
@@ -56,7 +56,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 === "GQL"
 
     ```sql
-    MATCH (a:Person {name: 'Alice'})-[:friends]->(f)
+    MATCH (a:Person {name: 'Alix'})-[:friends]->(f)
     RETURN a.name, f.name
     ```
 
@@ -66,7 +66,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 
     ```graphql
     {
-      Person(name: "Alice") {
+      Person(name: "Alix") {
         friends {
           friends {
             name
@@ -79,7 +79,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 === "GQL"
 
     ```sql
-    MATCH (a:Person {name: 'Alice'})-[:friends]->()-[:friends]->(fof)
+    MATCH (a:Person {name: 'Alix'})-[:friends]->()-[:friends]->(fof)
     RETURN fof.name
     ```
 
@@ -145,7 +145,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 
     ```graphql
     mutation {
-      createPerson(name: "Alice", age: 30) {
+      createPerson(name: "Alix", age: 30) {
         id
         name
       }
@@ -155,7 +155,7 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 === "GQL"
 
     ```sql
-    INSERT (:Person {name: 'Alice', age: 30})
+    INSERT (:Person {name: 'Alix', age: 30})
     ```
 
 ## When to Use Each
@@ -201,17 +201,17 @@ import grafeo
 db = grafeo.GrafeoDB()
 
 # Create data with GQL (full control)
-db.execute("INSERT (:Person {name: 'Alice', age: 30})")
-db.execute("INSERT (:Person {name: 'Bob', age: 25})")
+db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 db.execute("""
-    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
     INSERT (a)-[:friends]->(b)
 """)
 
 # Or create with GraphQL mutations
 db.execute_graphql('''
 mutation {
-  createPerson(name: "Charlie", age: 35) {
+  createPerson(name: "Vincent", age: 35) {
     id
     name
   }
@@ -234,7 +234,7 @@ result = db.execute_graphql('''
 # Complex queries with GQL (full power)
 result = db.execute("""
     MATCH (a:Person)-[:friends*1..3]->(distant)
-    WHERE a.name = 'Alice' AND distant.age > 20
+    WHERE a.name = 'Alix' AND distant.age > 20
     RETURN DISTINCT distant.name, COUNT(*) as paths
 """)
 ```

@@ -102,7 +102,7 @@ Grafeo supports temporal types for dates, times, and durations with ISO 8601 for
 **GQL typed literal syntax:**
 
 ```sql
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 SET p.birthday = DATE '1990-06-15'
 
 MATCH (e:Event {name: 'Meeting'})
@@ -115,7 +115,7 @@ SET t.length = DURATION 'P2W3D'
 **Cypher function syntax:**
 
 ```sql
-MATCH (p:Person {name: 'Alice'})
+MATCH (p:Person {name: 'Alix'})
 SET p.birthday = date('1990-06-15')
 
 MATCH (e:Event {name: 'Meeting'})

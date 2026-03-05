@@ -18,8 +18,8 @@ import { GrafeoDB } from '@grafeo-db/js';
 
 const db = GrafeoDB.create();
 
-db.createNode(['Person'], { name: 'Alice', age: 30 });
-db.createNode(['Person'], { name: 'Bob', age: 25 });
+db.createNode(['Person'], { name: 'Alix', age: 30 });
+db.createNode(['Person'], { name: 'Gus', age: 25 });
 db.createEdge(0, 1, 'KNOWS', { since: 2024 });
 
 const result = await db.execute('MATCH (p:Person) RETURN p.name, p.age');
@@ -75,7 +75,7 @@ db.deleteEdge(id);  // returns boolean
 ```typescript
 const tx = db.beginTransaction();
 try {
-  await tx.execute("INSERT (:Person {name: 'Carol'})");
+  await tx.execute("INSERT (:Person {name: 'Harm'})");
   tx.commit();
 } catch (e) {
   tx.rollback();

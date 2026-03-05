@@ -2,7 +2,7 @@
 
 #[cfg(feature = "sparql")]
 mod tests {
-    use grafeo_engine::query::sparql_translator::translate;
+    use grafeo_engine::query::translators::sparql::translate;
 
     #[test]
     fn test_translate_simple_select() {

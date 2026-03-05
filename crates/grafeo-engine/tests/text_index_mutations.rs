@@ -134,7 +134,7 @@ fn test_text_index_add_label() {
 fn test_text_index_non_string_property_ignored() {
     let db = setup_db_with_text_index();
 
-    // Set a non-String property — should not crash or pollute the index
+    // Set a non-String property: should not crash or pollute the index
     let id = db.create_node_with_props(&["Doc"], [("content", Value::Int64(42))]);
 
     let results = db.text_search("Doc", "content", "42", 10).unwrap();

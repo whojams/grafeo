@@ -26,7 +26,7 @@
 //! set.insert(1);
 //! ```
 
-use rustc_hash::FxBuildHasher;
+use crate::utils::hash::FxBuildHasher;
 
 /// Standard HashMap with FxHash (fast, non-cryptographic).
 ///
@@ -58,28 +58,28 @@ pub type GrafeoIndexSet<T> = indexmap::IndexSet<T, FxBuildHasher>;
 #[inline]
 #[must_use]
 pub fn grafeo_map<K, V>() -> GrafeoMap<K, V> {
-    GrafeoMap::with_hasher(FxBuildHasher)
+    GrafeoMap::with_hasher(FxBuildHasher::default())
 }
 
 /// Create a new [`GrafeoMap`] with the specified capacity.
 #[inline]
 #[must_use]
 pub fn grafeo_map_with_capacity<K, V>(capacity: usize) -> GrafeoMap<K, V> {
-    GrafeoMap::with_capacity_and_hasher(capacity, FxBuildHasher)
+    GrafeoMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
 /// Create a new empty [`GrafeoSet`].
 #[inline]
 #[must_use]
 pub fn grafeo_set<T>() -> GrafeoSet<T> {
-    GrafeoSet::with_hasher(FxBuildHasher)
+    GrafeoSet::with_hasher(FxBuildHasher::default())
 }
 
 /// Create a new [`GrafeoSet`] with the specified capacity.
 #[inline]
 #[must_use]
 pub fn grafeo_set_with_capacity<T>(capacity: usize) -> GrafeoSet<T> {
-    GrafeoSet::with_capacity_and_hasher(capacity, FxBuildHasher)
+    GrafeoSet::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
 /// Create a new empty [`GrafeoConcurrentMap`].
@@ -89,7 +89,7 @@ pub fn grafeo_concurrent_map<K, V>() -> GrafeoConcurrentMap<K, V>
 where
     K: Eq + std::hash::Hash,
 {
-    GrafeoConcurrentMap::with_hasher(FxBuildHasher)
+    GrafeoConcurrentMap::with_hasher(FxBuildHasher::default())
 }
 
 /// Create a new [`GrafeoConcurrentMap`] with the specified capacity.
@@ -99,21 +99,21 @@ pub fn grafeo_concurrent_map_with_capacity<K, V>(capacity: usize) -> GrafeoConcu
 where
     K: Eq + std::hash::Hash,
 {
-    GrafeoConcurrentMap::with_capacity_and_hasher(capacity, FxBuildHasher)
+    GrafeoConcurrentMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
 /// Create a new empty [`GrafeoIndexMap`].
 #[inline]
 #[must_use]
 pub fn grafeo_index_map<K, V>() -> GrafeoIndexMap<K, V> {
-    GrafeoIndexMap::with_hasher(FxBuildHasher)
+    GrafeoIndexMap::with_hasher(FxBuildHasher::default())
 }
 
 /// Create a new [`GrafeoIndexMap`] with the specified capacity.
 #[inline]
 #[must_use]
 pub fn grafeo_index_map_with_capacity<K, V>(capacity: usize) -> GrafeoIndexMap<K, V> {
-    GrafeoIndexMap::with_capacity_and_hasher(capacity, FxBuildHasher)
+    GrafeoIndexMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
 #[cfg(test)]

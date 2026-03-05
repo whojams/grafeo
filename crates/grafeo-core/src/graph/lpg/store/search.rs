@@ -24,7 +24,7 @@ impl LpgStore {
     /// use grafeo_core::graph::lpg::LpgStore;
     /// use grafeo_common::types::Value;
     ///
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     /// let n1 = store.create_node(&["Person"]);
     /// let n2 = store.create_node(&["Person"]);
     /// store.set_node_property(n1, "age", Value::from(25i64));
@@ -82,17 +82,17 @@ impl LpgStore {
     /// use grafeo_core::graph::lpg::LpgStore;
     /// use grafeo_common::types::Value;
     ///
-    /// let store = LpgStore::new();
-    /// let alice = store.create_node(&["Person"]);
-    /// store.set_node_property(alice, "name", Value::from("Alice"));
-    /// store.set_node_property(alice, "city", Value::from("NYC"));
+    /// let store = LpgStore::new().expect("arena allocation");
+    /// let alix = store.create_node(&["Person"]);
+    /// store.set_node_property(alix, "name", Value::from("Alix"));
+    /// store.set_node_property(alix, "city", Value::from("NYC"));
     ///
-    /// // Find nodes where name = "Alice" AND city = "NYC"
+    /// // Find nodes where name = "Alix" AND city = "NYC"
     /// let matches = store.find_nodes_by_properties(&[
-    ///     ("name", Value::from("Alice")),
+    ///     ("name", Value::from("Alix")),
     ///     ("city", Value::from("NYC")),
     /// ]);
-    /// assert!(matches.contains(&alice));
+    /// assert!(matches.contains(&alix));
     /// ```
     #[must_use]
     pub fn find_nodes_by_properties(&self, conditions: &[(&str, Value)]) -> Vec<NodeId> {
@@ -171,13 +171,13 @@ impl LpgStore {
     /// use grafeo_core::graph::lpg::LpgStore;
     /// use grafeo_common::types::Value;
     ///
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     /// store.create_property_index("city"); // Optional but makes lookups fast
     ///
-    /// let alice = store.create_node(&["Person"]);
-    /// let bob = store.create_node(&["Person"]);
-    /// store.set_node_property(alice, "city", Value::from("NYC"));
-    /// store.set_node_property(bob, "city", Value::from("NYC"));
+    /// let alix = store.create_node(&["Person"]);
+    /// let gus = store.create_node(&["Person"]);
+    /// store.set_node_property(alix, "city", Value::from("NYC"));
+    /// store.set_node_property(gus, "city", Value::from("NYC"));
     ///
     /// let nyc_people = store.find_nodes_by_property("city", &Value::from("NYC"));
     /// assert_eq!(nyc_people.len(), 2);
@@ -263,7 +263,7 @@ impl LpgStore {
                             (Value::String(a), Value::String(b)) => a.contains(b.as_str()),
                             _ => false,
                         },
-                        _ => false, // Unknown operator — no match
+                        _ => false, // Unknown operator: no match
                     }
                 })
             }

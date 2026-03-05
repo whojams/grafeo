@@ -130,7 +130,7 @@ Check if a pattern exists (returns true/false):
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
 ASK {
-    ?person foaf:name "Alice" .
+    ?person foaf:name "Alix" .
     ?person foaf:knows ?friend
 }
 ```
@@ -161,7 +161,7 @@ PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
 DESCRIBE ?person
 WHERE {
-    ?person foaf:name "Alice"
+    ?person foaf:name "Alix"
 }
 ```
 
@@ -207,7 +207,7 @@ Insert or delete triples in a specific named graph:
 ```sparql
 INSERT DATA {
     GRAPH <http://example.org/mygraph> {
-        <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+        <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> "Alix" .
     }
 }
 ```

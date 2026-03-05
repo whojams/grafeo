@@ -25,18 +25,18 @@ impl LpgStore {
     /// use grafeo_core::graph::lpg::LpgStore;
     /// use grafeo_common::types::Value;
     ///
-    /// let store = LpgStore::new();
+    /// let store = LpgStore::new().expect("arena allocation");
     ///
     /// // Create nodes with an 'id' property
-    /// let alice = store.create_node(&["Person"]);
-    /// store.set_node_property(alice, "id", Value::from("alice_123"));
+    /// let alix = store.create_node(&["Person"]);
+    /// store.set_node_property(alix, "id", Value::from("alice_123"));
     ///
     /// // Create an index on the 'id' property
     /// store.create_property_index("id");
     ///
     /// // Now lookups by 'id' are O(1)
     /// let found = store.find_nodes_by_property("id", &Value::from("alice_123"));
-    /// assert!(found.contains(&alice));
+    /// assert!(found.contains(&alix));
     /// ```
     pub fn create_property_index(&self, property: &str) {
         let key = PropertyKey::new(property);

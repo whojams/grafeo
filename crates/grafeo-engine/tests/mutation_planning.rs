@@ -15,33 +15,33 @@ use grafeo_engine::GrafeoDB;
 // Fixtures
 // ============================================================================
 
-/// Social network: Alice(30,NYC), Bob(25,NYC), Carol(35,London)
-/// Alice-KNOWS->Bob, Alice-KNOWS->Carol, Bob-KNOWS->Carol
-/// Alice-WORKS_AT->TechCorp, Bob-WORKS_AT->TechCorp
+/// Social network: Alix(30,NYC), Gus(25,NYC), Harm(35,London)
+/// Alix-KNOWS->Gus, Alix-KNOWS->Harm, Gus-KNOWS->Harm
+/// Alix-WORKS_AT->TechCorp, Gus-WORKS_AT->TechCorp
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let alice = session.create_node_with_props(
+    let alix = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
             ("city", Value::String("NYC".into())),
         ],
     );
-    let bob = session.create_node_with_props(
+    let gus = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
             ("city", Value::String("NYC".into())),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
             ("city", Value::String("London".into())),
         ],
@@ -50,17 +50,17 @@ fn create_social_network() -> GrafeoDB {
     let techcorp =
         session.create_node_with_props(&["Company"], [("name", Value::String("TechCorp".into()))]);
 
-    session.create_edge(alice, bob, "KNOWS");
-    session.create_edge(alice, carol, "KNOWS");
-    session.create_edge(bob, carol, "KNOWS");
-    session.create_edge(alice, techcorp, "WORKS_AT");
-    session.create_edge(bob, techcorp, "WORKS_AT");
+    session.create_edge(alix, gus, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
+    session.create_edge(alix, techcorp, "WORKS_AT");
+    session.create_edge(gus, techcorp, "WORKS_AT");
 
     db
 }
 
 // ============================================================================
-// UNWIND — covers plan_unwind() with Empty input, prior input, property refs
+// UNWIND: covers plan_unwind() with Empty input, prior input, property refs
 // ============================================================================
 
 #[test]
@@ -84,13 +84,13 @@ fn test_unwind_after_match() {
 
     // GQL: MATCH and UNWIND are both pre-WHERE clauses, so UNWIND goes before WHERE
     let result = session
-        .execute("MATCH (n:Person {name: 'Alice'}) UNWIND [10, 20] AS x RETURN n.name, x")
+        .execute("MATCH (n:Person {name: 'Alix'}) UNWIND [10, 20] AS x RETURN n.name, x")
         .unwrap();
 
-    // Alice x 2 unwind elements = 2 rows
+    // Alix x 2 unwind elements = 2 rows
     assert_eq!(result.rows.len(), 2);
     for row in &result.rows {
-        assert_eq!(row[0], Value::String("Alice".into()));
+        assert_eq!(row[0], Value::String("Alix".into()));
     }
 }
 
@@ -141,7 +141,7 @@ fn test_unwind_create_map_property_access() {
 
     session
         .execute(
-            "UNWIND [{id: 'u1', name: 'Bob'}, {id: 'u2', name: 'Carol'}] AS props \
+            "UNWIND [{id: 'u1', name: 'Gus'}, {id: 'u2', name: 'Harm'}] AS props \
              CREATE (:Test {id: props.id, name: props.name})",
         )
         .unwrap();
@@ -152,9 +152,9 @@ fn test_unwind_create_map_property_access() {
 
     assert_eq!(result.rows.len(), 2);
     assert_eq!(result.rows[0][0], Value::String("u1".into()));
-    assert_eq!(result.rows[0][1], Value::String("Bob".into()));
+    assert_eq!(result.rows[0][1], Value::String("Gus".into()));
     assert_eq!(result.rows[1][0], Value::String("u2".into()));
-    assert_eq!(result.rows[1][1], Value::String("Carol".into()));
+    assert_eq!(result.rows[1][1], Value::String("Harm".into()));
 }
 
 #[test]
@@ -172,11 +172,11 @@ fn test_unwind_param_create_map_property_access() {
     let nodes = Value::List(Arc::from(vec![
         Value::Map(Arc::new(BTreeMap::from([
             (PropertyKey::new("id"), Value::String("u1".into())),
-            (PropertyKey::new("name"), Value::String("Bob".into())),
+            (PropertyKey::new("name"), Value::String("Gus".into())),
         ]))),
         Value::Map(Arc::new(BTreeMap::from([
             (PropertyKey::new("id"), Value::String("u2".into())),
-            (PropertyKey::new("name"), Value::String("Carol".into())),
+            (PropertyKey::new("name"), Value::String("Harm".into())),
         ]))),
     ]));
 
@@ -195,9 +195,9 @@ fn test_unwind_param_create_map_property_access() {
 
     assert_eq!(result.rows.len(), 2);
     assert_eq!(result.rows[0][0], Value::String("u1".into()));
-    assert_eq!(result.rows[0][1], Value::String("Bob".into()));
+    assert_eq!(result.rows[0][1], Value::String("Gus".into()));
     assert_eq!(result.rows[1][0], Value::String("u2".into()));
-    assert_eq!(result.rows[1][1], Value::String("Carol".into()));
+    assert_eq!(result.rows[1][1], Value::String("Harm".into()));
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn test_for_without_ordinality_or_offset() {
 }
 
 // ============================================================================
-// MERGE — covers plan_merge() Empty/non-Empty input, on_create, on_match
+// MERGE: covers plan_merge() Empty/non-Empty input, on_create, on_match
 // ============================================================================
 
 #[test]
@@ -297,11 +297,11 @@ fn test_merge_matches_existing() {
     let before = db.node_count();
 
     let result = session
-        .execute("MERGE (n:Person {name: 'Alice'}) RETURN n.name")
+        .execute("MERGE (n:Person {name: 'Alix'}) RETURN n.name")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     // No new node created
     assert_eq!(db.node_count(), before);
 }
@@ -329,17 +329,17 @@ fn test_merge_on_match_set() {
 
     let result = session
         .execute(
-            "MERGE (n:Person {name: 'Alice'}) ON MATCH SET n.found = true RETURN n.name, n.found",
+            "MERGE (n:Person {name: 'Alix'}) ON MATCH SET n.found = true RETURN n.name, n.found",
         )
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     assert_eq!(result.rows[0][1], Value::Bool(true));
 }
 
 // ============================================================================
-// CREATE — covers plan_create_node, plan_create_edge, try_fold_expression
+// CREATE: covers plan_create_node, plan_create_edge, try_fold_expression
 // ============================================================================
 
 #[test]
@@ -369,7 +369,7 @@ fn test_create_edge_named_variable() {
     // Cypher: MATCH + CREATE edge with named variable
     let result = session
         .execute_cypher(
-            "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
              CREATE (a)-[r:LIKES]->(b) RETURN type(r)",
         )
         .unwrap();
@@ -388,7 +388,7 @@ fn test_create_edge_anonymous() {
 
     session
         .execute_cypher(
-            "MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) \
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
              CREATE (a)-[:LIKES]->(b)",
         )
         .unwrap();
@@ -423,7 +423,7 @@ fn test_create_path_with_new_nodes() {
 }
 
 // ============================================================================
-// DELETE — covers plan_delete_node, plan_delete_edge, detach path
+// DELETE: covers plan_delete_node, plan_delete_edge, detach path
 // ============================================================================
 
 #[test]
@@ -433,9 +433,9 @@ fn test_delete_node_by_match() {
 
     let before = db.node_count();
 
-    // Delete Carol (who has KNOWS edges)
+    // Delete Harm (who has KNOWS edges)
     session
-        .execute("MATCH (n:Person) WHERE n.name = 'Carol' DETACH DELETE n")
+        .execute("MATCH (n:Person) WHERE n.name = 'Harm' DETACH DELETE n")
         .unwrap();
 
     assert!(db.node_count() < before);
@@ -468,7 +468,7 @@ fn test_detach_delete_all_nodes() {
 }
 
 // ============================================================================
-// SET property — covers plan_set_property, expression_to_property_source
+// SET property: covers plan_set_property, expression_to_property_source
 // ============================================================================
 
 #[test]
@@ -478,11 +478,11 @@ fn test_set_property_literal() {
 
     // GQL: SET is processed before WHERE, so use pattern property match
     session
-        .execute("MATCH (n:Person {name: 'Alice'}) SET n.age = 31")
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n.age = 31")
         .unwrap();
 
     let result = session
-        .execute("MATCH (n:Person {name: 'Alice'}) RETURN n.age")
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.age")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
@@ -495,11 +495,11 @@ fn test_set_property_string() {
     let session = db.session();
 
     session
-        .execute("MATCH (n:Person {name: 'Bob'}) SET n.city = 'Berlin'")
+        .execute("MATCH (n:Person {name: 'Gus'}) SET n.city = 'Berlin'")
         .unwrap();
 
     let result = session
-        .execute("MATCH (n:Person {name: 'Bob'}) RETURN n.city")
+        .execute("MATCH (n:Person {name: 'Gus'}) RETURN n.city")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
@@ -507,7 +507,7 @@ fn test_set_property_string() {
 }
 
 // ============================================================================
-// Label operations — covers plan_add_label, plan_remove_label
+// Label operations: covers plan_add_label, plan_remove_label
 // ============================================================================
 
 #[test]
@@ -517,14 +517,14 @@ fn test_add_label_via_set() {
 
     // GQL: SET is processed before WHERE, so use pattern property match
     session
-        .execute("MATCH (n:Person {name: 'Alice'}) SET n:Employee")
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n:Employee")
         .unwrap();
 
-    // Alice should now have both Person and Employee labels
+    // Alix should now have both Person and Employee labels
     let result = session.execute("MATCH (n:Employee) RETURN n.name").unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
 }
 
 #[test]
@@ -534,14 +534,14 @@ fn test_remove_label() {
 
     // First add a label, then remove it (use pattern match, not WHERE)
     session
-        .execute("MATCH (n:Person {name: 'Alice'}) SET n:Temp")
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n:Temp")
         .unwrap();
 
     let result = session.execute("MATCH (n:Temp) RETURN n.name").unwrap();
     assert_eq!(result.rows.len(), 1);
 
     session
-        .execute("MATCH (n:Person {name: 'Alice'}) REMOVE n:Temp")
+        .execute("MATCH (n:Person {name: 'Alix'}) REMOVE n:Temp")
         .unwrap();
 
     let result = session.execute("MATCH (n:Temp) RETURN n.name").unwrap();
@@ -549,7 +549,7 @@ fn test_remove_label() {
 }
 
 // ============================================================================
-// OPTIONAL MATCH — covers plan_left_join
+// OPTIONAL MATCH: covers plan_left_join
 // ============================================================================
 
 #[test]
@@ -557,17 +557,17 @@ fn test_optional_match_with_results() {
     let db = create_social_network();
     let session = db.session();
 
-    // Alice works at TechCorp — use pattern property match (WHERE comes after OPTIONAL MATCH)
+    // Alix works at TechCorp, use pattern property match (WHERE comes after OPTIONAL MATCH)
     let result = session
         .execute(
-            "MATCH (a:Person {name: 'Alice'}) \
+            "MATCH (a:Person {name: 'Alix'}) \
              OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
              RETURN a.name, c.name",
         )
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
 }
 
@@ -576,17 +576,17 @@ fn test_optional_match_null_when_missing() {
     let db = create_social_network();
     let session = db.session();
 
-    // Carol doesn't manage anyone — OPTIONAL MATCH should still produce a row
+    // Harm doesn't manage anyone, OPTIONAL MATCH should still produce a row
     // (LEFT JOIN preserves the left side even when right side has no matches)
     let result = session
         .execute(
-            "MATCH (a:Person {name: 'Carol'}) \
+            "MATCH (a:Person {name: 'Harm'}) \
              OPTIONAL MATCH (a)-[:MANAGES]->(c:Company) \
              RETURN a, c",
         )
         .unwrap();
 
-    // Should produce exactly 1 row — LEFT JOIN keeps Carol even without a MANAGES match
+    // Should produce exactly 1 row: LEFT JOIN keeps Harm even without a MANAGES match
     assert_eq!(
         result.rows.len(),
         1,
@@ -595,7 +595,7 @@ fn test_optional_match_null_when_missing() {
 }
 
 // ============================================================================
-// CALL PROCEDURE — covers plan_call_procedure, plan_static_result
+// CALL PROCEDURE: covers plan_call_procedure, plan_static_result
 // ============================================================================
 
 #[test]

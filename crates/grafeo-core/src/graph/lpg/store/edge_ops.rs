@@ -63,8 +63,13 @@ impl LpgStore {
         let record = EdgeRecord::new(id, src, dst, type_id, epoch);
 
         // Allocate record in arena and get offset (create epoch if needed)
-        let arena = self.arena_allocator.arena_or_create(epoch);
-        let (offset, _stored) = arena.alloc_value_with_offset(record);
+        let arena = self
+            .arena_allocator
+            .arena_or_create(epoch)
+            .expect("failed to create arena for epoch");
+        let (offset, _stored) = arena
+            .alloc_value_with_offset(record)
+            .expect("arena allocation failed for edge record");
 
         // Create HotVersionRef pointing to arena data
         let hot_ref = HotVersionRef::new(epoch, offset, tx_id);
@@ -225,7 +230,10 @@ impl LpgStore {
     pub(super) fn read_edge_record(&self, version_ref: &VersionRef) -> Option<EdgeRecord> {
         match version_ref {
             VersionRef::Hot(hot_ref) => {
-                let arena = self.arena_allocator.arena(hot_ref.epoch);
+                let arena = self
+                    .arena_allocator
+                    .arena(hot_ref.epoch)
+                    .expect("epoch must exist for hot version ref");
                 // SAFETY: The offset was returned by alloc_value_with_offset for an EdgeRecord
                 let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                 Some(*record)
@@ -495,7 +503,10 @@ impl LpgStore {
         let base_id = self
             .next_edge_id
             .fetch_add(edges.len() as u64, Ordering::Relaxed);
-        let arena = self.arena_allocator.arena_or_create(epoch);
+        let arena = self
+            .arena_allocator
+            .arena_or_create(epoch)
+            .expect("failed to create arena for epoch");
 
         let mut ids = Vec::with_capacity(edges.len());
         let mut forward_batch = Vec::with_capacity(edges.len());
@@ -511,7 +522,9 @@ impl LpgStore {
                 let type_id = self.get_or_create_edge_type_id(edge_type);
 
                 let record = EdgeRecord::new(id, src, dst, type_id, epoch);
-                let (offset, _stored) = arena.alloc_value_with_offset(record);
+                let (offset, _stored) = arena
+                    .alloc_value_with_offset(record)
+                    .expect("arena allocation failed for edge record");
                 let hot_ref = HotVersionRef::new(epoch, offset, TxId::SYSTEM);
                 versions.insert(id, VersionIndex::with_initial(hot_ref));
 

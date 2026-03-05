@@ -21,40 +21,40 @@ fn create_test_graph() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let alice = session.create_node_with_props(
+    let alix = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
             ("city", Value::String("NYC".into())),
         ],
     );
-    let bob = session.create_node_with_props(
+    let gus = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
             ("city", Value::String("NYC".into())),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
             ("city", Value::String("London".into())),
         ],
     );
 
-    session.create_edge(alice, bob, "KNOWS");
-    session.create_edge(alice, carol, "KNOWS");
-    session.create_edge(bob, carol, "KNOWS");
+    session.create_edge(alix, gus, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
 
     db
 }
 
 // ============================================================================
-// CASE expressions — covers expression.rs Case branch
+// CASE expressions: covers expression.rs Case branch
 // ============================================================================
 
 #[test]
@@ -72,14 +72,14 @@ fn test_case_when_then_else() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 3);
-    // Alice(30) -> junior, Bob(25) -> junior, Carol(35) -> senior
+    // Alix(30) -> junior, Gus(25) -> junior, Harm(35) -> senior
     let categories: Vec<&Value> = result.rows.iter().map(|r| &r[1]).collect();
     assert!(categories.contains(&&Value::String("senior".into())));
     assert!(categories.contains(&&Value::String("junior".into())));
 }
 
 // ============================================================================
-// EXISTS subquery — covers expression.rs ExistsSubquery, extract_exists_pattern
+// EXISTS subquery: covers expression.rs ExistsSubquery, extract_exists_pattern
 // ============================================================================
 
 #[test]
@@ -113,34 +113,34 @@ fn test_exists_subquery_no_match() {
 }
 
 // ============================================================================
-// Complex EXISTS subquery — covers semi-join rewrite in planner/filter.rs
+// Complex EXISTS subquery: covers semi-join rewrite in planner/filter.rs
 // ============================================================================
 
 /// Extended graph: Person nodes with KNOWS edges, City nodes with LIVES_IN edges.
-/// Alice -> Bob, Alice -> Carol, Bob -> Carol (KNOWS)
-/// Alice lives in NYC, Bob lives in NYC, Carol lives in London.
+/// Alix -> Gus, Alix -> Harm, Gus -> Harm (KNOWS)
+/// Alix lives in NYC, Gus lives in NYC, Harm lives in London.
 fn create_multi_hop_graph() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let alice = session.create_node_with_props(
+    let alix = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Alice".into())),
+            ("name", Value::String("Alix".into())),
             ("age", Value::Int64(30)),
         ],
     );
-    let bob = session.create_node_with_props(
+    let gus = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Bob".into())),
+            ("name", Value::String("Gus".into())),
             ("age", Value::Int64(25)),
         ],
     );
-    let carol = session.create_node_with_props(
+    let harm = session.create_node_with_props(
         &["Person"],
         [
-            ("name", Value::String("Carol".into())),
+            ("name", Value::String("Harm".into())),
             ("age", Value::Int64(35)),
         ],
     );
@@ -158,15 +158,15 @@ fn create_multi_hop_graph() -> GrafeoDB {
         session.create_node_with_props(&["City"], [("name", Value::String("London".into()))]);
 
     // KNOWS edges
-    session.create_edge(alice, bob, "KNOWS");
-    session.create_edge(alice, carol, "KNOWS");
-    session.create_edge(bob, carol, "KNOWS");
-    session.create_edge(dave, alice, "KNOWS");
+    session.create_edge(alix, gus, "KNOWS");
+    session.create_edge(alix, harm, "KNOWS");
+    session.create_edge(gus, harm, "KNOWS");
+    session.create_edge(dave, alix, "KNOWS");
 
     // LIVES_IN edges
-    session.create_edge(alice, nyc, "LIVES_IN");
-    session.create_edge(bob, nyc, "LIVES_IN");
-    session.create_edge(carol, london, "LIVES_IN");
+    session.create_edge(alix, nyc, "LIVES_IN");
+    session.create_edge(gus, nyc, "LIVES_IN");
+    session.create_edge(harm, london, "LIVES_IN");
     // Dave has no LIVES_IN edge
 
     drop(session);
@@ -192,9 +192,9 @@ fn sorted_names(db: &GrafeoDB, query: &str) -> Vec<String> {
 fn test_exists_multi_hop() {
     let db = create_multi_hop_graph();
 
-    // Alice KNOWS Bob who LIVES_IN NYC, Alice KNOWS Carol who LIVES_IN London
-    // Bob KNOWS Carol who LIVES_IN London
-    // Dave KNOWS Alice who LIVES_IN NYC
+    // Alix KNOWS Gus who LIVES_IN NYC, Alix KNOWS Harm who LIVES_IN London
+    // Gus KNOWS Harm who LIVES_IN London
+    // Dave KNOWS Alix who LIVES_IN NYC
     // All 4 have a 2-hop KNOWS->LIVES_IN path
     let names = sorted_names(
         &db,
@@ -202,7 +202,7 @@ fn test_exists_multi_hop() {
          WHERE EXISTS { MATCH (n)-[:KNOWS]->(m)-[:LIVES_IN]->(c:City) } \
          RETURN n.name",
     );
-    assert_eq!(names, vec!["Alice", "Bob", "Dave"]);
+    assert_eq!(names, vec!["Alix", "Dave", "Gus"]);
 }
 
 #[test]
@@ -223,18 +223,18 @@ fn test_exists_multi_hop_no_match() {
 fn test_exists_with_inner_property_filter() {
     let db = create_multi_hop_graph();
 
-    // Alice KNOWS Bob(25) and Carol(35), Bob KNOWS Carol(35), Dave KNOWS Alice(30)
+    // Alix KNOWS Gus(25) and Harm(35), Gus KNOWS Harm(35), Dave KNOWS Alix(30)
     // Only people who know someone older than 30:
-    //   Alice: KNOWS Carol(35) ✓
-    //   Bob: KNOWS Carol(35) ✓
-    //   Dave: KNOWS Alice(30), 30 is NOT > 30 ✗
+    //   Alix: KNOWS Harm(35) ✓
+    //   Gus: KNOWS Harm(35) ✓
+    //   Dave: KNOWS Alix(30), 30 is NOT > 30 ✗
     let names = sorted_names(
         &db,
         "MATCH (n:Person) \
          WHERE EXISTS { MATCH (n)-[:KNOWS]->(m) WHERE m.age > 30 } \
          RETURN n.name",
     );
-    assert_eq!(names, vec!["Alice", "Bob"]);
+    assert_eq!(names, vec!["Alix", "Gus"]);
 }
 
 #[test]
@@ -242,18 +242,18 @@ fn test_not_exists_complex() {
     let db = create_multi_hop_graph();
 
     // NOT EXISTS multi-hop: people who do NOT have a KNOWS->LIVES_IN path to a City
-    // Alice, Bob, Dave all have such paths; Carol KNOWS nobody with LIVES_IN? No:
-    // Carol has no outgoing KNOWS edges, so she has no 2-hop path.
-    // But Carol is not in the KNOWS->LIVES_IN result set at all.
-    // Actually: Alice->Bob->NYC, Alice->Carol->London, Bob->Carol->London, Dave->Alice->NYC
-    // Carol has no outgoing KNOWS edges, so NOT EXISTS is true for Carol.
+    // Alix, Gus, Dave all have such paths; Harm KNOWS nobody with LIVES_IN? No:
+    // Harm has no outgoing KNOWS edges, so she has no 2-hop path.
+    // But Harm is not in the KNOWS->LIVES_IN result set at all.
+    // Actually: Alix->Gus->NYC, Alix->Harm->London, Gus->Harm->London, Dave->Alix->NYC
+    // Harm has no outgoing KNOWS edges, so NOT EXISTS is true for Harm.
     let names = sorted_names(
         &db,
         "MATCH (n:Person) \
          WHERE NOT EXISTS { MATCH (n)-[:KNOWS]->(m)-[:LIVES_IN]->(c:City) } \
          RETURN n.name",
     );
-    assert_eq!(names, vec!["Carol"]);
+    assert_eq!(names, vec!["Harm"]);
 }
 
 #[test]
@@ -262,8 +262,8 @@ fn test_exists_complex_combined_with_and() {
 
     // EXISTS (multi-hop) AND property filter on outer variable
     // People who have a KNOWS->LIVES_IN path AND are older than 28
-    // From multi-hop test: Alice(30), Bob(25), Dave(40) have paths
-    // After age > 28: Alice(30), Dave(40)
+    // From multi-hop test: Alix(30), Gus(25), Dave(40) have paths
+    // After age > 28: Alix(30), Dave(40)
     let names = sorted_names(
         &db,
         "MATCH (n:Person) \
@@ -271,7 +271,7 @@ fn test_exists_complex_combined_with_and() {
            AND n.age > 28 \
          RETURN n.name",
     );
-    assert_eq!(names, vec!["Alice", "Dave"]);
+    assert_eq!(names, vec!["Alix", "Dave"]);
 }
 
 #[test]
@@ -299,11 +299,11 @@ fn test_exists_complex_gql_syntax() {
         })
         .collect();
     names.sort();
-    assert_eq!(names, vec!["Alice", "Bob", "Dave"]);
+    assert_eq!(names, vec!["Alix", "Dave", "Gus"]);
 }
 
 // ============================================================================
-// List/Map expressions — covers expression.rs List, Map branches
+// List/Map expressions: covers expression.rs List, Map branches
 // ============================================================================
 
 #[test]
@@ -326,7 +326,7 @@ fn test_list_property_in_return() {
 }
 
 // ============================================================================
-// Index/slice access — covers expression.rs IndexAccess, SliceAccess
+// Index/slice access: covers expression.rs IndexAccess, SliceAccess
 // ============================================================================
 
 #[test]
@@ -346,7 +346,7 @@ fn test_index_access() {
 }
 
 // ============================================================================
-// RETURN with type() function — covers project.rs "type" branch
+// RETURN with type() function: covers project.rs "type" branch
 // ============================================================================
 
 #[test]
@@ -365,7 +365,7 @@ fn test_return_type_function() {
 }
 
 // ============================================================================
-// ORDER BY — covers plan_sort property projections
+// ORDER BY: covers plan_sort property projections
 // ============================================================================
 
 #[test]
@@ -378,10 +378,10 @@ fn test_order_by_property_asc() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 3);
-    // Bob(25), Alice(30), Carol(35)
-    assert_eq!(result.rows[0][0], Value::String("Bob".into()));
-    assert_eq!(result.rows[1][0], Value::String("Alice".into()));
-    assert_eq!(result.rows[2][0], Value::String("Carol".into()));
+    // Gus(25), Alix(30), Harm(35)
+    assert_eq!(result.rows[0][0], Value::String("Gus".into()));
+    assert_eq!(result.rows[1][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[2][0], Value::String("Harm".into()));
 }
 
 #[test]
@@ -394,14 +394,14 @@ fn test_order_by_property_desc() {
         .unwrap();
 
     assert_eq!(result.rows.len(), 3);
-    // Carol(35), Alice(30), Bob(25)
-    assert_eq!(result.rows[0][0], Value::String("Carol".into()));
-    assert_eq!(result.rows[1][0], Value::String("Alice".into()));
-    assert_eq!(result.rows[2][0], Value::String("Bob".into()));
+    // Harm(35), Alix(30), Gus(25)
+    assert_eq!(result.rows[0][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[1][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[2][0], Value::String("Gus".into()));
 }
 
 // ============================================================================
-// WITH clause — covers plan_project
+// WITH clause: covers plan_project
 // ============================================================================
 
 #[test]
@@ -411,11 +411,11 @@ fn test_with_node_passthrough() {
 
     // WITH can pass whole node variables through to subsequent clauses
     let result = session
-        .execute("MATCH (n:Person {name: 'Alice'}) WITH n RETURN n.name")
+        .execute("MATCH (n:Person {name: 'Alix'}) WITH n RETURN n.name")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
 }
 
 #[test]
@@ -423,17 +423,17 @@ fn test_with_filters_pipeline() {
     let db = create_test_graph();
     let session = db.session();
 
-    // WITH n WHERE ... filters before RETURN — the WHERE applies to the WITH clause
+    // WITH n WHERE ... filters before RETURN, the WHERE applies to the WITH clause
     let result = session
         .execute("MATCH (n:Person) WHERE n.age > 28 WITH n RETURN n.name")
         .unwrap();
 
-    // Alice(30) and Carol(35) pass the WHERE filter
+    // Alix(30) and Harm(35) pass the WHERE filter
     assert_eq!(result.rows.len(), 2);
 }
 
 // ============================================================================
-// Aggregations — covers gql_translator extract_aggregates_and_groups
+// Aggregations: covers gql_translator extract_aggregates_and_groups
 // ============================================================================
 
 #[test]
@@ -524,7 +524,7 @@ fn test_aggregate_order_by() {
 }
 
 // ============================================================================
-// SKIP and LIMIT — covers plan_skip, plan_limit
+// SKIP and LIMIT: covers plan_skip, plan_limit
 // ============================================================================
 
 #[test]
@@ -556,7 +556,7 @@ fn test_skip_offsets_rows() {
 }
 
 // ============================================================================
-// DISTINCT — covers DistinctOp planning
+// DISTINCT: covers DistinctOp planning
 // ============================================================================
 
 #[test]
@@ -596,11 +596,11 @@ fn test_return_multiple_expressions() {
     let session = db.session();
 
     let result = session
-        .execute("MATCH (n:Person {name: 'Alice'}) RETURN n.name, n.age, n.city")
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age, n.city")
         .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
     assert_eq!(result.rows[0][1], Value::Int64(30));
     assert_eq!(result.rows[0][2], Value::String("NYC".into()));
 }

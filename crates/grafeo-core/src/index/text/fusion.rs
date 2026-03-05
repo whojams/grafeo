@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Method for fusing scores from multiple search sources.
 #[derive(Debug, Clone)]
 pub enum FusionMethod {
-    /// Reciprocal Rank Fusion — parameter-free, robust default.
+    /// Reciprocal Rank Fusion, parameter-free, robust default.
     ///
     /// Score = sum(1 / (k + rank_i)) across sources.
     /// Higher k values reduce the impact of high-ranked items.
@@ -160,7 +160,7 @@ mod tests {
 
         // Node 2 appears in both at rank 2 and rank 1 → highest fused score
         assert!(!results.is_empty());
-        // Find node 2's score — should be highest since it's in both lists
+        // Find node 2's score, should be highest since it's in both lists
         let node2_score = results.iter().find(|(id, _)| *id == NodeId::new(2));
         let node1_score = results.iter().find(|(id, _)| *id == NodeId::new(1));
         assert!(node2_score.is_some());

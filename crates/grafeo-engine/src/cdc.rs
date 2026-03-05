@@ -13,8 +13,8 @@
 //!
 //! let db = GrafeoDB::new_in_memory();
 //! let id = db.create_node(&["Person"]);
-//! db.set_node_property(id, "name", Value::from("Alice"));
-//! db.set_node_property(id, "name", Value::from("Bob"));
+//! db.set_node_property(id, "name", Value::from("Alix"));
+//! db.set_node_property(id, "name", Value::from("Gus"));
 //!
 //! let history = db.history(id)?;
 //! assert_eq!(history.len(), 3); // create + 2 updates
@@ -275,14 +275,14 @@ mod tests {
             EpochId(2),
             "name",
             None,
-            Value::from("Alice"),
+            Value::from("Alix"),
         );
         log.record_update(
             EntityId::Node(node_id),
             EpochId(3),
             "name",
-            Some(Value::from("Alice")),
-            Value::from("Bob"),
+            Some(Value::from("Alix")),
+            Value::from("Gus"),
         );
 
         let history = log.history(EntityId::Node(node_id));
@@ -303,14 +303,14 @@ mod tests {
             EpochId(5),
             "name",
             None,
-            Value::from("Alice"),
+            Value::from("Alix"),
         );
         log.record_update(
             EntityId::Node(node_id),
             EpochId(10),
             "name",
-            Some(Value::from("Alice")),
-            Value::from("Bob"),
+            Some(Value::from("Alix")),
+            Value::from("Gus"),
         );
 
         let since_5 = log.history_since(EntityId::Node(node_id), EpochId(5));
@@ -342,7 +342,7 @@ mod tests {
         let node_id = NodeId::new(1);
 
         let mut props = HashMap::new();
-        props.insert("name".to_string(), Value::from("Alice"));
+        props.insert("name".to_string(), Value::from("Alix"));
 
         log.record_create_node(node_id, EpochId(1), Some(props.clone()));
         log.record_delete(EntityId::Node(node_id), EpochId(2), Some(props));

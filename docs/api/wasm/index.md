@@ -19,11 +19,11 @@ import init, { Database } from '@grafeo-db/wasm';
 await init();
 const db = new Database();
 
-db.execute("INSERT (:Person {name: 'Alice', age: 30})");
-db.execute("INSERT (:Person {name: 'Bob', age: 25})");
+db.execute("INSERT (:Person {name: 'Alix', age: 30})");
+db.execute("INSERT (:Person {name: 'Gus', age: 25})");
 
 const results = db.execute("MATCH (p:Person) RETURN p.name, p.age");
-console.log(results); // [{name: "Alice", age: 30}, {name: "Bob", age: 25}]
+console.log(results); // [{name: "Alix", age: 30}, {name: "Gus", age: 25}]
 ```
 
 ## Database

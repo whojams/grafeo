@@ -12,9 +12,9 @@ use grafeo_common::types::EpochId;
 fn bench_epoch_arena_allocate(c: &mut Criterion) {
     c.bench_function("epoch_arena_allocate_1000", |b| {
         b.iter(|| {
-            let arena = Arena::new(EpochId::INITIAL);
+            let arena = Arena::new(EpochId::INITIAL).unwrap();
             for _ in 0..1000 {
-                black_box(arena.alloc_value(42u64));
+                black_box(arena.alloc_value(42u64).unwrap());
             }
         });
     });

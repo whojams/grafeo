@@ -88,7 +88,7 @@ pub type QueryParams = HashMap<String, Value>;
 /// use grafeo_engine::query::processor::{QueryProcessor, QueryLanguage};
 ///
 /// # fn main() -> grafeo_common::utils::error::Result<()> {
-/// let store = Arc::new(LpgStore::new());
+/// let store = Arc::new(LpgStore::new().unwrap());
 /// let processor = QueryProcessor::for_lpg(store);
 /// let result = processor.process("MATCH (n:Person) RETURN n", QueryLanguage::Gql, None)?;
 /// # Ok(())
@@ -155,7 +155,7 @@ impl QueryProcessor {
     ) -> Self {
         let optimizer = Optimizer::from_graph_store(&*store);
         Self {
-            lpg_store: Arc::new(LpgStore::new()), // dummy, not used
+            lpg_store: Arc::new(LpgStore::new().expect("arena allocation for dummy LpgStore")), // dummy, not used
             graph_store: store,
             tx_manager,
             catalog: Arc::new(Catalog::new()),
@@ -257,6 +257,7 @@ impl QueryProcessor {
         language: QueryLanguage,
         params: Option<&QueryParams>,
     ) -> Result<QueryResult> {
+        #[cfg(not(target_arch = "wasm32"))]
         let start_time = std::time::Instant::now();
 
         // 1. Parse and translate to logical plan
@@ -273,6 +274,13 @@ impl QueryProcessor {
 
         // 4. Optimize the plan
         let optimized_plan = self.optimizer.optimize(logical_plan)?;
+
+        // 4a. EXPLAIN: annotate pushdown hints and return the plan tree
+        if optimized_plan.explain {
+            let mut plan = optimized_plan;
+            annotate_pushdown_hints(&mut plan.root, self.graph_store.as_ref());
+            return Ok(explain_result(&plan));
+        }
 
         // 5. Convert to physical plan with transaction context
         let planner = if let Some((epoch, tx_id)) = self.tx_context {
@@ -297,9 +305,12 @@ impl QueryProcessor {
         let mut result = executor.execute(physical_plan.operator.as_mut())?;
 
         // Add execution metrics
-        let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
         let rows_scanned = result.rows.len() as u64; // Approximate: rows returned
-        result.execution_time_ms = Some(elapsed_ms);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+            result.execution_time_ms = Some(elapsed_ms);
+        }
         result.rows_scanned = Some(rows_scanned);
 
         Ok(result)
@@ -310,28 +321,28 @@ impl QueryProcessor {
         match language {
             #[cfg(feature = "gql")]
             QueryLanguage::Gql => {
-                use crate::query::gql_translator;
-                gql_translator::translate(query)
+                use crate::query::translators::gql;
+                gql::translate(query)
             }
             #[cfg(feature = "cypher")]
             QueryLanguage::Cypher => {
-                use crate::query::cypher_translator;
-                cypher_translator::translate(query)
+                use crate::query::translators::cypher;
+                cypher::translate(query)
             }
             #[cfg(feature = "gremlin")]
             QueryLanguage::Gremlin => {
-                use crate::query::gremlin_translator;
-                gremlin_translator::translate(query)
+                use crate::query::translators::gremlin;
+                gremlin::translate(query)
             }
             #[cfg(feature = "graphql")]
             QueryLanguage::GraphQL => {
-                use crate::query::graphql_translator;
-                graphql_translator::translate(query)
+                use crate::query::translators::graphql;
+                graphql::translate(query)
             }
             #[cfg(feature = "sql-pgq")]
             QueryLanguage::SqlPgq => {
-                use crate::query::sql_pgq_translator;
-                sql_pgq_translator::translate(query)
+                use crate::query::translators::sql_pgq;
+                sql_pgq::translate(query)
             }
             #[allow(unreachable_patterns)]
             _ => Err(Error::Internal(format!(
@@ -349,7 +360,7 @@ impl QueryProcessor {
         language: QueryLanguage,
         _params: Option<&QueryParams>,
     ) -> Result<QueryResult> {
-        use crate::query::planner_rdf::RdfPlanner;
+        use crate::query::planner::rdf::RdfPlanner;
 
         let rdf_store = self.rdf_store.as_ref().ok_or_else(|| {
             Error::Internal("RDF store not configured for this processor".to_string())
@@ -364,6 +375,11 @@ impl QueryProcessor {
 
         // 3. Optimize the plan
         let optimized_plan = self.optimizer.optimize(logical_plan)?;
+
+        // 3a. EXPLAIN: return the optimized plan tree without executing
+        if optimized_plan.explain {
+            return Ok(explain_result(&optimized_plan));
+        }
 
         // 4. Convert to physical plan (using RDF planner)
         let planner = RdfPlanner::new(Arc::clone(rdf_store));
@@ -380,14 +396,14 @@ impl QueryProcessor {
         match language {
             #[cfg(feature = "sparql")]
             QueryLanguage::Sparql => {
-                use crate::query::sparql_translator;
-                sparql_translator::translate(query)
+                use crate::query::translators::sparql;
+                sparql::translate(query)
             }
             #[cfg(all(feature = "graphql", feature = "rdf"))]
             QueryLanguage::GraphQLRdf => {
-                use crate::query::graphql_rdf_translator;
+                use crate::query::translators::graphql_rdf;
                 // Default namespace for GraphQL-RDF queries
-                graphql_rdf_translator::translate(query, "http://example.org/")
+                graphql_rdf::translate(query, "http://example.org/")
             }
             _ => Err(Error::Internal(format!(
                 "Language {:?} is not an RDF language",
@@ -427,6 +443,148 @@ impl QueryProcessor {
     #[must_use]
     pub fn tx_manager(&self) -> &Arc<TransactionManager> {
         &self.tx_manager
+    }
+}
+
+/// Annotates filter operators in the plan with pushdown hints.
+///
+/// Walks the plan tree looking for `Filter -> NodeScan` patterns and checks
+/// whether a property index exists for equality predicates.
+pub(crate) fn annotate_pushdown_hints(
+    op: &mut LogicalOperator,
+    store: &dyn grafeo_core::graph::GraphStore,
+) {
+    use crate::query::plan::*;
+
+    match op {
+        LogicalOperator::Filter(filter) => {
+            // Recurse into children first
+            annotate_pushdown_hints(&mut filter.input, store);
+
+            // Annotate this filter if it sits on top of a NodeScan
+            if let LogicalOperator::NodeScan(scan) = filter.input.as_ref() {
+                filter.pushdown_hint = infer_pushdown(&filter.predicate, scan, store);
+            }
+        }
+        LogicalOperator::NodeScan(op) => {
+            if let Some(input) = &mut op.input {
+                annotate_pushdown_hints(input, store);
+            }
+        }
+        LogicalOperator::EdgeScan(op) => {
+            if let Some(input) = &mut op.input {
+                annotate_pushdown_hints(input, store);
+            }
+        }
+        LogicalOperator::Expand(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Project(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Join(op) => {
+            annotate_pushdown_hints(&mut op.left, store);
+            annotate_pushdown_hints(&mut op.right, store);
+        }
+        LogicalOperator::Aggregate(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Limit(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Skip(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Sort(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Distinct(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Return(op) => annotate_pushdown_hints(&mut op.input, store),
+        LogicalOperator::Union(op) => {
+            for input in &mut op.inputs {
+                annotate_pushdown_hints(input, store);
+            }
+        }
+        LogicalOperator::Apply(op) => {
+            annotate_pushdown_hints(&mut op.input, store);
+            annotate_pushdown_hints(&mut op.subplan, store);
+        }
+        LogicalOperator::Otherwise(op) => {
+            annotate_pushdown_hints(&mut op.left, store);
+            annotate_pushdown_hints(&mut op.right, store);
+        }
+        _ => {}
+    }
+}
+
+/// Infers the pushdown strategy for a filter predicate over a node scan.
+fn infer_pushdown(
+    predicate: &LogicalExpression,
+    scan: &crate::query::plan::NodeScanOp,
+    store: &dyn grafeo_core::graph::GraphStore,
+) -> Option<crate::query::plan::PushdownHint> {
+    use crate::query::plan::*;
+
+    match predicate {
+        // Equality: n.prop = value
+        LogicalExpression::Binary { left, op, right } if *op == BinaryOp::Eq => {
+            if let Some(prop) = extract_property_name(left, &scan.variable)
+                .or_else(|| extract_property_name(right, &scan.variable))
+            {
+                if store.has_property_index(&prop) {
+                    return Some(PushdownHint::IndexLookup { property: prop });
+                }
+                if scan.label.is_some() {
+                    return Some(PushdownHint::LabelFirst);
+                }
+            }
+            None
+        }
+        // Range: n.prop > value, n.prop < value, etc.
+        LogicalExpression::Binary {
+            left,
+            op: BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Lt | BinaryOp::Le,
+            right,
+        } => {
+            if let Some(prop) = extract_property_name(left, &scan.variable)
+                .or_else(|| extract_property_name(right, &scan.variable))
+            {
+                if store.has_property_index(&prop) {
+                    return Some(PushdownHint::RangeScan { property: prop });
+                }
+                if scan.label.is_some() {
+                    return Some(PushdownHint::LabelFirst);
+                }
+            }
+            None
+        }
+        // AND: check the left side (first conjunct) for pushdown
+        LogicalExpression::Binary {
+            left,
+            op: BinaryOp::And,
+            ..
+        } => infer_pushdown(left, scan, store),
+        _ => {
+            // Any other predicate on a labeled scan gets label-first
+            if scan.label.is_some() {
+                Some(PushdownHint::LabelFirst)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Extracts the property name if the expression is `Property { variable, property }`
+/// and the variable matches the scan variable.
+fn extract_property_name(expr: &LogicalExpression, scan_var: &str) -> Option<String> {
+    if let LogicalExpression::Property { variable, property } = expr
+        && variable == scan_var
+    {
+        Some(property.clone())
+    } else {
+        None
+    }
+}
+
+/// Builds a `QueryResult` containing the EXPLAIN plan tree text.
+pub(crate) fn explain_result(plan: &LogicalPlan) -> QueryResult {
+    let tree_text = plan.root.explain_tree();
+    QueryResult {
+        columns: vec!["plan".to_string()],
+        column_types: vec![grafeo_common::types::LogicalType::String],
+        rows: vec![vec![Value::String(tree_text.into())]],
+        execution_time_ms: None,
+        rows_scanned: None,
+        status_message: None,
     }
 }
 
@@ -615,6 +773,9 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
         | LogicalOperator::CopyGraph(_)
         | LogicalOperator::MoveGraph(_)
         | LogicalOperator::AddGraph(_) => {}
+        LogicalOperator::HorizontalAggregate(op) => {
+            substitute_in_operator(&mut op.input, params)?;
+        }
         LogicalOperator::Empty => {}
         LogicalOperator::VectorScan(scan) => {
             substitute_in_expression(&mut scan.query_vector, params)?;
@@ -641,6 +802,17 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
         LogicalOperator::Apply(apply) => {
             substitute_in_operator(&mut apply.input, params)?;
             substitute_in_operator(&mut apply.subplan, params)?;
+        }
+        // ParameterScan has no expressions to substitute
+        LogicalOperator::ParameterScan(_) => {}
+        LogicalOperator::MultiWayJoin(mwj) => {
+            for input in &mut mwj.inputs {
+                substitute_in_operator(input, params)?;
+            }
+            for cond in &mut mwj.conditions {
+                substitute_in_expression(&mut cond.left, params)?;
+                substitute_in_expression(&mut cond.right, params)?;
+            }
         }
         // DDL operators have no expressions to substitute
         LogicalOperator::CreatePropertyGraph(_) => {}
@@ -782,7 +954,7 @@ mod tests {
 
     #[test]
     fn test_processor_creation() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         let processor = QueryProcessor::for_lpg(store);
         assert!(processor.lpg_store().node_count() == 0);
     }
@@ -790,7 +962,7 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_process_simple_gql() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node(&["Person"]);
         store.create_node(&["Person"]);
 
@@ -806,7 +978,7 @@ mod tests {
     #[cfg(feature = "cypher")]
     #[test]
     fn test_process_simple_cypher() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node(&["Person"]);
 
         let processor = QueryProcessor::for_lpg(store);
@@ -820,7 +992,7 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_process_with_params() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node_with_props(&["Person"], [("age", Value::Int64(25))]);
         store.create_node_with_props(&["Person"], [("age", Value::Int64(35))]);
         store.create_node_with_props(&["Person"], [("age", Value::Int64(45))]);
@@ -846,7 +1018,7 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_missing_param_error() {
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node(&["Person"]);
 
         let processor = QueryProcessor::for_lpg(store);
@@ -873,7 +1045,7 @@ mod tests {
     #[test]
     fn test_params_in_filter_with_property() {
         // Tests parameter substitution in WHERE clause with property comparison
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node_with_props(&["Num"], [("value", Value::Int64(10))]);
         store.create_node_with_props(&["Num"], [("value", Value::Int64(20))]);
 
@@ -900,7 +1072,7 @@ mod tests {
     #[test]
     fn test_params_in_multiple_where_conditions() {
         // Tests multiple parameters in WHERE clause with AND
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node_with_props(
             &["Person"],
             [("age", Value::Int64(25)), ("score", Value::Int64(80))],
@@ -936,7 +1108,7 @@ mod tests {
     #[test]
     fn test_params_with_in_list() {
         // Tests parameter as a value checked against IN list
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node_with_props(&["Item"], [("status", Value::String("active".into()))]);
         store.create_node_with_props(&["Item"], [("status", Value::String("pending".into()))]);
         store.create_node_with_props(&["Item"], [("status", Value::String("deleted".into()))]);
@@ -962,7 +1134,7 @@ mod tests {
     #[test]
     fn test_params_same_type_comparison() {
         // Tests that same-type parameter comparisons work correctly
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node_with_props(&["Data"], [("value", Value::Int64(100))]);
         store.create_node_with_props(&["Data"], [("value", Value::Int64(50))]);
 
@@ -988,7 +1160,7 @@ mod tests {
     #[test]
     fn test_process_empty_result_has_columns() {
         // Tests that empty results still have correct column names
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         // Don't create any nodes
 
         let processor = QueryProcessor::for_lpg(store);
@@ -1010,7 +1182,7 @@ mod tests {
     #[test]
     fn test_params_string_equality() {
         // Tests string parameter equality comparison
-        let store = Arc::new(LpgStore::new());
+        let store = Arc::new(LpgStore::new().unwrap());
         store.create_node_with_props(&["Item"], [("name", Value::String("alpha".into()))]);
         store.create_node_with_props(&["Item"], [("name", Value::String("beta".into()))]);
         store.create_node_with_props(&["Item"], [("name", Value::String("gamma".into()))]);

@@ -53,8 +53,8 @@ fn main() -> Result<(), grafeo_common::utils::error::Error> {
     let mut session = db.session();
 
     // Create nodes
-    session.execute("INSERT (:Person {name: 'Alice', age: 30})")?;
-    session.execute("INSERT (:Person {name: 'Bob', age: 25})")?;
+    session.execute("INSERT (:Person {name: 'Alix', age: 30})")?;
+    session.execute("INSERT (:Person {name: 'Gus', age: 25})")?;
 
     // Query
     let result = session.execute("MATCH (p:Person) RETURN p.name, p.age")?;

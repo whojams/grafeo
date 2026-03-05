@@ -25,7 +25,7 @@ let node_id = store.create_node(&["Person"]);
 use grafeo_core::index::HashIndex;
 
 let index: HashIndex<String, NodeId> = HashIndex::new();
-index.insert("Alice".into(), node_id);
+index.insert("Alix".into(), node_id);
 ```
 
 ## Execution

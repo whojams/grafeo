@@ -14,7 +14,7 @@ The `WHERE` clause filters results based on conditions.
 
 ```sql
 -- Equality
-WHERE p.name = 'Alice'
+WHERE p.name = 'Alix'
 
 -- Inequality
 WHERE p.age <> 30
@@ -208,4 +208,26 @@ Check whether a property key exists on an entity:
 MATCH (p:Person)
 WHERE PROPERTY_EXISTS(p, 'email')
 RETURN p.name, p.email
+```
+
+## Unicode Normalization
+
+### IS [NOT] NORMALIZED
+
+Check whether a string is in a specific Unicode normalization form. The default form is NFC.
+
+```sql
+-- Default (NFC) normalization check
+MATCH (p:Person)
+WHERE p.name IS NORMALIZED
+RETURN p.name
+
+-- Specific normalization forms: NFC, NFD, NFKC, NFKD
+MATCH (p:Person)
+WHERE p.name IS NFC NORMALIZED
+RETURN p.name
+
+MATCH (p:Person)
+WHERE p.name IS NOT NFKD NORMALIZED
+RETURN p.name
 ```

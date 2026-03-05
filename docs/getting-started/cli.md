@@ -55,7 +55,7 @@ grafeo version
 grafeo init ./mydb
 
 # Run a query
-grafeo query ./mydb "INSERT (:Person {name: 'Alice', age: 30})"
+grafeo query ./mydb "INSERT (:Person {name: 'Alix', age: 30})"
 grafeo query ./mydb "MATCH (n:Person) RETURN n.name, n.age"
 
 # Launch the interactive shell
@@ -77,7 +77,7 @@ grafeo query ./mydb --file query.gql
 echo "MATCH (n) RETURN count(n)" | grafeo query ./mydb --stdin
 
 # With parameters
-grafeo query ./mydb "MATCH (n {name: \$name}) RETURN n" -p name=Alice
+grafeo query ./mydb "MATCH (n {name: \$name}) RETURN n" -p name=Alix
 
 # Choose query language (default: gql)
 grafeo query ./mydb "MATCH (n) RETURN n" --lang cypher
@@ -104,14 +104,14 @@ grafeo> MATCH (n:Person) RETURN n.name, n.age
 ┌──────────┬───────┐
 │ n.name   │ n.age │
 ├──────────┼───────┤
-│ "Alice"  │ 30    │
-│ "Bob"    │ 25    │
+│ "Alix"  │ 30    │
+│ "Gus"    │ 25    │
 └──────────┴───────┘
 2 rows (0.8ms)
 
 grafeo> :begin
 Transaction started.
-grafeo[tx]> INSERT (:Person {name: 'Carol', age: 45})
+grafeo[tx]> INSERT (:Person {name: 'Harm', age: 45})
 grafeo[tx]> :commit
 Transaction committed.
 ```

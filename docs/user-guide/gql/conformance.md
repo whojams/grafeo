@@ -333,7 +333,7 @@ Per the standard, minimum conformance requires:
 | GF04 | Enhanced path functions | **Supported** |
 | GF05 | Multi-character TRIM function | **Supported** |
 | GF06 | Explicit TRIM function | Supported |
-| GF10 | Advanced aggregates: general set functions | **Not yet** |
+| GF10 | Advanced aggregates: general set functions | **Supported** |
 | GF11 | Advanced aggregates: binary set functions | **Not yet** |
 | GF12 | CARDINALITY function | **Supported** |
 | GF13 | SIZE function | Supported |
@@ -353,11 +353,11 @@ Per the standard, minimum conformance requires:
 | GD04 | DELETE: simple expression support | **Supported** |
 | GG01 | Graph with open graph type | Supported |
 | GG02 | Graph with closed graph type | Supported |
-| GG03 | Graph type inline specification | **Not yet** |
-| GG04 | Graph type like a graph | **Not yet** |
+| GG03 | Graph type inline specification | **Supported** |
+| GG04 | Graph type like a graph | **Supported** |
 | GG20 | Explicit element type names | Supported |
-| GG21 | Explicit element type key label sets | **Not yet** |
-| GG22 | Element type key label set inference | **Not yet** |
+| GG21 | Explicit element type key label sets | **Supported** |
+| GG22 | Element type key label set inference | **Supported** |
 | GG24 | Relaxed structural consistency | **Not yet** |
 
 ### Session & Transaction Features

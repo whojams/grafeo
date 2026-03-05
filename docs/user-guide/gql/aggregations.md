@@ -20,6 +20,10 @@ GQL provides aggregation functions for computing summaries over query results.
 | `min()` | Minimum value |
 | `max()` | Maximum value |
 | `collect()` | Collect into list |
+| `variance()` | Sample variance (aliases: `var_samp()`) |
+| `var_pop()` | Population variance |
+| `stdev()` | Sample standard deviation (aliases: `stddev()`, `stddev_samp()`) |
+| `stdevp()` | Population standard deviation (aliases: `stddevp()`, `stddev_pop()`) |
 
 ## Count
 
@@ -98,20 +102,40 @@ WHERE friend_count > 5
 RETURN p.name, friend_count
 ```
 
+## Variance
+
+```sql
+-- Sample variance (divides by n-1)
+MATCH (p:Person)
+RETURN variance(p.age) AS age_var
+
+-- var_samp() is an alias for variance()
+MATCH (p:Person)
+RETURN var_samp(p.age)
+
+-- Population variance (divides by n)
+MATCH (p:Person)
+RETURN var_pop(p.age) AS age_var_pop
+```
+
 ## Standard Deviation
 
 ```sql
--- Sample standard deviation
+-- Sample standard deviation (sqrt of sample variance)
 MATCH (p:Person)
 RETURN stdev(p.age) AS age_stdev
 
--- stddev() is an alias
+-- stddev() and stddev_samp() are aliases
 MATCH (p:Person)
-RETURN stddev(p.age)
+RETURN stddev_samp(p.age)
 
--- Population standard deviation
+-- Population standard deviation (sqrt of population variance)
 MATCH (p:Person)
 RETURN stdevp(p.age) AS age_stdevp
+
+-- stddev_pop() is an alias for stdevp()
+MATCH (p:Person)
+RETURN stddev_pop(p.age)
 ```
 
 ## Percentiles

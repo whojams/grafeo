@@ -17,6 +17,7 @@ Full ecosystem feature profiles reworks and several graph database nice to haves
 - **Graph DDL**: `CREATE GRAPH g2 LIKE g1`, `AS COPY OF`, `CREATE GRAPH g ANY/OPEN`
 - **GQLSTATUS diagnostics**: ISO sec 23 status codes and diagnostic records on all query results
 - **Catalog procedures**: `CALL db.labels()`, `db.relationshipTypes()`, `db.propertyKeys()` with YIELD
+- **Python DataFrame bridge**: `result.to_pandas()`, `result.to_polars()`, `db.nodes_df()`, `db.edges_df()` for zero-friction data science integration
 
 ### Fixed
 

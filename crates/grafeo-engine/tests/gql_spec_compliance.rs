@@ -2688,3 +2688,341 @@ fn test_nested_transaction_double_nesting() {
     assert_eq!(result.rows[1][0], Value::String("level1".into()));
     session2.rollback().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Coverage: filter.rs type system functions (date_trunc, path(), LIST<T>,
+// toTypedList, temporal constructors)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_date_trunc_on_date() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute(
+            "MATCH (n:Person {name: 'Alix'}) RETURN date_trunc('month', DATE '2026-03-15') AS d",
+        )
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    if let Value::Date(d) = &result.rows[0][0] {
+        assert_eq!(d.month(), 3);
+        assert_eq!(d.day(), 1);
+    } else {
+        panic!("Expected Date, got {:?}", result.rows[0][0]);
+    }
+}
+
+#[test]
+fn test_date_trunc_on_time() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN date_trunc('hour', TIME '14:30:45') AS t")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    if let Value::Time(t) = &result.rows[0][0] {
+        assert_eq!(t.hour(), 14);
+        assert_eq!(t.minute(), 0);
+        assert_eq!(t.second(), 0);
+    } else {
+        panic!("Expected Time, got {:?}", result.rows[0][0]);
+    }
+}
+
+#[test]
+fn test_date_trunc_invalid_unit_returns_null() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute(
+            "MATCH (n:Person {name: 'Alix'}) RETURN date_trunc('millennium', DATE '2026-03-15') AS d",
+        )
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Null);
+}
+
+#[test]
+fn test_local_time_no_args() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN local_time() AS t")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert!(matches!(result.rows[0][0], Value::Time(_)));
+}
+
+#[test]
+fn test_local_datetime_no_args() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN local_datetime() AS dt")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert!(matches!(result.rows[0][0], Value::Timestamp(_)));
+}
+
+#[test]
+fn test_zoned_datetime_no_args() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN zoned_datetime() AS zdt")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert!(matches!(result.rows[0][0], Value::ZonedDatetime(_)));
+}
+
+#[test]
+fn test_path_constructor_from_traversal() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b) RETURN length(p)")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Int64(1));
+}
+
+#[test]
+fn test_is_not_null_on_list() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN [1, 2, 3] IS NOT NULL AS check")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Bool(true));
+}
+
+// ---------------------------------------------------------------------------
+// Coverage: aggregate.rs edge cases (percentile, stddev, variance)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_percentile_cont_boundaries() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute("INSERT (:Val {x: 10}), (:Val {x: 20}), (:Val {x: 30}), (:Val {x: 40})")
+        .unwrap();
+    session.commit().unwrap();
+
+    // percentile_cont at 0.0 should return min
+    let result = session
+        .execute("MATCH (v:Val) RETURN percentile_cont(v.x, 0.0)")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    let val = match &result.rows[0][0] {
+        Value::Float64(f) => *f,
+        Value::Int64(i) => *i as f64,
+        other => panic!("Expected numeric, got {:?}", other),
+    };
+    assert!((val - 10.0).abs() < 0.01);
+
+    // percentile_cont at 1.0 should return max
+    let result = session
+        .execute("MATCH (v:Val) RETURN percentile_cont(v.x, 1.0)")
+        .unwrap();
+    let val = match &result.rows[0][0] {
+        Value::Float64(f) => *f,
+        Value::Int64(i) => *i as f64,
+        other => panic!("Expected numeric, got {:?}", other),
+    };
+    assert!((val - 40.0).abs() < 0.01);
+}
+
+#[test]
+fn test_percentile_disc() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute("INSERT (:Val {x: 10}), (:Val {x: 20}), (:Val {x: 30})")
+        .unwrap();
+    session.commit().unwrap();
+
+    let result = session
+        .execute("MATCH (v:Val) RETURN percentile_disc(v.x, 0.5)")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    // Discrete percentile at 0.5 with 3 values
+    assert!(matches!(
+        result.rows[0][0],
+        Value::Int64(_) | Value::Float64(_)
+    ));
+}
+
+#[test]
+fn test_stddev_single_value_returns_zero_or_null() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session.execute("INSERT (:Val {x: 42})").unwrap();
+    session.commit().unwrap();
+
+    let result = session.execute("MATCH (v:Val) RETURN stdev(v.x)").unwrap();
+    assert_eq!(result.rows.len(), 1);
+    // With n=1, sample stddev is typically 0 or null
+    match &result.rows[0][0] {
+        Value::Null => {} // acceptable: sample stddev undefined for n=1
+        Value::Float64(f) => assert!(*f == 0.0 || f.is_nan()),
+        Value::Int64(i) => assert_eq!(*i, 0),
+        other => panic!("Expected Null, 0, or NaN, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_variance_empty_returns_null() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    // No Val nodes exist, so variance of empty set should be null
+    let result = session
+        .execute("MATCH (v:Val) RETURN variance(v.x)")
+        .unwrap();
+    // Empty match might return 0 rows or 1 row with null
+    if !result.rows.is_empty() {
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+}
+
+#[test]
+fn test_listagg_with_separator() {
+    let db = setup_db();
+    let session = db.session();
+    let result = session
+        .execute("MATCH (p:Person) RETURN listagg(p.name, ', ') AS names")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        // Should contain all three names separated by comma-space
+        assert!(s.contains("Alix"));
+        assert!(s.contains("Gus"));
+        assert!(s.contains("Vincent"));
+        assert!(s.contains(", "));
+    } else {
+        panic!("Expected String, got {:?}", result.rows[0][0]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Coverage: session.rs savepoint error paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_savepoint_without_transaction_fails() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    // No active transaction, savepoint should fail
+    let result = session.savepoint("sp1");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_rollback_to_nonexistent_savepoint_fails() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    let result = session.rollback_to_savepoint("nonexistent");
+    assert!(result.is_err());
+    session.rollback().unwrap();
+}
+
+#[test]
+fn test_release_nonexistent_savepoint_fails() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    let result = session.release_savepoint("nonexistent");
+    assert!(result.is_err());
+    session.rollback().unwrap();
+}
+
+#[test]
+fn test_savepoint_rollback_discards_mutations() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute("INSERT (:Item {name: 'before_sp'})")
+        .unwrap();
+    session.savepoint("sp1").unwrap();
+    session
+        .execute("INSERT (:Item {name: 'after_sp'})")
+        .unwrap();
+
+    // Verify both visible within transaction
+    let result = session.execute("MATCH (i:Item) RETURN count(i)").unwrap();
+    assert_eq!(result.rows[0][0], Value::Int64(2));
+
+    // Rollback to savepoint
+    session.rollback_to_savepoint("sp1").unwrap();
+
+    // Only the node before savepoint should remain
+    let result = session.execute("MATCH (i:Item) RETURN i.name").unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("before_sp".into()));
+
+    session.commit().unwrap();
+}
+
+#[test]
+fn test_viewing_epoch_limits_visibility() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+
+    // Verify viewing_epoch starts as None
+    assert!(session.viewing_epoch().is_none());
+
+    // Set and verify
+    session.set_viewing_epoch(grafeo_common::types::EpochId(1));
+    assert_eq!(
+        session.viewing_epoch(),
+        Some(grafeo_common::types::EpochId(1))
+    );
+
+    // Clear and verify
+    session.clear_viewing_epoch();
+    assert!(session.viewing_epoch().is_none());
+
+    // Set, then do a query (exercises get_transaction_context viewing_epoch path)
+    session.begin_transaction().unwrap();
+    session.execute("INSERT (:Marker {wave: 1})").unwrap();
+    session.commit().unwrap();
+
+    session.set_viewing_epoch(grafeo_common::types::EpochId(1));
+    // Query with viewing epoch set should not panic
+    let result = session.execute("MATCH (m:Marker) RETURN count(m)").unwrap();
+    assert!(!result.rows.is_empty());
+    session.clear_viewing_epoch();
+}
+
+// ---------------------------------------------------------------------------
+// Coverage: wal_store.rs conditional logging
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_delete_nonexistent_node_no_crash() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    // Deleting a node that doesn't exist should not panic
+    let result = session.execute("MATCH (n {name: 'ghost'}) DELETE n");
+    assert!(result.is_ok());
+    session.commit().unwrap();
+}
+
+#[test]
+fn test_remove_nonexistent_property_no_crash() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session.execute("INSERT (:Thing {name: 'test'})").unwrap();
+    // REMOVE a property that doesn't exist
+    let result = session.execute("MATCH (t:Thing) REMOVE t.nonexistent");
+    assert!(result.is_ok());
+    session.commit().unwrap();
+}

@@ -2,11 +2,19 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.16] - 2026-03-07
+## [0.5.16] - Unreleased
+
+Performance enhancements, bug fixes and rust examples
 
 ### Improved
 
 - **Cost model calibration**: recursive plan costing, statistics-aware IO estimation, actual child cardinalities for joins, multi-edge-type expand costing
+
+### Fixed
+
+- **GQL `-->` shorthand**: parser recognizes `-->` as a directed outgoing edge instead of splitting into `--` and `>`
+- **EXISTS bare patterns**: `EXISTS { (a)-[r]->(b) }` without explicit MATCH keyword now works in GQL and Cypher
+- **CASE WHEN in aggregates**: expressions like `sum(CASE WHEN ... THEN 1 ELSE 0 END)` resolve correctly in the LPG planner
 
 ## [0.5.15] - 2026-03-07
 

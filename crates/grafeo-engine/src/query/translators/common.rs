@@ -3,6 +3,7 @@
 //! Functions here are used by multiple translator modules (GQL, Cypher, etc.)
 //! to avoid duplication of identical logic.
 
+#[cfg(any(feature = "graphql", feature = "gremlin", test))]
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::query::plan::{
@@ -108,6 +109,7 @@ pub(crate) fn is_binary_set_function(func: AggregateFunction) -> bool {
 /// Capitalizes the first character of a string.
 ///
 /// Used by GraphQL translators to convert field names to type names.
+#[cfg(any(feature = "graphql", test))]
 pub(crate) fn capitalize_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -120,10 +122,12 @@ pub(crate) fn capitalize_first(s: &str) -> String {
 ///
 /// Replaces the duplicated `var_counter: AtomicU32` + `next_var()` pattern
 /// used across multiple translators.
+#[cfg(any(feature = "graphql", feature = "gremlin", test))]
 pub(crate) struct VarGen {
     counter: AtomicU32,
 }
 
+#[cfg(any(feature = "graphql", feature = "gremlin", test))]
 impl VarGen {
     /// Creates a new variable generator starting from 0.
     pub fn new() -> Self {

@@ -123,61 +123,6 @@ impl JsGrafeoDB {
         self.execute_language_impl("gql", query, params).await
     }
 
-    /// Execute a Cypher query.
-    #[cfg(feature = "cypher")]
-    #[napi(js_name = "executeCypher")]
-    pub async fn execute_cypher(
-        &self,
-        query: String,
-        params: Option<serde_json::Value>,
-    ) -> Result<QueryResult> {
-        self.execute_language_impl("cypher", query, params).await
-    }
-
-    /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
-    #[cfg(feature = "sql-pgq")]
-    #[napi(js_name = "executeSql")]
-    pub async fn execute_sql(
-        &self,
-        query: String,
-        params: Option<serde_json::Value>,
-    ) -> Result<QueryResult> {
-        self.execute_language_impl("sql", query, params).await
-    }
-
-    /// Execute a Gremlin query.
-    #[cfg(feature = "gremlin")]
-    #[napi(js_name = "executeGremlin")]
-    pub async fn execute_gremlin(
-        &self,
-        query: String,
-        params: Option<serde_json::Value>,
-    ) -> Result<QueryResult> {
-        self.execute_language_impl("gremlin", query, params).await
-    }
-
-    /// Execute a GraphQL query.
-    #[cfg(feature = "graphql")]
-    #[napi(js_name = "executeGraphql")]
-    pub async fn execute_graphql(
-        &self,
-        query: String,
-        params: Option<serde_json::Value>,
-    ) -> Result<QueryResult> {
-        self.execute_language_impl("graphql", query, params).await
-    }
-
-    /// Execute a SPARQL query against the RDF triple store.
-    #[cfg(feature = "sparql")]
-    #[napi(js_name = "executeSparql")]
-    pub async fn execute_sparql(
-        &self,
-        query: String,
-        params: Option<serde_json::Value>,
-    ) -> Result<QueryResult> {
-        self.execute_language_impl("sparql", query, params).await
-    }
-
     /// Create a node with labels and optional properties.
     #[napi(js_name = "createNode")]
     pub fn create_node(
@@ -935,6 +880,79 @@ impl JsGrafeoDB {
         })
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+}
+
+// Language-specific execute methods live in separate impl blocks so the
+// `#[napi]` macro only generates C callback symbols when the feature is active.
+
+#[cfg(feature = "cypher")]
+#[napi]
+impl JsGrafeoDB {
+    /// Execute a Cypher query.
+    #[napi(js_name = "executeCypher")]
+    pub async fn execute_cypher(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("cypher", query, params).await
+    }
+}
+
+#[cfg(feature = "sql-pgq")]
+#[napi]
+impl JsGrafeoDB {
+    /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
+    #[napi(js_name = "executeSql")]
+    pub async fn execute_sql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("sql", query, params).await
+    }
+}
+
+#[cfg(feature = "gremlin")]
+#[napi]
+impl JsGrafeoDB {
+    /// Execute a Gremlin query.
+    #[napi(js_name = "executeGremlin")]
+    pub async fn execute_gremlin(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("gremlin", query, params).await
+    }
+}
+
+#[cfg(feature = "graphql")]
+#[napi]
+impl JsGrafeoDB {
+    /// Execute a GraphQL query.
+    #[napi(js_name = "executeGraphql")]
+    pub async fn execute_graphql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("graphql", query, params).await
+    }
+}
+
+#[cfg(feature = "sparql")]
+#[napi]
+impl JsGrafeoDB {
+    /// Execute a SPARQL query against the RDF triple store.
+    #[napi(js_name = "executeSparql")]
+    pub async fn execute_sparql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("sparql", query, params).await
     }
 }
 

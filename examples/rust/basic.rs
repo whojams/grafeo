@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("All people:");
-    println!("{:<10} {:<5} {}", "Name", "Age", "City");
+    println!("{:<10} {:<5} City", "Name", "Age");
     println!("{}", "-".repeat(30));
     for row in result.iter() {
         let name = row[0].as_str().unwrap_or("?");

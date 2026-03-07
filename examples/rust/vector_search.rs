@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("\nTop 3 documents similar to 'graph' query:");
-    println!("{:<40} {}", "Title", "Distance");
+    println!("{:<40} Distance", "Title");
     println!("{}", "-".repeat(55));
     for (node_id, distance) in &results {
         let title = get_title(&db, *node_id);
@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results = db.vector_search("Document", "embedding", &query_vector, 3, None, None)?;
 
     println!("\nTop 3 documents similar to 'Rust' query:");
-    println!("{:<40} {}", "Title", "Distance");
+    println!("{:<40} Distance", "Title");
     println!("{}", "-".repeat(55));
     for (node_id, distance) in &results {
         let title = get_title(&db, *node_id);

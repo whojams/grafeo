@@ -41,30 +41,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── PageRank ──────────────────────────────────────────────────
     // Identifies the most "influential" nodes in the graph.
-    // The damping factor (0.85) and max_iterations control convergence.
-    let result = session.execute(
-        "CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})
-         YIELD node_id, score
-         RETURN node_id, score
-         ORDER BY score DESC",
-    )?;
+    // Parameters are passed as a map literal: {key: value}.
+    let result = session.execute("CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})")?;
+
+    // Collect and sort by score descending
+    let mut scores: Vec<_> = result
+        .iter()
+        .map(|row| {
+            let node_id = row[0].as_int64().unwrap_or(0);
+            let score = row[1].as_float64().unwrap_or(0.0);
+            (node_id, score)
+        })
+        .collect();
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
     println!("PageRank (most influential people):");
-    for row in result.iter() {
-        let node_id = row[0].as_int64().unwrap_or(0);
-        let score = row[1].as_float64().unwrap_or(0.0);
-        let name = get_person_name(&db, node_id);
+    for (node_id, score) in &scores {
+        let name = get_person_name(&db, *node_id);
         println!("  {:<10} {:.4}", name, score);
     }
 
     // ── Connected Components ──────────────────────────────────────
     // Finds groups of nodes that are all reachable from each other.
-    let result = session.execute(
-        "CALL grafeo.connected_components()
-         YIELD node_id, component_id
-         RETURN node_id, component_id
-         ORDER BY component_id, node_id",
-    )?;
+    let result = session.execute("CALL grafeo.connected_components()")?;
 
     println!("\nConnected Components:");
     for row in result.iter() {
@@ -76,12 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Louvain Community Detection ───────────────────────────────
     // Detects communities by optimizing modularity.
-    let result = session.execute(
-        "CALL grafeo.louvain()
-         YIELD node_id, community_id
-         RETURN node_id, community_id
-         ORDER BY community_id, node_id",
-    )?;
+    let result = session.execute("CALL grafeo.louvain()")?;
 
     println!("\nLouvain Communities:");
     for row in result.iter() {
@@ -93,22 +87,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Degree Centrality ─────────────────────────────────────────
     // Measures connectivity: in-degree, out-degree, and total.
-    let result = session.execute(
-        "CALL grafeo.degree_centrality()
-         YIELD node_id, in_degree, out_degree, total_degree
-         RETURN node_id, in_degree, out_degree, total_degree
-         ORDER BY total_degree DESC",
-    )?;
+    // Columns: node_id, in_degree, out_degree, total_degree
+    let result = session.execute("CALL grafeo.degree_centrality()")?;
+
+    // Collect and sort by total_degree descending
+    let mut degrees: Vec<_> = result
+        .iter()
+        .map(|row| {
+            let node_id = row[0].as_int64().unwrap_or(0);
+            let in_deg = row[1].as_int64().unwrap_or(0);
+            let out_deg = row[2].as_int64().unwrap_or(0);
+            let total = row[3].as_int64().unwrap_or(0);
+            (node_id, in_deg, out_deg, total)
+        })
+        .collect();
+    degrees.sort_by(|a, b| b.3.cmp(&a.3));
 
     println!("\nDegree Centrality:");
-    println!("  {:<10} {:<5} {:<6} {}", "Name", "In", "Out", "Total");
+    println!("  {:<10} {:<5} {:<6} Total", "Name", "In", "Out");
     println!("  {}", "-".repeat(30));
-    for row in result.iter() {
-        let node_id = row[0].as_int64().unwrap_or(0);
-        let in_deg = row[1].as_int64().unwrap_or(0);
-        let out_deg = row[2].as_int64().unwrap_or(0);
-        let total = row[3].as_int64().unwrap_or(0);
-        let name = get_person_name(&db, node_id);
+    for (node_id, in_deg, out_deg, total) in &degrees {
+        let name = get_person_name(&db, *node_id);
         println!("  {:<10} {:<5} {:<6} {}", name, in_deg, out_deg, total);
     }
 

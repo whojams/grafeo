@@ -26,6 +26,8 @@ pub enum Statement {
     SessionCommand(SessionCommand),
     /// EXPLAIN: returns the query plan without executing.
     Explain(Box<Statement>),
+    /// PROFILE: executes the query and returns per-operator metrics.
+    Profile(Box<Statement>),
 }
 
 /// GQL transaction isolation level (ISO/IEC 39075 Section 19).

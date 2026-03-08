@@ -345,6 +345,212 @@ impl LogicalOperator {
             | Self::CallProcedure(_) => false,
         }
     }
+
+    /// Returns references to the child operators.
+    ///
+    /// Used by [`crate::query::profile::build_profile_tree`] to walk the logical
+    /// plan tree in post-order, matching operators to profiling entries.
+    #[must_use]
+    pub fn children(&self) -> Vec<&LogicalOperator> {
+        match self {
+            // Optional single input
+            Self::NodeScan(op) => op.input.as_deref().into_iter().collect(),
+            Self::EdgeScan(op) => op.input.as_deref().into_iter().collect(),
+            Self::TripleScan(op) => op.input.as_deref().into_iter().collect(),
+            Self::VectorScan(op) => op.input.as_deref().into_iter().collect(),
+            Self::CreateNode(op) => op.input.as_deref().into_iter().collect(),
+            Self::InsertTriple(op) => op.input.as_deref().into_iter().collect(),
+            Self::DeleteTriple(op) => op.input.as_deref().into_iter().collect(),
+
+            // Single required input
+            Self::Expand(op) => vec![&*op.input],
+            Self::Filter(op) => vec![&*op.input],
+            Self::Project(op) => vec![&*op.input],
+            Self::Aggregate(op) => vec![&*op.input],
+            Self::Limit(op) => vec![&*op.input],
+            Self::Skip(op) => vec![&*op.input],
+            Self::Sort(op) => vec![&*op.input],
+            Self::Distinct(op) => vec![&*op.input],
+            Self::Return(op) => vec![&*op.input],
+            Self::Unwind(op) => vec![&*op.input],
+            Self::Bind(op) => vec![&*op.input],
+            Self::MapCollect(op) => vec![&*op.input],
+            Self::ShortestPath(op) => vec![&*op.input],
+            Self::Merge(op) => vec![&*op.input],
+            Self::MergeRelationship(op) => vec![&*op.input],
+            Self::CreateEdge(op) => vec![&*op.input],
+            Self::DeleteNode(op) => vec![&*op.input],
+            Self::DeleteEdge(op) => vec![&*op.input],
+            Self::SetProperty(op) => vec![&*op.input],
+            Self::AddLabel(op) => vec![&*op.input],
+            Self::RemoveLabel(op) => vec![&*op.input],
+            Self::HorizontalAggregate(op) => vec![&*op.input],
+            Self::VectorJoin(op) => vec![&*op.input],
+            Self::Modify(op) => vec![&*op.where_clause],
+
+            // Two children (left + right)
+            Self::Join(op) => vec![&*op.left, &*op.right],
+            Self::LeftJoin(op) => vec![&*op.left, &*op.right],
+            Self::AntiJoin(op) => vec![&*op.left, &*op.right],
+            Self::Except(op) => vec![&*op.left, &*op.right],
+            Self::Intersect(op) => vec![&*op.left, &*op.right],
+            Self::Otherwise(op) => vec![&*op.left, &*op.right],
+
+            // Two children (input + subplan)
+            Self::Apply(op) => vec![&*op.input, &*op.subplan],
+
+            // Vec children
+            Self::Union(op) => op.inputs.iter().collect(),
+            Self::MultiWayJoin(op) => op.inputs.iter().collect(),
+
+            // Leaf operators
+            Self::Empty
+            | Self::ParameterScan(_)
+            | Self::CallProcedure(_)
+            | Self::ClearGraph(_)
+            | Self::CreateGraph(_)
+            | Self::DropGraph(_)
+            | Self::LoadGraph(_)
+            | Self::CopyGraph(_)
+            | Self::MoveGraph(_)
+            | Self::AddGraph(_)
+            | Self::CreatePropertyGraph(_) => vec![],
+        }
+    }
+
+    /// Returns a compact display label for this operator, used in PROFILE output.
+    #[must_use]
+    pub fn display_label(&self) -> String {
+        match self {
+            Self::NodeScan(op) => {
+                let label = op.label.as_deref().unwrap_or("*");
+                format!("{}:{}", op.variable, label)
+            }
+            Self::EdgeScan(op) => {
+                let types = if op.edge_types.is_empty() {
+                    "*".to_string()
+                } else {
+                    op.edge_types.join("|")
+                };
+                format!("{}:{}", op.variable, types)
+            }
+            Self::Expand(op) => {
+                let types = if op.edge_types.is_empty() {
+                    "*".to_string()
+                } else {
+                    op.edge_types.join("|")
+                };
+                let dir = match op.direction {
+                    ExpandDirection::Outgoing => "->",
+                    ExpandDirection::Incoming => "<-",
+                    ExpandDirection::Both => "--",
+                };
+                format!(
+                    "({from}){dir}[:{types}]{dir}({to})",
+                    from = op.from_variable,
+                    to = op.to_variable,
+                )
+            }
+            Self::Filter(op) => {
+                let hint = match &op.pushdown_hint {
+                    Some(PushdownHint::IndexLookup { property }) => {
+                        format!(" [index: {property}]")
+                    }
+                    Some(PushdownHint::RangeScan { property }) => {
+                        format!(" [range: {property}]")
+                    }
+                    Some(PushdownHint::LabelFirst) => " [label-first]".to_string(),
+                    None => String::new(),
+                };
+                format!("{}{hint}", fmt_expr(&op.predicate))
+            }
+            Self::Project(op) => {
+                let cols: Vec<String> = op
+                    .projections
+                    .iter()
+                    .map(|p| match &p.alias {
+                        Some(alias) => alias.clone(),
+                        None => fmt_expr(&p.expression),
+                    })
+                    .collect();
+                cols.join(", ")
+            }
+            Self::Join(op) => format!("{:?}", op.join_type),
+            Self::Aggregate(op) => {
+                let groups: Vec<String> = op.group_by.iter().map(fmt_expr).collect();
+                format!("group: [{}]", groups.join(", "))
+            }
+            Self::Limit(op) => format!("{}", op.count),
+            Self::Skip(op) => format!("{}", op.count),
+            Self::Sort(op) => {
+                let keys: Vec<String> = op
+                    .keys
+                    .iter()
+                    .map(|k| {
+                        let dir = match k.order {
+                            SortOrder::Ascending => "ASC",
+                            SortOrder::Descending => "DESC",
+                        };
+                        format!("{} {dir}", fmt_expr(&k.expression))
+                    })
+                    .collect();
+                keys.join(", ")
+            }
+            Self::Distinct(_) => String::new(),
+            Self::Return(op) => {
+                let items: Vec<String> = op
+                    .items
+                    .iter()
+                    .map(|item| match &item.alias {
+                        Some(alias) => alias.clone(),
+                        None => fmt_expr(&item.expression),
+                    })
+                    .collect();
+                items.join(", ")
+            }
+            Self::Union(op) => format!("{} branches", op.inputs.len()),
+            Self::MultiWayJoin(op) => {
+                format!("{} inputs", op.inputs.len())
+            }
+            Self::LeftJoin(_) => String::new(),
+            Self::AntiJoin(_) => String::new(),
+            Self::Unwind(op) => op.variable.clone(),
+            Self::Bind(op) => op.variable.clone(),
+            Self::MapCollect(op) => op.alias.clone(),
+            Self::ShortestPath(op) => {
+                format!("{} -> {}", op.source_var, op.target_var)
+            }
+            Self::Merge(op) => op.variable.clone(),
+            Self::MergeRelationship(op) => op.variable.clone(),
+            Self::CreateNode(op) => {
+                let labels = op.labels.join(":");
+                format!("{}:{labels}", op.variable)
+            }
+            Self::CreateEdge(op) => {
+                format!(
+                    "[{}:{}]",
+                    op.variable.as_deref().unwrap_or("?"),
+                    op.edge_type
+                )
+            }
+            Self::DeleteNode(op) => op.variable.clone(),
+            Self::DeleteEdge(op) => op.variable.clone(),
+            Self::SetProperty(op) => op.variable.clone(),
+            Self::AddLabel(op) => {
+                let labels = op.labels.join(":");
+                format!("{}:{labels}", op.variable)
+            }
+            Self::RemoveLabel(op) => {
+                let labels = op.labels.join(":");
+                format!("{}:{labels}", op.variable)
+            }
+            Self::CallProcedure(op) => op.name.join("."),
+            Self::Apply(_) => String::new(),
+            Self::VectorScan(op) => op.variable.clone(),
+            Self::VectorJoin(op) => op.right_variable.clone(),
+            _ => String::new(),
+        }
+    }
 }
 
 impl LogicalOperator {

@@ -93,6 +93,11 @@ impl GqlTranslator {
                 plan.explain = true;
                 Ok(GqlTranslationResult::Plan(plan))
             }
+            ast::Statement::Profile(inner) => {
+                let mut plan = self.translate_statement(inner)?;
+                plan.profile = true;
+                Ok(GqlTranslationResult::Plan(plan))
+            }
             other => self
                 .translate_statement(other)
                 .map(GqlTranslationResult::Plan),
@@ -115,7 +120,9 @@ impl GqlTranslator {
                 QueryErrorKind::Semantic,
                 "Session commands cannot be executed as queries",
             ))),
-            ast::Statement::Explain(inner) => self.translate_statement(inner),
+            ast::Statement::Explain(inner) | ast::Statement::Profile(inner) => {
+                self.translate_statement(inner)
+            }
         }
     }
 

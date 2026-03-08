@@ -106,6 +106,11 @@ impl CypherTranslator {
                 plan.explain = true;
                 Ok(plan)
             }
+            ast::Statement::Profile(inner) => {
+                let mut plan = self.translate_statement(inner)?;
+                plan.profile = true;
+                Ok(plan)
+            }
         }
     }
 

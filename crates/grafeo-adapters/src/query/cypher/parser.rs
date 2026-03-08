@@ -60,13 +60,20 @@ impl<'a> Parser<'a> {
 
     /// Parses the query into a statement.
     pub fn parse(&mut self) -> Result<Statement> {
-        // Handle EXPLAIN prefix: wraps the entire following statement
+        // Handle EXPLAIN/PROFILE prefix: wraps the entire following statement
         if self.current.kind == TokenKind::Identifier
             && self.current.text.eq_ignore_ascii_case("EXPLAIN")
         {
             self.advance(); // consume EXPLAIN
             let inner = self.parse()?;
             return Ok(Statement::Explain(Box::new(inner)));
+        }
+        if self.current.kind == TokenKind::Identifier
+            && self.current.text.eq_ignore_ascii_case("PROFILE")
+        {
+            self.advance(); // consume PROFILE
+            let inner = self.parse()?;
+            return Ok(Statement::Profile(Box::new(inner)));
         }
 
         let stmt = self.parse_statement()?;

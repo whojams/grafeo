@@ -28,6 +28,8 @@ pub enum Statement {
     },
     /// EXPLAIN: returns the query plan without executing.
     Explain(Box<Statement>),
+    /// PROFILE: executes the query and returns per-operator metrics.
+    Profile(Box<Statement>),
 }
 
 /// A complete Cypher query.

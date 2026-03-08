@@ -47,6 +47,10 @@ pub struct RdfPlanner {
     chunk_size: usize,
     /// Optional transaction ID for transactional operations.
     transaction_id: Option<TransactionId>,
+    /// When true, each physical operator is wrapped in `ProfiledOperator`.
+    profiling: std::cell::Cell<bool>,
+    /// Profile entries collected during planning (post-order).
+    profile_entries: std::cell::RefCell<Vec<crate::query::profile::ProfileEntry>>,
 }
 
 impl RdfPlanner {
@@ -57,6 +61,8 @@ impl RdfPlanner {
             store,
             chunk_size: DEFAULT_CHUNK_SIZE,
             transaction_id: None,
+            profiling: std::cell::Cell::new(false),
+            profile_entries: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -88,9 +94,54 @@ impl RdfPlanner {
         })
     }
 
+    /// Plans a logical plan with profiling: each physical operator is wrapped
+    /// in [`ProfiledOperator`](grafeo_core::execution::ProfiledOperator) to
+    /// collect row counts and timing.
+    pub fn plan_profiled(
+        &self,
+        logical_plan: &LogicalPlan,
+    ) -> Result<(PhysicalPlan, Vec<crate::query::profile::ProfileEntry>)> {
+        self.profiling.set(true);
+        self.profile_entries.borrow_mut().clear();
+
+        let result = self.plan_operator(&logical_plan.root);
+
+        self.profiling.set(false);
+        let (operator, columns) = result?;
+        let entries = self.profile_entries.borrow_mut().drain(..).collect();
+
+        Ok((
+            PhysicalPlan {
+                operator,
+                columns,
+                adaptive_context: None,
+            },
+            entries,
+        ))
+    }
+
+    /// If profiling is enabled, wraps a planned result in `ProfiledOperator`
+    /// and records a [`ProfileEntry`](crate::query::profile::ProfileEntry).
+    fn maybe_profile(
+        &self,
+        result: Result<(Box<dyn Operator>, Vec<String>)>,
+        op: &LogicalOperator,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        if self.profiling.get() {
+            let (physical, columns) = result?;
+            let (entry, stats) =
+                crate::query::profile::ProfileEntry::new(physical.name(), op.display_label());
+            let profiled = grafeo_core::execution::ProfiledOperator::new(physical, stats);
+            self.profile_entries.borrow_mut().push(entry);
+            Ok((Box::new(profiled), columns))
+        } else {
+            result
+        }
+    }
+
     /// Plans a single logical operator.
     fn plan_operator(&self, op: &LogicalOperator) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        match op {
+        let result = match op {
             LogicalOperator::TripleScan(scan) => self.plan_triple_scan(scan),
             LogicalOperator::Filter(filter) => self.plan_filter(filter),
             LogicalOperator::Project(project) => self.plan_project(project),
@@ -114,12 +165,16 @@ impl RdfPlanner {
             LogicalOperator::MoveGraph(move_op) => self.plan_move_graph(move_op),
             LogicalOperator::AddGraph(add) => self.plan_add_graph(add),
             LogicalOperator::Bind(bind) => self.plan_bind(bind),
-            LogicalOperator::Empty => Ok((Box::new(SingleRowOperator::new()), vec![])),
+            LogicalOperator::Empty => {
+                let op: Box<dyn Operator> = Box::new(SingleRowOperator::new());
+                Ok((op, vec![]))
+            }
             _ => Err(Error::Internal(format!(
                 "Unsupported RDF operator: {:?}",
                 std::mem::discriminant(op)
             ))),
-        }
+        };
+        self.maybe_profile(result, op)
     }
 
     /// Plans a triple scan operator.

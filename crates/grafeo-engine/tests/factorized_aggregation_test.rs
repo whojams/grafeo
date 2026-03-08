@@ -2,6 +2,14 @@
 //!
 //! These tests verify that COUNT, SUM, AVG, MIN, MAX aggregates work correctly
 //! on multi-hop queries with factorized execution.
+//!
+//! Requires the `cypher` feature (uses `execute_cypher` for graph setup).
+//!
+//! ```bash
+//! cargo test -p grafeo-engine --features cypher --test factorized_aggregation_test
+//! ```
+
+#![cfg(feature = "cypher")]
 
 use grafeo_common::types::Value;
 use grafeo_engine::{Config, GrafeoDB};

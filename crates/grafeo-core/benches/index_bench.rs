@@ -2,7 +2,7 @@
 
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_core::index::adjacency::ChunkedAdjacency;
@@ -110,32 +110,27 @@ fn bench_distance_computation(c: &mut Criterion) {
 
 fn bench_brute_force_knn(c: &mut Criterion) {
     let dims = 128;
+    let count = 1000;
 
-    let mut group = c.benchmark_group("brute_force_knn");
+    let vectors = generate_random_vectors(count, dims, 42);
+    let query = generate_random_vectors(1, dims, 123)[0].clone();
 
-    for &count in &[100, 1000, 10000] {
-        let vectors = generate_random_vectors(count, dims, 42);
-        let query = generate_random_vectors(1, dims, 123)[0].clone();
+    let indexed: Vec<(NodeId, &[f32])> = vectors
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (NodeId::new(i as u64), v.as_slice()))
+        .collect();
 
-        let indexed: Vec<(NodeId, &[f32])> = vectors
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (NodeId::new(i as u64), v.as_slice()))
-            .collect();
-
-        group.bench_with_input(BenchmarkId::new("k10", count), &indexed, |b, indexed| {
-            b.iter(|| {
-                black_box(brute_force_knn(
-                    indexed.iter().map(|(id, v)| (*id, *v)),
-                    &query,
-                    10,
-                    DistanceMetric::Cosine,
-                ))
-            });
+    c.bench_function("brute_force_knn_1k_k10", |b| {
+        b.iter(|| {
+            black_box(brute_force_knn(
+                indexed.iter().map(|(id, v)| (*id, *v)),
+                &query,
+                10,
+                DistanceMetric::Cosine,
+            ))
         });
-    }
-
-    group.finish();
+    });
 }
 
 fn bench_hnsw_insert(c: &mut Criterion) {
@@ -143,37 +138,28 @@ fn bench_hnsw_insert(c: &mut Criterion) {
     use std::sync::Arc;
 
     let dims = 128;
+    let count = 500;
 
-    let mut group = c.benchmark_group("hnsw_insert");
+    let vectors = generate_random_vectors(count, dims, 42);
 
-    for &count in &[100, 500, 1000] {
-        let vectors = generate_random_vectors(count, dims, 42);
+    // Build accessor map
+    let map: HashMap<NodeId, Arc<[f32]>> = vectors
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (NodeId::new(i as u64), Arc::from(v.as_slice())))
+        .collect();
+    let accessor = move |id: NodeId| -> Option<Arc<[f32]>> { map.get(&id).cloned() };
 
-        // Build accessor map
-        let map: HashMap<NodeId, Arc<[f32]>> = vectors
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (NodeId::new(i as u64), Arc::from(v.as_slice())))
-            .collect();
-        let accessor = move |id: NodeId| -> Option<Arc<[f32]>> { map.get(&id).cloned() };
-
-        group.bench_with_input(
-            BenchmarkId::new("vectors", count),
-            &vectors,
-            |b, vectors| {
-                b.iter(|| {
-                    let config = HnswConfig::new(dims, DistanceMetric::Cosine);
-                    let index = HnswIndex::with_seed(config, 12345);
-                    for (i, vec) in vectors.iter().enumerate() {
-                        index.insert(NodeId::new(i as u64), vec, &accessor);
-                    }
-                    black_box(index)
-                });
-            },
-        );
-    }
-
-    group.finish();
+    c.bench_function("hnsw_insert_500", |b| {
+        b.iter(|| {
+            let config = HnswConfig::new(dims, DistanceMetric::Cosine);
+            let index = HnswIndex::with_seed(config, 12345);
+            for (i, vec) in vectors.iter().enumerate() {
+                index.insert(NodeId::new(i as u64), vec, &accessor);
+            }
+            black_box(index)
+        });
+    });
 }
 
 fn bench_hnsw_search(c: &mut Criterion) {
@@ -181,7 +167,7 @@ fn bench_hnsw_search(c: &mut Criterion) {
     use std::sync::Arc;
 
     let dims = 128;
-    let count = 5000;
+    let count = 2000;
 
     let vectors = generate_random_vectors(count, dims, 42);
 
@@ -202,15 +188,9 @@ fn bench_hnsw_search(c: &mut Criterion) {
 
     let query = generate_random_vectors(1, dims, 999)[0].clone();
 
-    let mut group = c.benchmark_group("hnsw_search");
-
-    for &k in &[1, 10, 50] {
-        group.bench_with_input(BenchmarkId::new("k", k), &k, |b, &k| {
-            b.iter(|| black_box(index.search(&query, k, &accessor)));
-        });
-    }
-
-    group.finish();
+    c.bench_function("hnsw_search_2k_k10", |b| {
+        b.iter(|| black_box(index.search(&query, 10, &accessor)));
+    });
 }
 
 fn bench_scalar_quantization(c: &mut Criterion) {

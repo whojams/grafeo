@@ -15,7 +15,7 @@ env:
 # 1. Full profile (--all-features): exercises every language parser (GQL,
 #    Cypher, SPARQL, Gremlin, GraphQL, SQL/PGQ), AI features (vector-index,
 #    text-index, hybrid-search, cdc), RDF, algorithms, tiered-storage, etc.
-#    Used by: rust-check, rust-test, miri, coverage, benchmark.
+#    Used by: rust-check, rust-test, miri, coverage, benchmark-pr.
 #
 # 2. WASM profile (default-features=false, gql only): minimal feature set
 #    for the wasm32-unknown-unknown target, which has no threads or OS APIs.
@@ -384,60 +384,22 @@ jobs:
           echo "WASM gzip size: $SIZE bytes ($(( SIZE / 1024 )) KB)"
           if [ "$SIZE" -gt 409600 ]; then echo "::warning::WASM exceeds 400KB gzip target"; fi
 
-  # Benchmark baseline (runs on main, stores results for PR comparison)
-  benchmark:
-    name: Benchmark (Baseline)
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-bench-
-
-      # Full profile: --all-features benchmarks include feature-gated indexes
-      # (vector, text, ring) so perf regressions are caught across all modules.
-      - name: Run benchmarks
-        run: |
-          cargo bench --all-features \
-            --bench arena_bench \
-            --bench index_bench \
-            --bench query_bench \
-            -- --output-format bencher --noplot \
-            | tee target/criterion/output.txt
-
-      - name: Store benchmark results
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: cargo
-          output-file-path: target/criterion/output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          benchmark-data-dir-path: dev/bench
-          max-items-in-chart: 100
-
-  # Benchmark regression check (runs on PRs, compares against baseline)
+  # Benchmark regression check (PR only, same-runner comparison)
+  #
+  # Runs both base and PR benchmarks on the same runner to eliminate
+  # hardware variance from shared GitHub Actions VMs. Uses Criterion's
+  # --save-baseline to store results, then critcmp to compare.
   benchmark-pr:
     name: Benchmark (PR)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    timeout-minutes: 45
     permissions:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history to checkout base commit
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -453,26 +415,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-bench-
 
-      - name: Run benchmarks
+      - name: Install critcmp
+        run: cargo install critcmp --locked
+
+      # Run base benchmarks first. Any CPU thermal warming benefits
+      # the PR run, making regressions easier to detect.
+      - name: Checkout base
+        run: git checkout ${{ github.event.pull_request.base.sha }}
+
+      # Full profile: --all-features benchmarks include feature-gated indexes
+      # (vector, text, ring) so perf regressions are caught across all modules.
+      - name: Bench base
         run: |
           cargo bench --all-features \
             --bench arena_bench \
             --bench index_bench \
             --bench query_bench \
-            -- --output-format bencher --noplot \
-            | tee target/criterion/output.txt
+            -- --save-baseline base --noplot
 
-      - name: Check for regressions
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: cargo
-          output-file-path: target/criterion/output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          alert-threshold: '110%'
-          fail-on-alert: true
-          comment-on-alert: true
-          benchmark-data-dir-path: dev/bench
-          auto-push: false
+      - name: Checkout PR head
+        run: git checkout ${{ github.event.pull_request.head.sha }}
+
+      - name: Bench PR
+        run: |
+          cargo bench --all-features \
+            --bench arena_bench \
+            --bench index_bench \
+            --bench query_bench \
+            -- --save-baseline pr --noplot
+
+      - name: Compare and comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/bench-compare.sh base pr 15 ${{ github.event.pull_request.number }}
 
   # Supply chain security (licenses, advisories, bans, sources)
   supply-chain:

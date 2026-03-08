@@ -8,6 +8,7 @@ Performance enhancements, bug fixes and Rust examples
 
 ### Added
 
+- **PROFILE statement**: `PROFILE MATCH ... RETURN ...` executes the query and returns per-operator metrics (rows, self-time, call counts) for GQL and Cypher
 - **Rust examples**: 7 runnable examples in `examples/rust/` covering the core API (basic queries, transactions, parameterized queries, vector search, graph algorithms, WAL persistence, multi-language dispatch)
 - **Plan cache invalidation**: query plan cache is automatically cleared after DDL operations (CREATE/DROP INDEX, TYPE, CONSTRAINT, etc.), with manual `clear_plan_cache()` API on `GrafeoDB` and `Session`
 - **Cache invalidation counter**: `CacheStats.invalidations` tracks how often DDL clears the plan cache

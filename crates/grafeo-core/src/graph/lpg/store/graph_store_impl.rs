@@ -271,6 +271,26 @@ impl GraphStoreMut for LpgStore {
         LpgStore::set_edge_property(self, id, key, value);
     }
 
+    fn set_node_property_versioned(
+        &self,
+        id: NodeId,
+        key: &str,
+        value: Value,
+        transaction_id: TransactionId,
+    ) {
+        LpgStore::set_node_property_versioned(self, id, key, value, transaction_id);
+    }
+
+    fn set_edge_property_versioned(
+        &self,
+        id: EdgeId,
+        key: &str,
+        value: Value,
+        transaction_id: TransactionId,
+    ) {
+        LpgStore::set_edge_property_versioned(self, id, key, value, transaction_id);
+    }
+
     fn remove_node_property(&self, id: NodeId, key: &str) -> Option<Value> {
         LpgStore::remove_node_property(self, id, key)
     }
@@ -279,12 +299,48 @@ impl GraphStoreMut for LpgStore {
         LpgStore::remove_edge_property(self, id, key)
     }
 
+    fn remove_node_property_versioned(
+        &self,
+        id: NodeId,
+        key: &str,
+        transaction_id: TransactionId,
+    ) -> Option<Value> {
+        LpgStore::remove_node_property_versioned(self, id, key, transaction_id)
+    }
+
+    fn remove_edge_property_versioned(
+        &self,
+        id: EdgeId,
+        key: &str,
+        transaction_id: TransactionId,
+    ) -> Option<Value> {
+        LpgStore::remove_edge_property_versioned(self, id, key, transaction_id)
+    }
+
     fn add_label(&self, node_id: NodeId, label: &str) -> bool {
         LpgStore::add_label(self, node_id, label)
     }
 
     fn remove_label(&self, node_id: NodeId, label: &str) -> bool {
         LpgStore::remove_label(self, node_id, label)
+    }
+
+    fn add_label_versioned(
+        &self,
+        node_id: NodeId,
+        label: &str,
+        transaction_id: TransactionId,
+    ) -> bool {
+        LpgStore::add_label_versioned(self, node_id, label, transaction_id)
+    }
+
+    fn remove_label_versioned(
+        &self,
+        node_id: NodeId,
+        label: &str,
+        transaction_id: TransactionId,
+    ) -> bool {
+        LpgStore::remove_label_versioned(self, node_id, label, transaction_id)
     }
 
     fn create_node_with_props(

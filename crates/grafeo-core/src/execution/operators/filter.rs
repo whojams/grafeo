@@ -444,13 +444,19 @@ impl ExpressionPredicate {
                 Some(Value::List(values.into()))
             }
             FilterExpression::Map(pairs) => {
-                let map: BTreeMap<PropertyKey, Value> = pairs
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        self.eval_expr(v, chunk, row)
-                            .map(|val| (PropertyKey::new(k.as_str()), val))
-                    })
-                    .collect();
+                let mut map = BTreeMap::new();
+                for (k, v) in pairs {
+                    if let Some(val) = self.eval_expr(v, chunk, row) {
+                        if k == "*" {
+                            // AllProperties marker: flatten the inner map into the result
+                            if let Value::Map(inner) = val {
+                                map.extend(inner.iter().map(|(pk, pv)| (pk.clone(), pv.clone())));
+                            }
+                        } else {
+                            map.insert(PropertyKey::new(k.as_str()), val);
+                        }
+                    }
+                }
                 Some(Value::Map(Arc::new(map)))
             }
             FilterExpression::IndexAccess { base, index } => {
@@ -481,6 +487,26 @@ impl ExpressionPredicate {
                     (Value::Map(m), Value::String(key)) => {
                         let prop_key = PropertyKey::new(key.as_str());
                         m.get(&prop_key).cloned()
+                    }
+                    (_, Value::String(key)) => {
+                        // Node/edge bracket access: n['name'] looks up a property
+                        // via the store when the base variable refers to a node or edge.
+                        if let FilterExpression::Variable(var) = base.as_ref()
+                            && let Some(&col_idx) = self.variable_columns.get(var)
+                            && let Some(col) = chunk.column(col_idx)
+                        {
+                            if let Some(node_id) = col.get_node_id(row)
+                                && let Some(node) = self.store.get_node(node_id)
+                            {
+                                return node.get_property(key.as_str()).cloned();
+                            }
+                            if let Some(edge_id) = col.get_edge_id(row)
+                                && let Some(edge) = self.store.get_edge(edge_id)
+                            {
+                                return edge.get_property(key.as_str()).cloned();
+                            }
+                        }
+                        None
                     }
                     _ => None,
                 }
@@ -751,7 +777,14 @@ impl ExpressionPredicate {
                 };
                 let mut acc = init_val;
                 for item in items {
-                    acc = self.eval_reduce_expr(expression, &acc, accumulator, item, variable)?;
+                    acc = self.eval_reduce_expr(
+                        expression,
+                        &acc,
+                        accumulator,
+                        item,
+                        variable,
+                        (chunk, row),
+                    )?;
                 }
                 Some(acc)
             }
@@ -761,6 +794,8 @@ impl ExpressionPredicate {
     /// Evaluates an expression in the context of a reduce() call.
     ///
     /// Both the accumulator variable and the iteration variable are bound.
+    /// The `ctx` parameter provides chunk context `(chunk, row)` for resolving
+    /// outer-scope variables (variables not bound by reduce).
     fn eval_reduce_expr(
         &self,
         expr: &FilterExpression,
@@ -768,7 +803,10 @@ impl ExpressionPredicate {
         acc_name: &str,
         item_val: &Value,
         item_name: &str,
+        ctx: (&DataChunk, usize),
     ) -> Option<Value> {
+        // Closure for recursive calls with all bindings
+        let recurse = |e| self.eval_reduce_expr(e, acc_val, acc_name, item_val, item_name, ctx);
         match expr {
             FilterExpression::Variable(name) if name == acc_name => Some(acc_val.clone()),
             FilterExpression::Variable(name) if name == item_name => Some(item_val.clone()),
@@ -776,8 +814,8 @@ impl ExpressionPredicate {
             FilterExpression::Binary { left, op, right } => {
                 // IN operator needs special handling: right side is a list
                 if *op == BinaryFilterOp::In {
-                    let l = self.eval_reduce_expr(left, acc_val, acc_name, item_val, item_name)?;
-                    let r = self.eval_reduce_expr(right, acc_val, acc_name, item_val, item_name)?;
+                    let l = recurse(left)?;
+                    let r = recurse(right)?;
                     return match r {
                         Value::List(items) => {
                             let found = items.iter().any(|v| Self::values_equal(&l, v));
@@ -786,12 +824,12 @@ impl ExpressionPredicate {
                         _ => None,
                     };
                 }
-                let l = self.eval_reduce_expr(left, acc_val, acc_name, item_val, item_name)?;
-                let r = self.eval_reduce_expr(right, acc_val, acc_name, item_val, item_name)?;
+                let l = recurse(left)?;
+                let r = recurse(right)?;
                 self.eval_binary_op(&l, *op, &r)
             }
             FilterExpression::Unary { op, operand } => {
-                let val = self.eval_reduce_expr(operand, acc_val, acc_name, item_val, item_name);
+                let val = recurse(operand);
                 self.eval_unary_op(*op, val)
             }
             FilterExpression::Property {
@@ -823,12 +861,7 @@ impl ExpressionPredicate {
                 }
             }
             FilterExpression::List(items) => {
-                let values: Vec<Value> = items
-                    .iter()
-                    .filter_map(|i| {
-                        self.eval_reduce_expr(i, acc_val, acc_name, item_val, item_name)
-                    })
-                    .collect();
+                let values: Vec<Value> = items.iter().filter_map(&recurse).collect();
                 Some(Value::List(values.into()))
             }
             FilterExpression::Case {
@@ -836,32 +869,62 @@ impl ExpressionPredicate {
                 when_clauses,
                 else_clause,
             } => {
-                let eval = |e| self.eval_reduce_expr(e, acc_val, acc_name, item_val, item_name);
                 if let Some(test_expr) = operand.as_deref() {
-                    let test_val = eval(test_expr)?;
+                    let test_val = recurse(test_expr)?;
                     for (when_expr, then_expr) in when_clauses {
-                        let when_val = eval(when_expr)?;
+                        let when_val = recurse(when_expr)?;
                         if Self::values_equal(&test_val, &when_val) {
-                            return eval(then_expr);
+                            return recurse(then_expr);
                         }
                     }
                 } else {
                     for (when_expr, then_expr) in when_clauses {
-                        let when_val = eval(when_expr)?;
+                        let when_val = recurse(when_expr)?;
                         if when_val.as_bool() == Some(true) {
-                            return eval(then_expr);
+                            return recurse(then_expr);
                         }
                     }
                 }
                 if let Some(else_expr) = else_clause.as_deref() {
-                    eval(else_expr)
+                    recurse(else_expr)
                 } else {
                     Some(Value::Null)
                 }
             }
-            // For expressions not referencing the local variables, delegate to
-            // the comprehension evaluator with the item binding
-            _ => self.eval_comprehension_expr(expr, item_val, item_name),
+            FilterExpression::IndexAccess { base, index } => {
+                let base_val = recurse(base)?;
+                let index_val = recurse(index)?;
+                match (&base_val, &index_val) {
+                    (Value::List(items), Value::Int64(i)) => {
+                        let idx = if *i < 0 {
+                            let len = items.len() as i64;
+                            (len + i) as usize
+                        } else {
+                            *i as usize
+                        };
+                        items.get(idx).cloned()
+                    }
+                    (Value::String(s), Value::Int64(i)) => {
+                        let idx = if *i < 0 {
+                            let len = s.len() as i64;
+                            (len + i) as usize
+                        } else {
+                            *i as usize
+                        };
+                        s.chars()
+                            .nth(idx)
+                            .map(|c| Value::String(c.to_string().into()))
+                    }
+                    (Value::Map(m), Value::String(key)) => {
+                        let prop_key = PropertyKey::new(key.as_str());
+                        m.get(&prop_key).cloned()
+                    }
+                    _ => None,
+                }
+            }
+            // For expressions not referencing the local variables, resolve
+            // from the outer scope (chunk/row)
+            _ => self.eval_expr(expr, ctx.0, ctx.1),
         }
     }
 
@@ -1269,10 +1332,19 @@ impl ExpressionPredicate {
                 if let FilterExpression::Variable(var) = &args[0] {
                     let col_idx = *self.variable_columns.get(var)?;
                     let col = chunk.column(col_idx)?;
-                    if let Some(node_id) = col.get_node_id(row) {
-                        return Some(Value::String(format!("n:{}", node_id.0).into()));
-                    } else if let Some(edge_id) = col.get_edge_id(row) {
+                    // Resolve ambiguity between node/edge by verifying against the
+                    // store. VectorData::Generic stores raw Int64 values that both
+                    // get_node_id and get_edge_id accept, so we must check which
+                    // entity actually exists.
+                    if let Some(edge_id) = col.get_edge_id(row)
+                        && self.store.get_edge(edge_id).is_some()
+                    {
                         return Some(Value::String(format!("e:{}", edge_id.0).into()));
+                    }
+                    if let Some(node_id) = col.get_node_id(row)
+                        && self.store.get_node(node_id).is_some()
+                    {
+                        return Some(Value::String(format!("n:{}", node_id.0).into()));
                     }
                 }
                 None

@@ -358,6 +358,8 @@ pub struct WithClause {
     pub is_wildcard: bool,
     /// Optional WHERE clause after WITH.
     pub where_clause: Option<WhereClause>,
+    /// LET bindings attached to this WITH clause (e.g. `WITH n LET x = n.age * 2`).
+    pub let_bindings: Vec<(String, Expression)>,
     /// Source span.
     pub span: Option<SourceSpan>,
 }
@@ -1234,6 +1236,8 @@ pub enum UnaryOp {
     Not,
     /// Unary minus.
     Neg,
+    /// Unary plus (identity).
+    Pos,
     /// IS NULL.
     IsNull,
     /// IS NOT NULL.

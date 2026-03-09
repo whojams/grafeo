@@ -32,7 +32,9 @@ use arcstr::ArcStr;
 use dashmap::DashMap;
 #[cfg(not(feature = "tiered-storage"))]
 use grafeo_common::mvcc::VersionChain;
-use grafeo_common::types::{EdgeId, EpochId, HashableValue, NodeId, PropertyKey, Value};
+use grafeo_common::types::{
+    EdgeId, EpochId, HashableValue, NodeId, PropertyKey, TransactionId, Value,
+};
 use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
 use std::cmp::Ordering as CmpOrdering;
@@ -49,6 +51,45 @@ use grafeo_common::memory::arena::AllocError;
 use grafeo_common::memory::arena::ArenaAllocator;
 #[cfg(feature = "tiered-storage")]
 use grafeo_common::mvcc::VersionIndex;
+
+/// Undo entry for a property mutation within a transaction.
+///
+/// Captures the previous state of a property so it can be restored on rollback.
+#[derive(Debug, Clone)]
+pub enum PropertyUndoEntry {
+    /// A node property was changed or added.
+    NodeProperty {
+        /// The node that was modified.
+        node_id: NodeId,
+        /// The property key that was set or removed.
+        key: PropertyKey,
+        /// The previous value, or `None` if the property did not exist before.
+        old_value: Option<Value>,
+    },
+    /// An edge property was changed or added.
+    EdgeProperty {
+        /// The edge that was modified.
+        edge_id: EdgeId,
+        /// The property key that was set or removed.
+        key: PropertyKey,
+        /// The previous value, or `None` if the property did not exist before.
+        old_value: Option<Value>,
+    },
+    /// A label was added to a node.
+    LabelAdded {
+        /// The node that had a label added.
+        node_id: NodeId,
+        /// The label string that was added.
+        label: String,
+    },
+    /// A label was removed from a node.
+    LabelRemoved {
+        /// The node that had a label removed.
+        node_id: NodeId,
+        /// The label string that was removed.
+        label: String,
+    },
+}
 
 /// Compares two values for ordering (used for range checks).
 pub(super) fn compare_values_for_range(a: &Value, b: &Value) -> Option<CmpOrdering> {
@@ -323,6 +364,15 @@ pub struct LpgStore {
     /// Zero overhead for single-graph databases (empty HashMap).
     /// Lock order: 9 (after statistics)
     named_graphs: RwLock<FxHashMap<String, Arc<LpgStore>>>,
+
+    /// Undo log for property mutations within transactions.
+    ///
+    /// Maps transaction IDs to a list of undo entries that capture the
+    /// previous property values. On rollback, entries are replayed in
+    /// reverse order to restore properties. On commit, the entries are
+    /// simply discarded.
+    /// Lock order: 10 (after named_graphs, independent of other locks)
+    property_undo_log: RwLock<FxHashMap<TransactionId, Vec<PropertyUndoEntry>>>,
 }
 
 impl LpgStore {
@@ -386,6 +436,7 @@ impl LpgStore {
             statistics: RwLock::new(Arc::new(Statistics::new())),
             needs_stats_recompute: AtomicBool::new(false),
             named_graphs: RwLock::new(FxHashMap::default()),
+            property_undo_log: RwLock::new(FxHashMap::default()),
             config,
         })
     }
@@ -469,6 +520,9 @@ impl LpgStore {
         self.edge_type_live_counts.write().clear();
         *self.statistics.write() = Arc::new(Statistics::new());
         self.needs_stats_recompute.store(false, Ordering::Release);
+
+        // Level 5: Undo log
+        self.property_undo_log.write().clear();
     }
 
     /// Returns whether backward adjacency (incoming edge index) is available.

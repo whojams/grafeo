@@ -154,15 +154,30 @@ impl Operator for ProjectOperator {
                         OperatorError::Execution("Store required for property access".to_string())
                     })?;
 
-                    // Extract property for each row
+                    // Extract property for each row.
+                    // For typed columns (VectorData::NodeId / EdgeId) there is
+                    // no ambiguity. For Generic/Any columns (e.g. after a hash
+                    // join), both get_node_id and get_edge_id can succeed on the
+                    // same Int64 value, so we verify against the store to resolve
+                    // the entity type.
                     let prop_key = PropertyKey::new(property);
                     for row in input.selected_indices() {
-                        // Try node ID, then edge ID, then map value (for UNWIND maps)
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
-                            store
+                            if let Some(prop) = store
                                 .get_node(node_id)
                                 .and_then(|node| node.get_property(property).cloned())
-                                .unwrap_or(Value::Null)
+                            {
+                                prop
+                            } else if let Some(edge_id) = input_col.get_edge_id(row) {
+                                // Node lookup failed: the ID may belong to an
+                                // edge (common with Generic columns after joins).
+                                store
+                                    .get_edge(edge_id)
+                                    .and_then(|edge| edge.get_property(property).cloned())
+                                    .unwrap_or(Value::Null)
+                            } else {
+                                Value::Null
+                            }
                         } else if let Some(edge_id) = input_col.get_edge_id(row) {
                             store
                                 .get_edge(edge_id)

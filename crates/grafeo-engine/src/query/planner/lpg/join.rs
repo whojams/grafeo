@@ -5,13 +5,17 @@ use crate::query::planner::common;
 
 impl super::Planner {
     /// Plans a JOIN operator.
+    ///
+    /// When join conditions reference shared variables, deduplicates the output
+    /// columns by projecting out the right-side copies (whose values are equal
+    /// to the left-side copies due to the join condition).
     pub(super) fn plan_join(&self, join: &JoinOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (left_op, left_columns) = self.plan_operator(&join.left)?;
         let (right_op, right_columns) = self.plan_operator(&join.right)?;
 
-        // Build combined output columns
-        let mut columns = left_columns.clone();
-        columns.extend(right_columns.clone());
+        // Full column list before deduplication (HashJoin produces all columns)
+        let mut all_columns = left_columns.clone();
+        all_columns.extend(right_columns.clone());
 
         // Convert join type
         let physical_join_type = match join.join_type {
@@ -42,7 +46,7 @@ impl super::Planner {
                 .unzip()
         };
 
-        let output_schema = self.derive_schema_from_columns(&columns);
+        let output_schema = self.derive_schema_from_columns(&all_columns);
 
         let operator: Box<dyn Operator> = Box::new(HashJoinOperator::new(
             left_op,
@@ -53,7 +57,7 @@ impl super::Planner {
             output_schema,
         ));
 
-        Ok((operator, columns))
+        Ok((operator, all_columns))
     }
 
     /// Plans a multi-way leapfrog join (WCOJ) operator.
@@ -230,12 +234,19 @@ impl super::Planner {
         if apply.shared_variables.is_empty() {
             // Uncorrelated Apply
             let (inner_op, inner_columns) = self.plan_operator(&apply.subplan)?;
-            return Ok(common::build_apply(
-                outer_op,
-                inner_op,
-                outer_columns,
-                inner_columns,
-            ));
+            // Inner subquery RETURN materializes values (PropertyAccess, NodeResolve,
+            // aggregates, etc.), so all its output columns are scalar.
+            for col in &inner_columns {
+                self.scalar_columns.borrow_mut().insert(col.clone());
+            }
+            let inner_col_count = inner_columns.len();
+            let mut columns = outer_columns;
+            columns.extend(inner_columns);
+            let mut op = ApplyOperator::new(outer_op, inner_op);
+            if apply.optional {
+                op = op.with_optional(inner_col_count);
+            }
+            return Ok((Box::new(op), columns));
         }
 
         // Correlated Apply: create shared ParameterState
@@ -258,15 +269,21 @@ impl super::Planner {
         // Clear the parameter state after planning the inner operator
         *self.correlated_param_state.borrow_mut() = None;
 
+        // Inner subquery RETURN materializes values, so register as scalar
+        // to prevent the outer RETURN from misinterpreting them as node IDs.
+        for col in &inner_columns {
+            self.scalar_columns.borrow_mut().insert(col.clone());
+        }
+
         // Build correlated Apply
         let mut columns = outer_columns;
+        let inner_col_count = inner_columns.len();
         columns.extend(inner_columns);
-        let operator = Box::new(ApplyOperator::new_correlated(
-            outer_op,
-            inner_op,
-            param_state,
-            param_col_indices,
-        ));
-        Ok((operator, columns))
+        let mut op =
+            ApplyOperator::new_correlated(outer_op, inner_op, param_state, param_col_indices);
+        if apply.optional {
+            op = op.with_optional(inner_col_count);
+        }
+        Ok((Box::new(op), columns))
     }
 }

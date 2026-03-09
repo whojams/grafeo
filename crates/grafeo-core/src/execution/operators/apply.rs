@@ -32,6 +32,14 @@ pub struct ApplyOperator {
     param_state: Option<Arc<ParameterState>>,
     /// Indices of outer columns to inject into the inner plan.
     param_col_indices: Vec<usize>,
+    /// When true, outer rows with no inner results emit NULLs (left-join).
+    optional: bool,
+    /// Number of columns the inner plan produces (needed for NULL-padding).
+    inner_column_count: usize,
+    /// EXISTS mode: Some(true) = semi-join (keep if inner has rows),
+    /// Some(false) = anti-join (keep if inner has NO rows).
+    /// Inner columns are NOT appended in EXISTS mode.
+    exists_mode: Option<bool>,
     /// Buffered outer rows waiting to be combined with inner results.
     state: ApplyState,
 }
@@ -59,6 +67,9 @@ impl ApplyOperator {
             inner,
             param_state: None,
             param_col_indices: Vec::new(),
+            optional: false,
+            inner_column_count: 0,
+            exists_mode: None,
             state: ApplyState::Init,
         }
     }
@@ -78,8 +89,28 @@ impl ApplyOperator {
             inner,
             param_state: Some(param_state),
             param_col_indices,
+            optional: false,
+            inner_column_count: 0,
+            exists_mode: None,
             state: ApplyState::Init,
         }
+    }
+
+    /// Enables optional (left-join) semantics with the given inner column count.
+    ///
+    /// When enabled, outer rows that produce no inner results will be emitted
+    /// with NULL values for the inner columns instead of being dropped.
+    pub fn with_optional(mut self, inner_column_count: usize) -> Self {
+        self.optional = true;
+        self.inner_column_count = inner_column_count;
+        self
+    }
+
+    /// Enables EXISTS mode: semi-join (`keep_matches=true`) or anti-join
+    /// (`keep_matches=false`). Inner columns are NOT appended to the output.
+    pub fn with_exists_mode(mut self, keep_matches: bool) -> Self {
+        self.exists_mode = Some(keep_matches);
+        self
     }
 
     /// Extracts all values from a single row of a DataChunk.
@@ -155,11 +186,31 @@ impl Operator for ApplyOperator {
 
                         // Reset and run inner plan for this outer row
                         self.inner.reset();
-                        while let Some(inner_chunk) = self.inner.next()? {
-                            for inner_row in inner_chunk.selected_indices() {
-                                let inner_values = Self::extract_row(&inner_chunk, inner_row);
-                                let mut combined = outer_values.clone();
-                                combined.extend(inner_values);
+
+                        // EXISTS mode: check for row existence without appending inner columns
+                        if let Some(keep_matches) = self.exists_mode {
+                            let has_results = self.inner.next()?.is_some();
+                            if has_results == keep_matches {
+                                output.push(outer_values);
+                            }
+                        } else {
+                            let pre_len = output.len();
+                            while let Some(inner_chunk) = self.inner.next()? {
+                                for inner_row in inner_chunk.selected_indices() {
+                                    let inner_values = Self::extract_row(&inner_chunk, inner_row);
+                                    let mut combined = outer_values.clone();
+                                    combined.extend(inner_values);
+                                    output.push(combined);
+                                }
+                            }
+
+                            // OPTIONAL: emit outer row with NULLs when inner produced nothing
+                            if self.optional && output.len() == pre_len {
+                                let mut combined = outer_values;
+                                combined.extend(std::iter::repeat_n(
+                                    Value::Null,
+                                    self.inner_column_count,
+                                ));
                                 output.push(combined);
                             }
                         }

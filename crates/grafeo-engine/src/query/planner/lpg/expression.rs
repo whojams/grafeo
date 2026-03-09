@@ -191,6 +191,13 @@ impl super::Planner {
                     edge_types,
                 })
             }
+            LogicalExpression::ValueSubquery(_) => {
+                // VALUE subqueries should be lifted into Apply at the translator level
+                // before reaching the expression converter. If we get here, it was not lifted.
+                Err(Error::Internal(
+                    "VALUE subquery should have been lifted into Apply by the translator".into(),
+                ))
+            }
             LogicalExpression::MapProjection { base, entries } => {
                 let physical_entries: Vec<(String, FilterExpression)> = entries
                     .iter()

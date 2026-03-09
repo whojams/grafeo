@@ -79,7 +79,7 @@ pub use leapfrog_join::LeapfrogJoinOperator;
 pub use limit::{LimitOperator, LimitSkipOperator, SkipOperator};
 pub use load_csv::LoadCsvOperator;
 pub use map_collect::MapCollectOperator;
-pub use merge::{MergeOperator, MergeRelationshipConfig, MergeRelationshipOperator};
+pub use merge::{MergeConfig, MergeOperator, MergeRelationshipConfig, MergeRelationshipOperator};
 pub use mutation::{
     AddLabelOperator, ConstraintValidator, CreateEdgeOperator, CreateNodeOperator,
     DeleteEdgeOperator, DeleteNodeOperator, PropertySource, RemoveLabelOperator,

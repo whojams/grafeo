@@ -89,6 +89,9 @@ Per the standard, minimum conformance requires:
 | ISOLATION LEVEL | Supported | READ COMMITTED, SNAPSHOT, SERIALIZABLE |
 | COMMIT | Supported | |
 | ROLLBACK | Supported | |
+| SAVEPOINT | Supported | Named savepoints within transactions |
+| ROLLBACK TO SAVEPOINT | Supported | Partial rollback to savepoint |
+| RELEASE SAVEPOINT | Supported | Discard savepoint, keep changes |
 
 ### Procedure Calling (Section 15)
 

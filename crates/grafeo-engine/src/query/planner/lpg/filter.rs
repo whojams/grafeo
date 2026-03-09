@@ -76,23 +76,31 @@ impl super::Planner {
         Ok((operator, columns))
     }
 
-    /// Extracts a complex EXISTS or NOT EXISTS pattern from a filter predicate.
+    /// Extracts an EXISTS or NOT EXISTS subquery from a filter predicate for
+    /// semi-join rewriting.
     ///
-    /// Returns `(subquery, is_negated, remaining_predicate)` only when the subplan
-    /// is too complex for the simple single-hop fast path in `extract_exists_pattern()`.
+    /// Returns `(subquery, is_negated, remaining_predicate)`.
     ///
-    /// Handles these predicate shapes:
-    /// - Top-level: `ExistsSubquery(plan)`
-    /// - Negated: `Not(ExistsSubquery(plan))`
-    /// - AND-combined: `And(ExistsSubquery(plan), other)` (either side)
-    /// - AND + negated: `And(Not(ExistsSubquery(plan)), other)` (either side)
+    /// At the top level (standalone EXISTS / NOT EXISTS), only complex patterns
+    /// that cannot use the inline fast path in `extract_exists_pattern()` are
+    /// extracted. Within AND trees, ALL EXISTS patterns are extracted regardless
+    /// of complexity: when multiple EXISTS subqueries share a WHERE clause, every
+    /// one must go through the semi-join path so the recursive handler in
+    /// `plan_exists_as_semi_join` can chain them.
+    ///
+    /// The Cypher translator builds left-leaning AND trees from sequential WHERE
+    /// predicates, so EXISTS nodes sit at the right child of AND nodes at various
+    /// depths. The recursive semi-join handler (`plan_exists_as_semi_join`) calls
+    /// this function again on each remaining predicate, peeling off one EXISTS
+    /// per level until only scalar predicates remain.
     fn extract_complex_exists<'a>(
         &self,
         predicate: &'a LogicalExpression,
-    ) -> Option<(&'a LogicalOperator, bool, Option<&'a LogicalExpression>)> {
+    ) -> Option<(&'a LogicalOperator, bool, Option<LogicalExpression>)> {
         match predicate {
             LogicalExpression::ExistsSubquery(subplan) => {
-                // Only use semi-join for complex patterns; simple ones use the fast path
+                // Top-level EXISTS: only use semi-join for complex patterns.
+                // Simple single-hop patterns use the fast path in convert_expression().
                 if self.extract_exists_pattern(subplan).is_err() {
                     Some((subplan.as_ref(), false, None))
                 } else {
@@ -118,17 +126,43 @@ impl super::Planner {
                 left,
                 right,
             } => {
-                // Check left side for EXISTS
-                if let Some((subplan, negated)) = Self::extract_exists_from_expr(left)
-                    && self.extract_exists_pattern(subplan).is_err()
-                {
-                    return Some((subplan, negated, Some(right)));
+                // In AND context, extract ANY EXISTS (simple or complex).
+                // When multiple EXISTS appear in the same WHERE, extracting the
+                // first one (even if simple) lets the recursive semi-join handler
+                // find and extract the remaining complex ones from the rest.
+                if let Some((subplan, negated)) = Self::extract_exists_from_expr(left) {
+                    return Some((subplan, negated, Some(right.as_ref().clone())));
                 }
-                // Check right side for EXISTS
-                if let Some((subplan, negated)) = Self::extract_exists_from_expr(right)
-                    && self.extract_exists_pattern(subplan).is_err()
+                if let Some((subplan, negated)) = Self::extract_exists_from_expr(right) {
+                    return Some((subplan, negated, Some(left.as_ref().clone())));
+                }
+                // Recurse into left subtree (handles left-leaning AND trees where
+                // EXISTS nodes are buried deeper than immediate children)
+                if let Some((subplan, negated, inner_remaining)) = self.extract_complex_exists(left)
                 {
-                    return Some((subplan, negated, Some(left)));
+                    let remaining = match inner_remaining {
+                        Some(inner) => LogicalExpression::Binary {
+                            left: Box::new(inner),
+                            op: BinaryOp::And,
+                            right: right.clone(),
+                        },
+                        None => right.as_ref().clone(),
+                    };
+                    return Some((subplan, negated, Some(remaining)));
+                }
+                // Recurse into right subtree
+                if let Some((subplan, negated, inner_remaining)) =
+                    self.extract_complex_exists(right)
+                {
+                    let remaining = match inner_remaining {
+                        Some(inner) => LogicalExpression::Binary {
+                            left: left.clone(),
+                            op: BinaryOp::And,
+                            right: Box::new(inner),
+                        },
+                        None => left.as_ref().clone(),
+                    };
+                    return Some((subplan, negated, Some(remaining)));
                 }
                 None
             }
@@ -160,13 +194,28 @@ impl super::Planner {
     /// The inner subquery is planned as a full operator tree via `plan_operator()`.
     /// Variables shared between the outer input and inner subquery become equi-join
     /// keys. Uses `HashJoinOperator` for efficient O(N + M) evaluation.
+    ///
+    /// When the inner subquery contains a `ParameterScan` (indicating correlated
+    /// variable references from the outer scope), a correlated `ApplyOperator`
+    /// with EXISTS mode is used instead of a hash-based semi-join.
     fn plan_exists_as_semi_join(
         &self,
         outer_input: &LogicalOperator,
         subquery: &LogicalOperator,
         is_negated: bool,
-        remaining_predicate: Option<&LogicalExpression>,
+        remaining_predicate: Option<LogicalExpression>,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        // Detect correlated subquery (contains ParameterScan from translator)
+        if let Some(param_vars) = Self::extract_parameter_scan_vars(subquery) {
+            return self.plan_correlated_exists(
+                outer_input,
+                subquery,
+                &param_vars,
+                is_negated,
+                remaining_predicate,
+            );
+        }
+
         let (left_op, left_columns) = self.plan_operator(outer_input)?;
         let (right_op, right_columns) = self.plan_operator(subquery)?;
 
@@ -200,8 +249,182 @@ impl super::Planner {
             output_schema,
         ));
 
-        // If there's a remaining predicate (from AND splitting), wrap with a filter
-        if let Some(remaining) = remaining_predicate {
+        // If there's a remaining predicate (from AND splitting), check if it
+        // contains more EXISTS subqueries that need semi-join rewriting.
+        if let Some(ref remaining) = remaining_predicate {
+            // Recursively handle nested EXISTS in the remaining predicate
+            if let Some((nested_sub, nested_neg, nested_rest)) =
+                self.extract_complex_exists(remaining)
+            {
+                return self.plan_exists_as_semi_join_with_input(
+                    join_op,
+                    &output_columns,
+                    nested_sub,
+                    nested_neg,
+                    nested_rest,
+                );
+            }
+
+            let variable_columns: HashMap<String, usize> = output_columns
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect();
+            let filter_expr = self.convert_expression(remaining)?;
+            let predicate = ExpressionPredicate::new(
+                filter_expr,
+                variable_columns,
+                Arc::clone(&self.store) as Arc<dyn GraphStore>,
+            );
+            let filter_op = Box::new(FilterOperator::new(join_op, Box::new(predicate)));
+            return Ok((filter_op, output_columns));
+        }
+
+        Ok((join_op, output_columns))
+    }
+
+    /// Extracts `ParameterScan` variable names from a logical plan, if present.
+    ///
+    /// Returns `Some(vars)` when the plan contains a `ParameterScan` node
+    /// (indicating a correlated subquery from the translator).
+    fn extract_parameter_scan_vars(plan: &LogicalOperator) -> Option<Vec<String>> {
+        match plan {
+            LogicalOperator::ParameterScan(ps) => Some(ps.columns.clone()),
+            LogicalOperator::Filter(f) => Self::extract_parameter_scan_vars(&f.input),
+            LogicalOperator::Join(j) => Self::extract_parameter_scan_vars(&j.left)
+                .or_else(|| Self::extract_parameter_scan_vars(&j.right)),
+            LogicalOperator::NodeScan(s) => s
+                .input
+                .as_ref()
+                .and_then(|i| Self::extract_parameter_scan_vars(i)),
+            LogicalOperator::Expand(e) => Self::extract_parameter_scan_vars(&e.input),
+            _ => None,
+        }
+    }
+
+    /// Plans a correlated EXISTS/NOT EXISTS using `ApplyOperator` with EXISTS mode.
+    ///
+    /// The inner subquery contains a `ParameterScan` for outer variable references.
+    /// For each outer row, the inner subquery is executed with the outer values
+    /// injected via `ParameterState`. Semi-join keeps rows where inner has results,
+    /// anti-join keeps rows where inner has no results.
+    fn plan_correlated_exists(
+        &self,
+        outer_input: &LogicalOperator,
+        subquery: &LogicalOperator,
+        param_vars: &[String],
+        is_negated: bool,
+        remaining_predicate: Option<LogicalExpression>,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (left_op, left_columns) = self.plan_operator(outer_input)?;
+
+        // Set up ParameterState for correlated variables
+        let param_state = std::sync::Arc::new(
+            grafeo_core::execution::operators::ParameterState::new(param_vars.to_vec()),
+        );
+        let param_col_indices: Vec<usize> = param_vars
+            .iter()
+            .map(|var| left_columns.iter().position(|c| c == var).unwrap_or(0))
+            .collect();
+
+        // Plan inner subquery with correlated context
+        *self.correlated_param_state.borrow_mut() = Some(std::sync::Arc::clone(&param_state));
+        let (inner_op, _inner_columns) = self.plan_operator(subquery)?;
+        *self.correlated_param_state.borrow_mut() = None;
+
+        // Create Apply with EXISTS mode (semi or anti join)
+        let op = ApplyOperator::new_correlated(left_op, inner_op, param_state, param_col_indices)
+            .with_exists_mode(!is_negated);
+
+        let output_columns = left_columns;
+        let mut result: Box<dyn Operator> = Box::new(op);
+
+        // Handle remaining predicate (from AND splitting)
+        if let Some(ref remaining) = remaining_predicate {
+            if let Some((nested_sub, nested_neg, nested_rest)) =
+                self.extract_complex_exists(remaining)
+            {
+                return self.plan_exists_as_semi_join_with_input(
+                    result,
+                    &output_columns,
+                    nested_sub,
+                    nested_neg,
+                    nested_rest,
+                );
+            }
+
+            let variable_columns: HashMap<String, usize> = output_columns
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect();
+            let filter_expr = self.convert_expression(remaining)?;
+            let predicate = ExpressionPredicate::new(
+                filter_expr,
+                variable_columns,
+                Arc::clone(&self.store) as Arc<dyn GraphStore>,
+            );
+            result = Box::new(FilterOperator::new(result, Box::new(predicate)));
+        }
+
+        Ok((result, output_columns))
+    }
+
+    /// Plans an EXISTS/NOT EXISTS semi-join with an already-planned outer input.
+    ///
+    /// Used when the remaining predicate from a prior semi-join contains additional
+    /// EXISTS subqueries that also need semi-join rewriting (nested NOT EXISTS).
+    fn plan_exists_as_semi_join_with_input(
+        &self,
+        left_op: Box<dyn Operator>,
+        left_columns: &[String],
+        subquery: &LogicalOperator,
+        is_negated: bool,
+        remaining_predicate: Option<LogicalExpression>,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (right_op, right_columns) = self.plan_operator(subquery)?;
+
+        let output_columns = left_columns.to_vec();
+
+        let mut probe_keys = Vec::new();
+        let mut build_keys = Vec::new();
+        for (right_idx, right_col) in right_columns.iter().enumerate() {
+            if let Some(left_idx) = left_columns.iter().position(|c| c == right_col) {
+                probe_keys.push(left_idx);
+                build_keys.push(right_idx);
+            }
+        }
+
+        let output_schema = self.derive_schema_from_columns(&output_columns);
+        let join_type = if is_negated {
+            PhysicalJoinType::Anti
+        } else {
+            PhysicalJoinType::Semi
+        };
+
+        let join_op: Box<dyn Operator> = Box::new(HashJoinOperator::new(
+            left_op,
+            right_op,
+            probe_keys,
+            build_keys,
+            join_type,
+            output_schema,
+        ));
+
+        // Recursively handle any further EXISTS in the remaining predicate
+        if let Some(ref remaining) = remaining_predicate {
+            if let Some((nested_sub, nested_neg, nested_rest)) =
+                self.extract_complex_exists(remaining)
+            {
+                return self.plan_exists_as_semi_join_with_input(
+                    join_op,
+                    &output_columns,
+                    nested_sub,
+                    nested_neg,
+                    nested_rest,
+                );
+            }
+
             let variable_columns: HashMap<String, usize> = output_columns
                 .iter()
                 .enumerate()

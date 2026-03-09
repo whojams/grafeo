@@ -1214,6 +1214,10 @@ pub struct ProjectOp {
     pub projections: Vec<Projection>,
     /// Input operator.
     pub input: Box<LogicalOperator>,
+    /// When true, all input columns are passed through and the explicit
+    /// projections are appended as additional output columns. Used by GQL
+    /// LET clauses which add bindings without replacing the existing scope.
+    pub pass_through_input: bool,
 }
 
 /// A single projection (column selection or computation).
@@ -1457,6 +1461,9 @@ pub struct ApplyOp {
     /// Variables imported from the outer scope into the inner plan.
     /// When non-empty, the planner injects these via `ParameterState`.
     pub shared_variables: Vec<String>,
+    /// When true, uses left-join semantics: outer rows with no matching inner
+    /// rows are emitted with NULLs for the inner columns (OPTIONAL CALL).
+    pub optional: bool,
 }
 
 /// Parameter scan: leaf operator for correlated subquery inner plans.
@@ -2056,6 +2063,9 @@ pub enum LogicalExpression {
 
     /// COUNT subquery.
     CountSubquery(Box<LogicalOperator>),
+
+    /// VALUE subquery: returns scalar value from first row of inner query.
+    ValueSubquery(Box<LogicalOperator>),
 
     /// Map projection: `node { .prop1, .prop2, key: expr, .* }`.
     MapProjection {

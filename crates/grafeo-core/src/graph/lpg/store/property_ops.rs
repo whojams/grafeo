@@ -1,7 +1,8 @@
 //! Property operations for the LPG store.
 
 use super::LpgStore;
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
+use super::PropertyUndoEntry;
+use grafeo_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
 
 impl LpgStore {
@@ -218,5 +219,242 @@ impl LpgStore {
         keys: &[PropertyKey],
     ) -> Vec<FxHashMap<PropertyKey, Value>> {
         self.edge_properties.get_selective_batch(ids, keys)
+    }
+
+    // === Versioned Property Operations (with undo log) ===
+
+    /// Sets a node property within a transaction, recording the previous value
+    /// in the undo log so it can be restored on rollback.
+    pub fn set_node_property_versioned(
+        &self,
+        id: NodeId,
+        key: &str,
+        value: Value,
+        transaction_id: TransactionId,
+    ) {
+        let prop_key: PropertyKey = key.into();
+
+        // Capture the current value before overwriting
+        let old_value = self.node_properties.get(id, &prop_key);
+
+        // Record in undo log
+        self.property_undo_log
+            .write()
+            .entry(transaction_id)
+            .or_default()
+            .push(PropertyUndoEntry::NodeProperty {
+                node_id: id,
+                key: prop_key,
+                old_value,
+            });
+
+        // Delegate to the normal (unversioned) set
+        self.set_node_property(id, key, value);
+    }
+
+    /// Sets an edge property within a transaction, recording the previous value
+    /// in the undo log so it can be restored on rollback.
+    pub fn set_edge_property_versioned(
+        &self,
+        id: EdgeId,
+        key: &str,
+        value: Value,
+        transaction_id: TransactionId,
+    ) {
+        let prop_key: PropertyKey = key.into();
+
+        // Capture the current value before overwriting
+        let old_value = self.edge_properties.get(id, &prop_key);
+
+        // Record in undo log
+        self.property_undo_log
+            .write()
+            .entry(transaction_id)
+            .or_default()
+            .push(PropertyUndoEntry::EdgeProperty {
+                edge_id: id,
+                key: prop_key,
+                old_value,
+            });
+
+        // Delegate to the normal (unversioned) set
+        self.set_edge_property(id, key, value);
+    }
+
+    /// Removes a node property within a transaction, recording the previous value
+    /// in the undo log so it can be restored on rollback.
+    pub fn remove_node_property_versioned(
+        &self,
+        id: NodeId,
+        key: &str,
+        transaction_id: TransactionId,
+    ) -> Option<Value> {
+        let prop_key: PropertyKey = key.into();
+
+        // Capture the current value before removing
+        let old_value = self.node_properties.get(id, &prop_key);
+
+        // Only record if the property actually exists
+        if old_value.is_some() {
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(PropertyUndoEntry::NodeProperty {
+                    node_id: id,
+                    key: prop_key,
+                    old_value: old_value.clone(),
+                });
+        }
+
+        // Delegate to the normal (unversioned) remove
+        self.remove_node_property(id, key)
+    }
+
+    /// Removes an edge property within a transaction, recording the previous value
+    /// in the undo log so it can be restored on rollback.
+    pub fn remove_edge_property_versioned(
+        &self,
+        id: EdgeId,
+        key: &str,
+        transaction_id: TransactionId,
+    ) -> Option<Value> {
+        let prop_key: PropertyKey = key.into();
+
+        // Capture the current value before removing
+        let old_value = self.edge_properties.get(id, &prop_key);
+
+        // Only record if the property actually exists
+        if old_value.is_some() {
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(PropertyUndoEntry::EdgeProperty {
+                    edge_id: id,
+                    key: prop_key,
+                    old_value: old_value.clone(),
+                });
+        }
+
+        // Delegate to the normal (unversioned) remove
+        self.remove_edge_property(id, key)
+    }
+
+    /// Replays the undo log for a transaction in reverse order, restoring
+    /// all property values to their pre-transaction state.
+    ///
+    /// Called during rollback.
+    pub fn rollback_transaction_properties(&self, transaction_id: TransactionId) {
+        let entries = self.property_undo_log.write().remove(&transaction_id);
+        if let Some(entries) = entries {
+            // Replay in reverse order: latest change first
+            for entry in entries.into_iter().rev() {
+                match entry {
+                    PropertyUndoEntry::NodeProperty {
+                        node_id,
+                        key,
+                        old_value,
+                    } => {
+                        if let Some(value) = old_value {
+                            // Restore the old value (bypass undo log, write directly)
+                            self.set_node_property(node_id, key.as_str(), value);
+                        } else {
+                            // Property did not exist before: remove it
+                            self.remove_node_property(node_id, key.as_str());
+                        }
+                    }
+                    PropertyUndoEntry::EdgeProperty {
+                        edge_id,
+                        key,
+                        old_value,
+                    } => {
+                        if let Some(value) = old_value {
+                            self.set_edge_property(edge_id, key.as_str(), value);
+                        } else {
+                            self.remove_edge_property(edge_id, key.as_str());
+                        }
+                    }
+                    PropertyUndoEntry::LabelAdded { node_id, label } => {
+                        // Label was added during the transaction: remove it
+                        self.remove_label(node_id, &label);
+                    }
+                    PropertyUndoEntry::LabelRemoved { node_id, label } => {
+                        // Label was removed during the transaction: add it back
+                        self.add_label(node_id, &label);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Discards the undo log entries for a committed transaction.
+    ///
+    /// Called during commit: properties are already written, so just
+    /// clean up the log.
+    pub fn commit_transaction_properties(&self, transaction_id: TransactionId) {
+        self.property_undo_log.write().remove(&transaction_id);
+    }
+
+    /// Returns the current number of undo log entries for a transaction.
+    ///
+    /// Used by savepoints to record the position so that partial rollback
+    /// can replay only entries added after the savepoint.
+    #[must_use]
+    pub fn property_undo_log_position(&self, transaction_id: TransactionId) -> usize {
+        self.property_undo_log
+            .read()
+            .get(&transaction_id)
+            .map_or(0, Vec::len)
+    }
+
+    /// Rolls back property mutations recorded after position `since` in the undo log.
+    ///
+    /// Replays entries from `since..end` in reverse order, then truncates the
+    /// log to `since`. Used by savepoint rollback.
+    pub fn rollback_transaction_properties_to(&self, transaction_id: TransactionId, since: usize) {
+        let mut log = self.property_undo_log.write();
+        if let Some(entries) = log.get_mut(&transaction_id)
+            && since < entries.len()
+        {
+            // Take entries after the savepoint position
+            let to_undo: Vec<PropertyUndoEntry> = entries.drain(since..).collect();
+            // Drop the lock before replaying to avoid deadlock
+            // (rollback methods need to acquire other locks)
+            drop(log);
+            // Replay in reverse order
+            for entry in to_undo.into_iter().rev() {
+                match entry {
+                    PropertyUndoEntry::NodeProperty {
+                        node_id,
+                        key,
+                        old_value,
+                    } => {
+                        if let Some(value) = old_value {
+                            self.set_node_property(node_id, key.as_str(), value);
+                        } else {
+                            self.remove_node_property(node_id, key.as_str());
+                        }
+                    }
+                    PropertyUndoEntry::EdgeProperty {
+                        edge_id,
+                        key,
+                        old_value,
+                    } => {
+                        if let Some(value) = old_value {
+                            self.set_edge_property(edge_id, key.as_str(), value);
+                        } else {
+                            self.remove_edge_property(edge_id, key.as_str());
+                        }
+                    }
+                    PropertyUndoEntry::LabelAdded { node_id, label } => {
+                        self.remove_label(node_id, &label);
+                    }
+                    PropertyUndoEntry::LabelRemoved { node_id, label } => {
+                        self.add_label(node_id, &label);
+                    }
+                }
+            }
+        }
     }
 }

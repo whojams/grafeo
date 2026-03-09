@@ -264,8 +264,10 @@ pub struct WhereClause {
 pub struct WithClause {
     /// Whether DISTINCT is specified.
     pub distinct: bool,
-    /// Projection items.
+    /// Projection items (empty when `is_wildcard` is true).
     pub items: Vec<ProjectionItem>,
+    /// Whether this is `WITH *` (pass all variables through).
+    pub is_wildcard: bool,
     /// Optional WHERE filter.
     pub where_clause: Option<Box<WhereClause>>,
     /// Source span.

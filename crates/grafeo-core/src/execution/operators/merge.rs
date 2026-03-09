@@ -8,81 +8,109 @@
 use super::{Operator, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
 use crate::graph::GraphStoreMut;
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, PropertyKey, Value};
+use grafeo_common::types::{
+    EdgeId, EpochId, LogicalType, NodeId, PropertyKey, TransactionId, Value,
+};
 use std::sync::Arc;
+
+/// Configuration for a node merge operation.
+pub struct MergeConfig {
+    /// Variable name for the merged node.
+    pub variable: String,
+    /// Labels to match/create.
+    pub labels: Vec<String>,
+    /// Properties that must match (also used for creation).
+    pub match_properties: Vec<(String, Value)>,
+    /// Properties to set on CREATE.
+    pub on_create_properties: Vec<(String, Value)>,
+    /// Properties to set on MATCH.
+    pub on_match_properties: Vec<(String, Value)>,
+    /// Output schema (input columns + node column).
+    pub output_schema: Vec<LogicalType>,
+    /// Column index where the merged node ID is placed.
+    pub output_column: usize,
+}
 
 /// Merge operator for MERGE clause.
 ///
 /// Tries to match a node with the given labels and properties.
 /// If found, returns the existing node. If not found, creates a new node.
+///
+/// When an input operator is provided (chained MERGE), input rows are
+/// passed through with the merged node ID appended as an additional column.
 pub struct MergeOperator {
     /// The graph store.
     store: Arc<dyn GraphStoreMut>,
-    /// Variable name for the merged node.
-    variable: String,
-    /// Labels to match/create.
-    labels: Vec<String>,
-    /// Properties that must match (also used for creation).
-    match_properties: Vec<(String, Value)>,
-    /// Properties to set on CREATE.
-    on_create_properties: Vec<(String, Value)>,
-    /// Properties to set on MATCH.
-    on_match_properties: Vec<(String, Value)>,
-    /// Whether we've already executed.
+    /// Optional input operator (for chained MERGE patterns).
+    input: Option<Box<dyn Operator>>,
+    /// Merge configuration.
+    config: MergeConfig,
+    /// Whether we've already executed (standalone mode only).
     executed: bool,
+    /// Epoch for MVCC versioning.
+    viewing_epoch: Option<EpochId>,
+    /// Transaction ID for undo log tracking.
+    transaction_id: Option<TransactionId>,
 }
 
 impl MergeOperator {
     /// Creates a new merge operator.
     pub fn new(
         store: Arc<dyn GraphStoreMut>,
-        variable: String,
-        labels: Vec<String>,
-        match_properties: Vec<(String, Value)>,
-        on_create_properties: Vec<(String, Value)>,
-        on_match_properties: Vec<(String, Value)>,
+        input: Option<Box<dyn Operator>>,
+        config: MergeConfig,
     ) -> Self {
         Self {
             store,
-            variable,
-            labels,
-            match_properties,
-            on_create_properties,
-            on_match_properties,
+            input,
+            config,
             executed: false,
+            viewing_epoch: None,
+            transaction_id: None,
         }
     }
 
     /// Returns the variable name for the merged node.
     #[must_use]
     pub fn variable(&self) -> &str {
-        &self.variable
+        &self.config.variable
+    }
+
+    /// Sets the transaction context for versioned mutations.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
+        self
     }
 
     /// Tries to find a matching node.
     fn find_matching_node(&self) -> Option<NodeId> {
-        // Get all nodes with the first label (or all nodes if no labels)
-        let candidates: Vec<NodeId> = if let Some(first_label) = self.labels.first() {
+        let candidates: Vec<NodeId> = if let Some(first_label) = self.config.labels.first() {
             self.store.nodes_by_label(first_label)
         } else {
             self.store.node_ids()
         };
 
-        // Filter by all labels and properties
         for node_id in candidates {
             if let Some(node) = self.store.get_node(node_id) {
-                // Check all labels
-                let has_all_labels = self.labels.iter().all(|label| node.has_label(label));
+                let has_all_labels = self.config.labels.iter().all(|label| node.has_label(label));
                 if !has_all_labels {
                     continue;
                 }
 
-                // Check all match properties
-                let has_all_props = self.match_properties.iter().all(|(key, expected_value)| {
-                    node.properties
-                        .get(&PropertyKey::new(key.as_str()))
-                        .is_some_and(|v| v == expected_value)
-                });
+                let has_all_props =
+                    self.config
+                        .match_properties
+                        .iter()
+                        .all(|(key, expected_value)| {
+                            node.properties
+                                .get(&PropertyKey::new(key.as_str()))
+                                .is_some_and(|v| v == expected_value)
+                        });
 
                 if has_all_props {
                     return Some(node_id);
@@ -95,16 +123,14 @@ impl MergeOperator {
 
     /// Creates a new node with the specified labels and properties.
     fn create_node(&self) -> NodeId {
-        // Combine match properties with on_create properties
         let mut all_props: Vec<(PropertyKey, Value)> = self
+            .config
             .match_properties
             .iter()
             .map(|(k, v)| (PropertyKey::new(k.as_str()), v.clone()))
             .collect();
 
-        // Add on_create properties (may override match properties)
-        for (k, v) in &self.on_create_properties {
-            // Check if property already exists, if so update it
+        for (k, v) in &self.config.on_create_properties {
             if let Some(existing) = all_props.iter_mut().find(|(key, _)| key.as_str() == k) {
                 existing.1 = v.clone();
             } else {
@@ -112,53 +138,95 @@ impl MergeOperator {
             }
         }
 
-        let labels: Vec<&str> = self.labels.iter().map(String::as_str).collect();
+        let labels: Vec<&str> = self.config.labels.iter().map(String::as_str).collect();
         self.store.create_node_with_props(&labels, &all_props)
+    }
+
+    /// Finds or creates a matching node, applying ON MATCH/ON CREATE as appropriate.
+    fn merge_node(&self) -> NodeId {
+        if let Some(existing_id) = self.find_matching_node() {
+            self.apply_on_match(existing_id);
+            existing_id
+        } else {
+            self.create_node()
+        }
     }
 
     /// Applies ON MATCH properties to an existing node.
     fn apply_on_match(&self, node_id: NodeId) {
-        for (key, value) in &self.on_match_properties {
-            self.store
-                .set_node_property(node_id, key.as_str(), value.clone());
+        for (key, value) in &self.config.on_match_properties {
+            if let Some(tid) = self.transaction_id {
+                self.store
+                    .set_node_property_versioned(node_id, key.as_str(), value.clone(), tid);
+            } else {
+                self.store
+                    .set_node_property(node_id, key.as_str(), value.clone());
+            }
         }
     }
 }
 
 impl Operator for MergeOperator {
     fn next(&mut self) -> OperatorResult {
+        // When we have an input operator, pass through input rows with the
+        // merged node ID appended (used for chained inline MERGE patterns).
+        if let Some(ref mut input) = self.input {
+            if let Some(chunk) = input.next()? {
+                // Merge the node (once, same node for all input rows)
+                let node_id = self.merge_node();
+
+                let mut builder =
+                    DataChunkBuilder::with_capacity(&self.config.output_schema, chunk.row_count());
+
+                for row in chunk.selected_indices() {
+                    // Copy input columns to output
+                    for col_idx in 0..chunk.column_count() {
+                        if let (Some(src), Some(dst)) =
+                            (chunk.column(col_idx), builder.column_mut(col_idx))
+                        {
+                            if let Some(val) = src.get_value(row) {
+                                dst.push_value(val);
+                            } else {
+                                dst.push_value(Value::Null);
+                            }
+                        }
+                    }
+
+                    // Append the merged node ID
+                    if let Some(dst) = builder.column_mut(self.config.output_column) {
+                        dst.push_node_id(node_id);
+                    }
+
+                    builder.advance_row();
+                }
+
+                return Ok(Some(builder.finish()));
+            }
+            return Ok(None);
+        }
+
+        // Standalone mode (no input operator)
         if self.executed {
             return Ok(None);
         }
         self.executed = true;
 
-        // Try to find matching node
-        let (node_id, was_created) = if let Some(existing_id) = self.find_matching_node() {
-            // Node exists - apply ON MATCH properties
-            self.apply_on_match(existing_id);
-            (existing_id, false)
-        } else {
-            // Node doesn't exist - create it
-            let new_id = self.create_node();
-            (new_id, true)
-        };
+        let node_id = self.merge_node();
 
-        // Build output chunk with the node ID
-        let mut builder = DataChunkBuilder::new(&[LogicalType::Node]);
-        builder
-            .column_mut(0)
-            .expect("column 0 exists: builder created with single-column schema")
-            .push_node_id(node_id);
+        let mut builder = DataChunkBuilder::new(&self.config.output_schema);
+        if let Some(dst) = builder.column_mut(self.config.output_column) {
+            dst.push_node_id(node_id);
+        }
         builder.advance_row();
-
-        // Log for debugging (in real code, this would be removed)
-        let _ = was_created; // Suppress unused variable warning
 
         Ok(Some(builder.finish()))
     }
 
     fn reset(&mut self) {
         self.executed = false;
+        if let Some(ref mut input) = self.input {
+            input.reset();
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -199,6 +267,10 @@ pub struct MergeRelationshipOperator {
     input: Box<dyn Operator>,
     /// Merge configuration.
     config: MergeRelationshipConfig,
+    /// Epoch for MVCC versioning.
+    viewing_epoch: Option<EpochId>,
+    /// Transaction ID for undo log tracking.
+    transaction_id: Option<TransactionId>,
 }
 
 impl MergeRelationshipOperator {
@@ -212,7 +284,20 @@ impl MergeRelationshipOperator {
             store,
             input,
             config,
+            viewing_epoch: None,
+            transaction_id: None,
         }
+    }
+
+    /// Sets the transaction context for versioned mutations.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
+        self
     }
 
     /// Tries to find a matching relationship between source and target.
@@ -267,8 +352,13 @@ impl MergeRelationshipOperator {
     /// Applies ON MATCH properties to an existing edge.
     fn apply_on_match(&self, edge_id: EdgeId) {
         for (key, value) in &self.config.on_match_properties {
-            self.store
-                .set_edge_property(edge_id, key.as_str(), value.clone());
+            if let Some(tid) = self.transaction_id {
+                self.store
+                    .set_edge_property_versioned(edge_id, key.as_str(), value.clone(), tid);
+            } else {
+                self.store
+                    .set_edge_property(edge_id, key.as_str(), value.clone());
+            }
         }
     }
 }
@@ -349,11 +439,16 @@ mod tests {
         // MERGE should create a new node since none exists
         let mut merge = MergeOperator::new(
             Arc::clone(&store),
-            "n".to_string(),
-            vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Alix".into()))],
-            vec![], // no on_create
-            vec![], // no on_match
+            None,
+            MergeConfig {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                match_properties: vec![("name".to_string(), Value::String("Alix".into()))],
+                on_create_properties: vec![],
+                on_match_properties: vec![],
+                output_schema: vec![LogicalType::Node],
+                output_column: 0,
+            },
         );
 
         let result = merge.next().unwrap();
@@ -384,11 +479,16 @@ mod tests {
         // MERGE should find the existing node
         let mut merge = MergeOperator::new(
             Arc::clone(&store),
-            "n".to_string(),
-            vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Gus".into()))],
-            vec![], // no on_create
-            vec![], // no on_match
+            None,
+            MergeConfig {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                match_properties: vec![("name".to_string(), Value::String("Gus".into()))],
+                on_create_properties: vec![],
+                on_match_properties: vec![],
+                output_schema: vec![LogicalType::Node],
+                output_column: 0,
+            },
         );
 
         let result = merge.next().unwrap();
@@ -406,11 +506,16 @@ mod tests {
         // MERGE with ON CREATE SET
         let mut merge = MergeOperator::new(
             Arc::clone(&store),
-            "n".to_string(),
-            vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Vincent".into()))],
-            vec![("created".to_string(), Value::Bool(true))], // on_create
-            vec![],                                           // no on_match
+            None,
+            MergeConfig {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                match_properties: vec![("name".to_string(), Value::String("Vincent".into()))],
+                on_create_properties: vec![("created".to_string(), Value::Bool(true))],
+                on_match_properties: vec![],
+                output_schema: vec![LogicalType::Node],
+                output_column: 0,
+            },
         );
 
         let _ = merge.next().unwrap();
@@ -441,11 +546,16 @@ mod tests {
         // MERGE with ON MATCH SET
         let mut merge = MergeOperator::new(
             Arc::clone(&store),
-            "n".to_string(),
-            vec!["Person".to_string()],
-            vec![("name".to_string(), Value::String("Jules".into()))],
-            vec![],                                           // no on_create
-            vec![("updated".to_string(), Value::Bool(true))], // on_match
+            None,
+            MergeConfig {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                match_properties: vec![("name".to_string(), Value::String("Jules".into()))],
+                on_create_properties: vec![],
+                on_match_properties: vec![("updated".to_string(), Value::Bool(true))],
+                output_schema: vec![LogicalType::Node],
+                output_column: 0,
+            },
         );
 
         let _ = merge.next().unwrap();

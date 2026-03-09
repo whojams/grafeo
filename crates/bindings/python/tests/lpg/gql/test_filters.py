@@ -104,3 +104,93 @@ class TestGQLFilterVerification:
         result = db.execute("MATCH (p:Person) WHERE p.age < 28 RETURN p.name")
         matches = list(result)
         assert len(matches) == 1, "Should find only Gus (age 25)"
+
+
+class TestGQLMultipleNotExists:
+    """Tests for multiple NOT EXISTS subqueries in a single WHERE clause."""
+
+    def test_two_not_exists(self, db):
+        """Two NOT EXISTS in the same WHERE clause."""
+        alix = db.create_node(["Person"], {"name": "Alix"})
+        gus = db.create_node(["Person"], {"name": "Gus"})
+        vincent = db.create_node(["Person"], {"name": "Vincent"})
+        db.create_edge(alix.id, gus.id, "KNOWS")
+        db.create_edge(gus.id, vincent.id, "LIKES")
+        # Vincent has no outgoing KNOWS and no outgoing LIKES
+        result = list(
+            db.execute(
+                "MATCH (p:Person) "
+                "WHERE NOT EXISTS { MATCH (p)-[:KNOWS]->() } "
+                "AND NOT EXISTS { MATCH (p)-[:LIKES]->() } "
+                "RETURN p.name"
+            )
+        )
+        names = {r["p.name"] for r in result}
+        assert names == {"Vincent"}
+
+    def test_three_not_exists(self, db):
+        """Three NOT EXISTS in the same WHERE clause."""
+        alix = db.create_node(["Person"], {"name": "Alix"})
+        gus = db.create_node(["Person"], {"name": "Gus"})
+        vincent = db.create_node(["Person"], {"name": "Vincent"})
+        jules = db.create_node(["Person"], {"name": "Jules"})
+        db.create_edge(alix.id, gus.id, "KNOWS")
+        db.create_edge(gus.id, vincent.id, "LIKES")
+        db.create_edge(vincent.id, jules.id, "FOLLOWS")
+        # Jules has none of the three outgoing edge types
+        result = list(
+            db.execute(
+                "MATCH (p:Person) "
+                "WHERE NOT EXISTS { MATCH (p)-[:KNOWS]->() } "
+                "AND NOT EXISTS { MATCH (p)-[:LIKES]->() } "
+                "AND NOT EXISTS { MATCH (p)-[:FOLLOWS]->() } "
+                "RETURN p.name"
+            )
+        )
+        names = {r["p.name"] for r in result}
+        assert names == {"Jules"}
+
+    def test_mixed_exists_and_not_exists(self, db):
+        """Mixing EXISTS and NOT EXISTS in the same WHERE clause."""
+        alix = db.create_node(["Person"], {"name": "Alix"})
+        gus = db.create_node(["Person"], {"name": "Gus"})
+        vincent = db.create_node(["Person"], {"name": "Vincent"})
+        db.create_edge(alix.id, gus.id, "KNOWS")
+        db.create_edge(alix.id, vincent.id, "KNOWS")
+        db.create_edge(gus.id, vincent.id, "LIKES")
+        # People who KNOW someone but do not LIKE anyone: Alix
+        result = list(
+            db.execute(
+                "MATCH (p:Person) "
+                "WHERE EXISTS { MATCH (p)-[:KNOWS]->() } "
+                "AND NOT EXISTS { MATCH (p)-[:LIKES]->() } "
+                "RETURN p.name"
+            )
+        )
+        names = {r["p.name"] for r in result}
+        assert names == {"Alix"}
+
+    def test_not_exists_with_complex_inner_and_simple(self, db):
+        """NOT EXISTS with a complex inner WHERE combined with a simple NOT EXISTS."""
+        alix = db.create_node(["Person"], {"name": "Alix", "age": 30})
+        gus = db.create_node(["Person"], {"name": "Gus", "age": 25})
+        vincent = db.create_node(["Person"], {"name": "Vincent", "age": 35})
+        mia = db.create_node(["Person"], {"name": "Mia", "age": 28})
+        db.create_edge(alix.id, gus.id, "KNOWS")
+        db.create_edge(gus.id, vincent.id, "KNOWS")
+        db.create_edge(vincent.id, mia.id, "LIKES")
+        # People who do not know anyone over 30, and who do not LIKE anyone
+        result = list(
+            db.execute(
+                "MATCH (p:Person) "
+                "WHERE NOT EXISTS { MATCH (p)-[:KNOWS]->(q:Person) WHERE q.age > 30 } "
+                "AND NOT EXISTS { MATCH (p)-[:LIKES]->() } "
+                "RETURN p.name"
+            )
+        )
+        names = {r["p.name"] for r in result}
+        # Alix knows Gus (age 25, not >30): passes first check, has no LIKES: passes second
+        # Gus knows Vincent (age 35, >30): fails first check
+        # Vincent: no outgoing KNOWS (passes first), LIKES Mia (fails second)
+        # Mia: no outgoing KNOWS (passes first), no outgoing LIKES (passes second)
+        assert names == {"Alix", "Mia"}

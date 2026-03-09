@@ -2,6 +2,38 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.18] - 2026-03-09
+
+Query language compliance improvements, expanded test coverage, and Deriva compatibility fixes.
+
+### Added
+
+- **Extensive spec test suites**: 8 Cypher spec modules (reading clauses, return/ordering, writing clauses, patterns, expressions, functions, types, admin/schema) and 12 GQL spec modules (data query, patterns, mutations, expressions, functions, types, schema DDL, sessions, procedures, predicates, subqueries, composite) covering 1,300+ test cases
+- **Cypher exotic integration tests**: 67 end-to-end Cypher tests covering exotic query patterns (NOT EXISTS subqueries, any() predicates, reduce, list comprehensions, collect with maps, OPTIONAL MATCH, CASE WHEN, elementId, multi-label MATCH, etc.)
+
+### Fixed (Cypher)
+
+- **CALL subquery variable scope**: `CALL { WITH p MATCH (p)-[:KNOWS]->(q) RETURN q.name AS friend }` now correctly resolves inner RETURN columns in the outer query instead of returning NULL
+- **RETURN after DELETE**: `DETACH DELETE n RETURN count(n)` no longer fails with "Variable not found"; delete operators pass through input rows for downstream aggregation
+- **Inline MERGE with relationship SET**: `MERGE (a:L {id:1})-[r:REL]->(b:L {id:2}) SET r.weight = 0.5` decomposes inline node patterns into chained MERGE operations
+- **WITH \* wildcard**: `WITH *` now correctly passes all bound variables through instead of failing to parse
+- **DoubleDash edge patterns**: undirected relationship patterns using `--` are now parsed alongside `-[]-` syntax
+
+### Fixed (GQL)
+
+- **CALL { subquery }**: `CALL { ... } RETURN ...` is now recognized as a query-level clause instead of a procedure call
+- **WITH + LET bindings**: LET clauses immediately after WITH are now parsed and attached correctly
+- **String concatenation operator**: `||` (CONCAT) is now supported in arithmetic expressions
+- **Inline MERGE with relationship SET**: same decomposition fix applied to the GQL translator
+
+### Fixed
+
+- **Multiple NOT EXISTS subqueries**: queries with two or more `NOT EXISTS { ... }` predicates no longer fail with variable-not-found errors
+- **SET property transaction rollback**: `SET n.prop = value` changes within a transaction are now correctly undone on `ROLLBACK`
+- **Label mutation rollback**: `SET n:Label` and `REMOVE n:Label` changes are correctly undone on `ROLLBACK`
+- **MERGE ON MATCH SET rollback**: properties updated via `MERGE ... ON MATCH SET` are correctly restored on `ROLLBACK`
+- **Savepoint partial rollback**: `ROLLBACK TO SAVEPOINT` now undoes property and label mutations made after the savepoint while preserving earlier changes
+
 ## [0.5.17] - 2026-03-09
 
 Cypher query execution bug fixes for Deriva compatibility.

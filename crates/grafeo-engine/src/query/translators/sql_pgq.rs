@@ -477,6 +477,10 @@ impl SqlPgqTranslator {
             ast::Expression::Unary { op, operand } => {
                 let operand_expr =
                     self.translate_sql_expression(operand, table_alias, column_map)?;
+                // Unary positive is identity: just return the operand
+                if *op == ast::UnaryOp::Pos {
+                    return Ok(operand_expr);
+                }
                 let unary_op = self.translate_unary_op(*op)?;
                 Ok(LogicalExpression::Unary {
                     op: unary_op,
@@ -564,6 +568,10 @@ impl SqlPgqTranslator {
             }
             ast::Expression::Unary { op, operand } => {
                 let operand_expr = self.translate_expression(operand, table_alias)?;
+                // Unary positive is identity: just return the operand
+                if *op == ast::UnaryOp::Pos {
+                    return Ok(operand_expr);
+                }
                 let unary_op = self.translate_unary_op(*op)?;
 
                 Ok(LogicalExpression::Unary {
@@ -761,6 +769,8 @@ impl SqlPgqTranslator {
         Ok(match op {
             ast::UnaryOp::Not => UnaryOp::Not,
             ast::UnaryOp::Neg => UnaryOp::Neg,
+            // Pos is handled as a no-op at the call site; this arm is unreachable.
+            ast::UnaryOp::Pos => UnaryOp::Not,
             ast::UnaryOp::IsNull => UnaryOp::IsNull,
             ast::UnaryOp::IsNotNull => UnaryOp::IsNotNull,
         })

@@ -290,7 +290,14 @@ impl<'a> Parser<'a> {
                     self.parse_create_dispatch()
                 }
             }
-            TokenKind::Call => self.parse_call_statement().map(Statement::Call),
+            TokenKind::Call => {
+                if self.peek_kind() == TokenKind::LBrace {
+                    // CALL { subquery } RETURN ... : treat as a query
+                    self.parse_query().map(Statement::Query)
+                } else {
+                    self.parse_call_statement().map(Statement::Call)
+                }
+            }
             _ if self.is_identifier() => {
                 let name = self.get_identifier_name();
                 match name.to_uppercase().as_str() {
@@ -622,9 +629,16 @@ impl<'a> Parser<'a> {
         // Parse WITH clauses
         let mut with_clauses = Vec::new();
         while self.current.kind == TokenKind::With {
-            with_clauses.push(self.parse_with_clause()?);
+            let mut wc = self.parse_with_clause()?;
 
-            // After WITH, we can have more clauses
+            // Attach LET bindings that immediately follow the WITH clause
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("LET") {
+                wc.let_bindings = self.parse_let_clause()?;
+            }
+
+            with_clauses.push(wc);
+
+            // After WITH (+ optional LET), we can have more clauses
             loop {
                 match self.current.kind {
                     TokenKind::Match | TokenKind::Optional => {
@@ -1298,6 +1312,7 @@ impl<'a> Parser<'a> {
             items,
             is_wildcard,
             where_clause,
+            let_bindings: Vec::new(),
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
         })
     }
@@ -2868,6 +2883,7 @@ impl<'a> Parser<'a> {
             let op = match self.current.kind {
                 TokenKind::Plus => BinaryOp::Add,
                 TokenKind::Minus => BinaryOp::Sub,
+                TokenKind::Concat => BinaryOp::Concat,
                 _ => break,
             };
             self.advance();
@@ -2905,15 +2921,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary_expression(&mut self) -> Result<Expression> {
-        if self.current.kind == TokenKind::Minus {
-            self.advance();
-            let operand = self.parse_unary_expression()?;
-            return Ok(Expression::Unary {
-                op: UnaryOp::Neg,
-                operand: Box::new(operand),
-            });
+        match self.current.kind {
+            TokenKind::Minus => {
+                self.advance();
+                let operand = self.parse_unary_expression()?;
+                Ok(Expression::Unary {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                })
+            }
+            TokenKind::Plus => {
+                self.advance();
+                let operand = self.parse_unary_expression()?;
+                Ok(Expression::Unary {
+                    op: UnaryOp::Pos,
+                    operand: Box::new(operand),
+                })
+            }
+            _ => self.parse_postfix_expression(),
         }
-        self.parse_postfix_expression()
     }
 
     fn parse_postfix_expression(&mut self) -> Result<Expression> {
@@ -3217,7 +3243,10 @@ impl<'a> Parser<'a> {
                         let var = self.get_identifier_name();
                         self.advance();
                         self.expect(TokenKind::Eq)?;
-                        let expr = self.parse_expression()?;
+                        // Use additive_expression to stop before IN (which is a
+                        // comparison-level operator) so the LET's own IN keyword
+                        // is not consumed by the binding expression.
+                        let expr = self.parse_additive_expression()?;
                         bindings.push((var, expr));
                         if self.current.kind != TokenKind::Comma {
                             break;

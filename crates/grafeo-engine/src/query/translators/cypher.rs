@@ -9,17 +9,17 @@ use super::common::{
 };
 use crate::query::plan::{
     AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp, CallProcedureOp,
-    CountExpr, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LeftJoinOp,
-    ListPredicateKind, LoadCsvOp, LogicalExpression, LogicalOperator, LogicalPlan,
-    MapProjectionEntry, MergeOp, MergeRelationshipOp, NodeScanOp, ParameterScanOp, PathMode,
-    ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem, SetPropertyOp,
+    CountExpr, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, JoinCondition,
+    JoinOp, JoinType, LeftJoinOp, ListPredicateKind, LoadCsvOp, LogicalExpression, LogicalOperator,
+    LogicalPlan, MapProjectionEntry, MergeOp, MergeRelationshipOp, NodeScanOp, ParameterScanOp,
+    PathMode, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem, SetPropertyOp,
     ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Result of translating a Cypher query: either a plan or a schema DDL command.
 pub enum CypherTranslationResult {
@@ -58,6 +58,9 @@ struct CypherTranslator {
     edge_variables: RefCell<HashSet<String>>,
     /// Counter for generating unique anonymous variable names.
     anon_counter: Cell<u32>,
+    /// Alias-to-output-column-name mapping from the most recent RETURN/WITH clause.
+    /// Used by ORDER BY to resolve alias references to actual output column names.
+    return_aliases: RefCell<HashMap<String, String>>,
 }
 
 impl CypherTranslator {
@@ -65,6 +68,7 @@ impl CypherTranslator {
         Self {
             edge_variables: RefCell::new(HashSet::new()),
             anon_counter: Cell::new(0),
+            return_aliases: RefCell::new(HashMap::new()),
         }
     }
 
@@ -261,10 +265,15 @@ impl CypherTranslator {
         if input.is_some()
             && let Some(ast::Clause::With(with_clause)) = inner.clauses.first()
         {
-            for item in &with_clause.items {
-                if let ast::Expression::Variable(name) = &item.expression {
-                    let var_name = item.alias.as_deref().unwrap_or(name);
-                    shared_variables.push(var_name.to_string());
+            if with_clause.is_wildcard {
+                // WITH * imports all outer variables
+                shared_variables.push("*".to_string());
+            } else {
+                for item in &with_clause.items {
+                    if let ast::Expression::Variable(name) = &item.expression {
+                        let var_name = item.alias.as_deref().unwrap_or(name);
+                        shared_variables.push(var_name.to_string());
+                    }
                 }
             }
             if !shared_variables.is_empty() {
@@ -292,6 +301,7 @@ impl CypherTranslator {
                 input: Box::new(outer),
                 subplan: Box::new(inner_plan),
                 shared_variables,
+                optional: false,
             })),
             None => Ok(inner_plan),
         }
@@ -330,23 +340,104 @@ impl CypherTranslator {
         Ok(plan)
     }
 
+    /// Extracts all named variables from a Cypher AST pattern.
+    fn pattern_variables(pattern: &ast::Pattern) -> HashSet<String> {
+        let mut vars = HashSet::new();
+        match pattern {
+            ast::Pattern::Node(node) => {
+                if let Some(v) = &node.variable {
+                    vars.insert(v.clone());
+                }
+            }
+            ast::Pattern::Path(path) => {
+                if let Some(v) = &path.start.variable {
+                    vars.insert(v.clone());
+                }
+                for rel in &path.chain {
+                    if let Some(v) = &rel.variable {
+                        vars.insert(v.clone());
+                    }
+                    if let Some(v) = &rel.target.variable {
+                        vars.insert(v.clone());
+                    }
+                }
+            }
+            ast::Pattern::NamedPath { name, pattern, .. } => {
+                vars.insert(name.clone());
+                vars.extend(Self::pattern_variables(pattern));
+            }
+        }
+        vars
+    }
+
+    /// Translates comma-separated patterns, creating proper joins for shared
+    /// variables instead of cross products.
+    ///
+    /// The first pattern receives `input` (to chain with prior clauses like
+    /// UNWIND). Subsequent patterns that share variables with earlier patterns
+    /// are translated independently and joined via `JoinOp` with equality
+    /// conditions on the shared variables.
+    fn translate_comma_patterns(
+        &self,
+        patterns: &[ast::Pattern],
+        input: Option<LogicalOperator>,
+    ) -> Result<LogicalOperator> {
+        if patterns.is_empty() {
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty MATCH pattern",
+            )));
+        }
+
+        // Single pattern: fast path, no join logic needed
+        if patterns.len() == 1 {
+            return self.translate_pattern(&patterns[0], input);
+        }
+
+        // Multiple patterns: detect shared variables and create joins
+        let pattern_vars: Vec<HashSet<String>> =
+            patterns.iter().map(Self::pattern_variables).collect();
+
+        let mut plan = self.translate_pattern(&patterns[0], input)?;
+        let mut bound_vars = pattern_vars[0].clone();
+
+        for (index, pattern) in patterns.iter().enumerate().skip(1) {
+            let current_vars = &pattern_vars[index];
+            let shared: Vec<String> = current_vars.intersection(&bound_vars).cloned().collect();
+
+            if shared.is_empty() {
+                // No shared variables: chain as input (cross product)
+                plan = self.translate_pattern(pattern, Some(plan))?;
+            } else {
+                // Shared variables: translate independently and inner join
+                let right = self.translate_pattern(pattern, None)?;
+                let conditions = shared
+                    .iter()
+                    .map(|var| JoinCondition {
+                        left: LogicalExpression::Variable(var.clone()),
+                        right: LogicalExpression::Variable(var.clone()),
+                    })
+                    .collect();
+                plan = LogicalOperator::Join(JoinOp {
+                    left: Box::new(plan),
+                    right: Box::new(right),
+                    join_type: JoinType::Inner,
+                    conditions,
+                });
+            }
+
+            bound_vars.extend(current_vars.iter().cloned());
+        }
+
+        Ok(plan)
+    }
+
     fn translate_match(
         &self,
         match_clause: &ast::MatchClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let mut plan = input;
-
-        for pattern in &match_clause.patterns {
-            plan = Some(self.translate_pattern(pattern, plan)?);
-        }
-
-        plan.ok_or_else(|| {
-            Error::Query(QueryError::new(
-                QueryErrorKind::Semantic,
-                "Empty MATCH pattern",
-            ))
-        })
+        self.translate_comma_patterns(&match_clause.patterns, input)
     }
 
     fn translate_optional_match(
@@ -362,18 +453,8 @@ impl CypherTranslator {
             ))
         })?;
 
-        // Build the match pattern
-        let mut right: Option<LogicalOperator> = None;
-        for pattern in &match_clause.patterns {
-            right = Some(self.translate_pattern(pattern, right)?);
-        }
-
-        let right = right.ok_or_else(|| {
-            Error::Query(QueryError::new(
-                QueryErrorKind::Semantic,
-                "Empty OPTIONAL MATCH pattern",
-            ))
-        })?;
+        // Build the right side with proper shared variable joins
+        let right = self.translate_comma_patterns(&match_clause.patterns, None)?;
 
         Ok(LogicalOperator::LeftJoin(LeftJoinOp {
             left: Box::new(input),
@@ -422,6 +503,34 @@ impl CypherTranslator {
             label,
             input: input.map(Box::new),
         });
+
+        // Add hasLabel filters for additional labels (AND semantics).
+        // First label is used in NodeScan for scan-time filtering; remaining
+        // labels are checked via post-scan Filter.
+        if node.labels.len() > 1 {
+            let mut combined: Option<LogicalExpression> = None;
+            for extra_label in &node.labels[1..] {
+                let check = LogicalExpression::FunctionCall {
+                    name: "hasLabel".into(),
+                    args: vec![
+                        LogicalExpression::Variable(variable.clone()),
+                        LogicalExpression::Literal(Value::String(extra_label.clone().into())),
+                    ],
+                    distinct: false,
+                };
+                combined = Some(match combined {
+                    None => check,
+                    Some(prev) => LogicalExpression::Binary {
+                        left: Box::new(prev),
+                        op: crate::query::plan::BinaryOp::And,
+                        right: Box::new(check),
+                    },
+                });
+            }
+            if let Some(predicate) = combined {
+                plan = wrap_filter(plan, predicate);
+            }
+        }
 
         // Add filter for inline properties (e.g., {city: 'NYC'})
         if !node.properties.is_empty() {
@@ -711,6 +820,22 @@ impl CypherTranslator {
         // If there's no input, use Empty which produces a single row for projection evaluation
         let input = input.unwrap_or(LogicalOperator::Empty);
 
+        // WITH *: skip projection, all variables pass through unchanged
+        if with_clause.is_wildcard {
+            let mut plan = input;
+
+            if let Some(where_clause) = &with_clause.where_clause {
+                let predicate = self.translate_expression(&where_clause.predicate)?;
+                plan = wrap_filter(plan, predicate);
+            }
+
+            if with_clause.distinct {
+                plan = wrap_distinct(plan);
+            }
+
+            return Ok(plan);
+        }
+
         // Check if WITH contains aggregate functions (e.g. WITH collect(n) AS people)
         let has_aggregates = with_clause
             .items
@@ -739,6 +864,7 @@ impl CypherTranslator {
                 LogicalOperator::Project(ProjectOp {
                     projections,
                     input: Box::new(agg_op),
+                    pass_through_input: false,
                 })
             } else {
                 agg_op
@@ -787,6 +913,7 @@ impl CypherTranslator {
             LogicalOperator::Project(ProjectOp {
                 projections,
                 input: Box::new(input),
+                pass_through_input: false,
             })
         };
 
@@ -907,6 +1034,8 @@ impl CypherTranslator {
         merge_clause: &ast::MergeClause,
         input: LogicalOperator,
     ) -> Result<LogicalOperator> {
+        let mut current_input = input;
+
         // Extract source node variable
         let source_variable = path.start.variable.clone().ok_or_else(|| {
             Error::Query(QueryError::new(
@@ -914,6 +1043,26 @@ impl CypherTranslator {
                 "MERGE relationship pattern requires a source node variable",
             ))
         })?;
+
+        // If source node has labels or properties, it's an inline definition:
+        // emit a MergeOp to create-or-match the node first.
+        if !path.start.labels.is_empty() || !path.start.properties.is_empty() {
+            let node_props: Vec<(String, LogicalExpression)> = path
+                .start
+                .properties
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                .collect::<Result<Vec<_>>>()?;
+
+            current_input = LogicalOperator::Merge(MergeOp {
+                variable: source_variable.clone(),
+                labels: path.start.labels.clone(),
+                match_properties: node_props,
+                on_create: Vec::new(),
+                on_match: Vec::new(),
+                input: Box::new(current_input),
+            });
+        }
 
         // Extract the first (and only) relationship segment
         let rel = path.chain.first().ok_or_else(|| {
@@ -946,6 +1095,25 @@ impl CypherTranslator {
             ))
         })?;
 
+        // If target node has labels or properties, emit a MergeOp for it too.
+        if !rel.target.labels.is_empty() || !rel.target.properties.is_empty() {
+            let node_props: Vec<(String, LogicalExpression)> = rel
+                .target
+                .properties
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                .collect::<Result<Vec<_>>>()?;
+
+            current_input = LogicalOperator::Merge(MergeOp {
+                variable: target_variable.clone(),
+                labels: rel.target.labels.clone(),
+                match_properties: node_props,
+                on_create: Vec::new(),
+                on_match: Vec::new(),
+                input: Box::new(current_input),
+            });
+        }
+
         // Extract relationship properties
         let match_properties: Vec<(String, LogicalExpression)> = rel
             .properties
@@ -975,7 +1143,7 @@ impl CypherTranslator {
             match_properties,
             on_create,
             on_match,
-            input: Box::new(input),
+            input: Box::new(current_input),
         }))
     }
 
@@ -1032,6 +1200,12 @@ impl CypherTranslator {
         // Standalone RETURN (e.g. RETURN 2 * 3) uses Empty as a single-row source
         let input = input.unwrap_or(LogicalOperator::Empty);
 
+        // Record alias-to-output-column mappings for ORDER BY alias resolution.
+        // For non-aggregate RETURN, output columns use aliases directly.
+        // For aggregate RETURN without post_return, group-by columns use
+        // expression_to_string names, and aggregate columns use their aliases.
+        self.return_aliases.borrow_mut().clear();
+
         // Check if RETURN contains aggregate functions
         let has_aggregates = match &return_clause.items {
             ast::ReturnItems::All => false,
@@ -1055,8 +1229,37 @@ impl CypherTranslator {
                 }
                 ast::ReturnItems::Explicit(items) => items,
             };
-            let (aggregates, group_by, post_return) =
+            let (aggregates, group_by, mut post_return) =
                 self.extract_aggregates_and_groups_from_items(items)?;
+
+            // For RETURN with aliases (e.g. `n.city AS city`), always produce
+            // a post-Return so output column names reflect the aliases.
+            // This is needed for ORDER BY alias resolution and for correct
+            // column naming in results.
+            if post_return.is_none() && items.iter().any(|item| item.alias.is_some()) {
+                let mut return_items = Vec::new();
+                for item in items {
+                    if let Some(agg_expr) =
+                        self.try_extract_aggregate(&item.expression, &item.alias)?
+                    {
+                        let alias = item.alias.clone().unwrap_or_else(|| {
+                            agg_expr.alias.as_deref().unwrap_or("_agg").to_string()
+                        });
+                        return_items.push(ReturnItem {
+                            expression: LogicalExpression::Variable(alias),
+                            alias: item.alias.clone(),
+                        });
+                    } else {
+                        let expr = self.translate_expression(&item.expression)?;
+                        let col_name = crate::query::planner::common::expression_to_string(&expr);
+                        return_items.push(ReturnItem {
+                            expression: LogicalExpression::Variable(col_name),
+                            alias: item.alias.clone(),
+                        });
+                    }
+                }
+                post_return = Some(return_items);
+            }
 
             let agg_op = LogicalOperator::Aggregate(AggregateOp {
                 group_by,
@@ -1066,7 +1269,17 @@ impl CypherTranslator {
             });
 
             if let Some(return_items) = post_return {
-                // Wrapped aggregates need a post-projection
+                // Post-projection renames columns using aliases.
+                // Register alias -> alias (identity) so ORDER BY resolves
+                // directly since the Return outputs alias names.
+                {
+                    let mut aliases = self.return_aliases.borrow_mut();
+                    for ri in &return_items {
+                        if let Some(ref alias) = ri.alias {
+                            aliases.insert(alias.clone(), alias.clone());
+                        }
+                    }
+                }
                 Ok(wrap_return(agg_op, return_items, return_clause.distinct))
             } else {
                 Ok(agg_op)
@@ -1164,8 +1377,12 @@ impl CypherTranslator {
                 // Non-aggregate expression: group-by key
                 let expr = self.translate_expression(&item.expression)?;
                 group_by.push(expr.clone());
+                // In the post-return, reference the Aggregate's output column
+                // by its generated name. The Aggregate already extracts
+                // property values, so we reference the column, not re-evaluate.
+                let col_name = crate::query::planner::common::expression_to_string(&expr);
                 post_return_items.push(ReturnItem {
-                    expression: expr,
+                    expression: LogicalExpression::Variable(col_name),
                     alias: item.alias.clone(),
                 });
             }
@@ -1357,12 +1574,25 @@ impl CypherTranslator {
             ))
         })?;
 
+        let aliases = self.return_aliases.borrow();
         let keys: Vec<SortKey> = order_by
             .items
             .iter()
             .map(|item| {
+                // Resolve alias references: if ORDER BY uses a variable
+                // that matches a RETURN alias, substitute with the actual
+                // output column name from the preceding RETURN/Aggregate.
+                let expression = if let ast::Expression::Variable(name) = &item.expression {
+                    if let Some(col_name) = aliases.get(name) {
+                        LogicalExpression::Variable(col_name.clone())
+                    } else {
+                        self.translate_expression(&item.expression)?
+                    }
+                } else {
+                    self.translate_expression(&item.expression)?
+                };
                 Ok(SortKey {
-                    expression: self.translate_expression(&item.expression)?,
+                    expression,
                     order: match item.direction {
                         ast::SortDirection::Asc => SortOrder::Ascending,
                         ast::SortDirection::Desc => SortOrder::Descending,
@@ -2160,6 +2390,7 @@ impl CypherTranslator {
                     input: Box::new(current_input),
                     subplan: Box::new(inner_plan),
                     shared_variables: vec![anchor],
+                    optional: false,
                 });
 
                 // 6. Replace expression with Variable reference

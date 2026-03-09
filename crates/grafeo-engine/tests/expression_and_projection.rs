@@ -555,6 +555,90 @@ mod cypher_bugs {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], Value::Int64(5), "max_val should be 5");
     }
+    #[test]
+    fn test_two_not_exists_in_same_where() {
+        // Bug: multiple NOT EXISTS subqueries fail with "Unsupported EXISTS subquery pattern"
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+
+        session.execute("INSERT (:Node {name: 'A'})").unwrap();
+        session.execute("INSERT (:Node {name: 'B'})").unwrap();
+        session
+            .execute_cypher(
+                "MATCH (a:Node {name: 'A'}), (b:Node {name: 'B'}) CREATE (a)-[:KNOWS]->(b)",
+            )
+            .unwrap();
+
+        // Two NOT EXISTS in the same WHERE: exclude pairs connected by KNOWS in either direction
+        let result = session.execute_cypher(
+            "MATCH (x:Node), (y:Node) \
+             WHERE x.name <> y.name \
+               AND NOT EXISTS { MATCH (x)-[r]->(y) WHERE type(r) = 'KNOWS' } \
+               AND NOT EXISTS { MATCH (y)-[r2]->(x) WHERE type(r2) = 'KNOWS' } \
+             RETURN x.name, y.name",
+        );
+        assert!(result.is_ok(), "Two NOT EXISTS failed: {:?}", result.err());
+        let rows = &result.unwrap().rows;
+        // A->B has KNOWS, so (A,B) excluded by first NOT EXISTS
+        // B->A has no edge, but (B,A) is not excluded by either NOT EXISTS
+        // Wait: first NOT EXISTS checks (x)->(y), second checks (y)->(x)
+        // For (B,A): first checks B->A (no KNOWS), second checks A->B (has KNOWS) => excluded
+        // So 0 rows
+        assert_eq!(rows.len(), 0, "Expected 0 rows but got {}", rows.len());
+    }
+
+    #[test]
+    fn test_three_not_exists_in_same_where() {
+        let db = create_deriva_graph();
+        let session = db.session();
+
+        // Three NOT EXISTS: no Composition, no Flow, no reverse Composition
+        let result = session.execute_cypher(
+            "MATCH (a:Model), (b:Model) \
+             WHERE a.identifier <> b.identifier \
+               AND NOT EXISTS { MATCH (a)-[r]->(b) WHERE type(r) = 'Composition' } \
+               AND NOT EXISTS { MATCH (a)-[r2]->(b) WHERE type(r2) = 'Flow' } \
+               AND NOT EXISTS { MATCH (b)-[r3]->(a) WHERE type(r3) = 'Composition' } \
+             RETURN a.name, b.name \
+             ORDER BY a.name, b.name",
+        );
+        assert!(
+            result.is_ok(),
+            "Three NOT EXISTS failed: {:?}",
+            result.err()
+        );
+        let rows = &result.unwrap().rows;
+        // m1->m2: Composition (excluded by 1st), m2->m3: Flow (excluded by 2nd)
+        // Reverse: m2->m1 Composition (excluded by 3rd)
+        // Remaining valid pairs: (m1,m3), (m3,m1), (m3,m2)
+        assert_eq!(rows.len(), 3, "Expected 3 rows but got {}", rows.len());
+    }
+
+    #[test]
+    fn test_two_not_exists_different_types() {
+        // Derives pattern: exclude pairs connected by either Composition or Flow
+        let db = create_deriva_graph();
+        let session = db.session();
+
+        let result = session.execute_cypher(
+            "MATCH (a:Model), (b:Model) \
+             WHERE a.identifier <> b.identifier \
+               AND NOT EXISTS { MATCH (a)-[r]->(b) WHERE type(r) = 'Composition' } \
+               AND NOT EXISTS { MATCH (a)-[r2]->(b) WHERE type(r2) = 'Flow' } \
+             RETURN a.name, b.name \
+             ORDER BY a.name, b.name",
+        );
+        assert!(
+            result.is_ok(),
+            "Two NOT EXISTS (types) failed: {:?}",
+            result.err()
+        );
+        let rows = &result.unwrap().rows;
+        // m1->m2 (Composition): excluded by 1st NOT EXISTS
+        // m2->m3 (Flow): excluded by 2nd NOT EXISTS
+        // Remaining: (m1,m3), (m2,m1), (m3,m1), (m3,m2) = 4
+        assert_eq!(rows.len(), 4, "Expected 4 rows but got {}", rows.len());
+    }
 } // mod cypher_bugs
 
 // ============================================================================

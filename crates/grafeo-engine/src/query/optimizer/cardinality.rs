@@ -1690,6 +1690,7 @@ mod tests {
                 label: Some("Person".to_string()),
                 input: None,
             })),
+            pass_through_input: false,
         });
 
         let cardinality = estimator.estimate(&project);

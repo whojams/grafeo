@@ -27,6 +27,24 @@ impl super::Planner {
         input_op: Box<dyn Operator>,
         input_columns: Vec<String>,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (operator, columns) = self.plan_return_projection(ret, input_op, input_columns)?;
+
+        // Apply DISTINCT if requested
+        if ret.distinct {
+            let schema = vec![LogicalType::Any; columns.len()];
+            Ok(common::build_distinct(operator, columns, None, schema))
+        } else {
+            Ok((operator, columns))
+        }
+    }
+
+    /// Plans the projection part of a RETURN clause (without DISTINCT).
+    fn plan_return_projection(
+        &self,
+        ret: &ReturnOp,
+        input_op: Box<dyn Operator>,
+        input_columns: Vec<String>,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
         // Expand RETURN * wildcard: replace with all user-visible input columns
         let expanded_items;
         let items = if ret.items.len() == 1
@@ -137,7 +155,9 @@ impl super::Planner {
                                 }
                             }
                             "length" => {
-                                // length(p) returns the path length
+                                // length(p) returns the path length for path variables,
+                                // or delegates to the expression evaluator for other
+                                // arguments (e.g. length(a.name) on strings/lists).
                                 if args.len() != 1 {
                                     return Err(Error::Internal(
                                         "length() requires exactly one argument".to_string(),
@@ -158,9 +178,14 @@ impl super::Planner {
                                     projections.push(ProjectExpr::Column(*col_idx));
                                     output_types.push(LogicalType::Int64);
                                 } else {
-                                    return Err(Error::Internal(
-                                        "length() argument must be a variable".to_string(),
-                                    ));
+                                    // Non-variable argument (e.g. property access):
+                                    // fall through to expression evaluation
+                                    let filter_expr = self.convert_expression(&item.expression)?;
+                                    projections.push(ProjectExpr::Expression {
+                                        expr: filter_expr,
+                                        variable_columns: variable_columns.clone(),
+                                    });
+                                    output_types.push(LogicalType::Any);
                                 }
                             }
                             "nodes" | "edges" | "relationships" => {
@@ -223,7 +248,9 @@ impl super::Planner {
                     | LogicalExpression::List(_)
                     | LogicalExpression::Map(_)
                     | LogicalExpression::IndexAccess { .. }
+                    | LogicalExpression::SliceAccess { .. }
                     | LogicalExpression::CountSubquery(_)
+                    | LogicalExpression::ValueSubquery(_)
                     | LogicalExpression::MapProjection { .. }
                     | LogicalExpression::Reduce { .. }
                     | LogicalExpression::PatternComprehension { .. }
@@ -326,9 +353,25 @@ impl super::Planner {
             .collect();
 
         // Build projections and new column names
-        let mut projections = Vec::with_capacity(project.projections.len());
-        let mut output_types = Vec::with_capacity(project.projections.len());
-        let mut output_columns = Vec::with_capacity(project.projections.len());
+        let capacity = if project.pass_through_input {
+            input_columns.len() + project.projections.len()
+        } else {
+            project.projections.len()
+        };
+        let mut projections = Vec::with_capacity(capacity);
+        let mut output_types = Vec::with_capacity(capacity);
+        let mut output_columns = Vec::with_capacity(capacity);
+
+        // When pass_through_input is set (e.g. LET clause), first pass through
+        // all existing input columns so they remain accessible to downstream
+        // operators. The explicit projections are then appended as new columns.
+        if project.pass_through_input {
+            for (idx, col_name) in input_columns.iter().enumerate() {
+                projections.push(ProjectExpr::Column(idx));
+                output_types.push(LogicalType::Any);
+                output_columns.push(col_name.clone());
+            }
+        }
 
         for projection in &project.projections {
             // Determine the output column name (alias or expression string)

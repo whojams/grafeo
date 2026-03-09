@@ -34,7 +34,7 @@ use grafeo_core::execution::operators::{
     FactorizedAggregate, FactorizedAggregateOperator, FilterExpression, FilterOperator,
     HashAggregateOperator, HashJoinOperator, HorizontalAggregateOperator,
     JoinType as PhysicalJoinType, LazyFactorizedChainOperator, LeapfrogJoinOperator,
-    LoadCsvOperator, MapCollectOperator, MergeOperator, MergeRelationshipConfig,
+    LoadCsvOperator, MapCollectOperator, MergeConfig, MergeOperator, MergeRelationshipConfig,
     MergeRelationshipOperator, NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator,
     ParameterScanOperator, ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOperator,
     ScanOperator, SetPropertyOperator, ShortestPathOperator, SimpleAggregateOperator,
@@ -1649,7 +1649,7 @@ mod tests {
         }));
 
         let physical = planner.plan(&logical).unwrap();
-        assert!(physical.columns().contains(&"deleted_count".to_string()));
+        assert!(physical.columns().contains(&"n".to_string()));
     }
 
     // ==================== Error Cases ====================

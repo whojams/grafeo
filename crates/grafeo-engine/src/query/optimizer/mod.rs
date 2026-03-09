@@ -1079,7 +1079,9 @@ impl Optimizer {
                 Self::collect_variables(list_expr, vars);
                 Self::collect_variables(predicate, vars);
             }
-            LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => {
+            LogicalExpression::ExistsSubquery(_)
+            | LogicalExpression::CountSubquery(_)
+            | LogicalExpression::ValueSubquery(_) => {
                 // Subqueries have their own variable scope
             }
             LogicalExpression::PatternComprehension { projection, .. } => {
@@ -1436,6 +1438,7 @@ mod tests {
                     label: None,
                     input: None,
                 })),
+                pass_through_input: false,
             })),
         }));
 
@@ -1475,6 +1478,7 @@ mod tests {
                     label: None,
                     input: None,
                 })),
+                pass_through_input: false,
             })),
         }));
 

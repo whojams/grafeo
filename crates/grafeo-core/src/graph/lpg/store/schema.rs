@@ -1,7 +1,7 @@
 //! Schema, label, edge-type, and property-key methods for [`LpgStore`].
 
-use super::LpgStore;
-use grafeo_common::types::NodeId;
+use super::{LpgStore, PropertyUndoEntry};
+use grafeo_common::types::{NodeId, TransactionId};
 use grafeo_common::utils::hash::FxHashMap;
 
 impl LpgStore {
@@ -303,5 +303,49 @@ impl LpgStore {
     #[must_use]
     pub fn peek_next_edge_id(&self) -> u64 {
         self.next_edge_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Adds a label to a node within a transaction, recording the change
+    /// in the undo log so it can be reversed on rollback.
+    pub fn add_label_versioned(
+        &self,
+        node_id: NodeId,
+        label: &str,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let added = self.add_label(node_id, label);
+        if added {
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(PropertyUndoEntry::LabelAdded {
+                    node_id,
+                    label: label.to_string(),
+                });
+        }
+        added
+    }
+
+    /// Removes a label from a node within a transaction, recording the change
+    /// in the undo log so it can be restored on rollback.
+    pub fn remove_label_versioned(
+        &self,
+        node_id: NodeId,
+        label: &str,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let removed = self.remove_label(node_id, label);
+        if removed {
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(PropertyUndoEntry::LabelRemoved {
+                    node_id,
+                    label: label.to_string(),
+                });
+        }
+        removed
     }
 }

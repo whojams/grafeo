@@ -963,7 +963,9 @@ fn substitute_in_expression(expr: &mut LogicalExpression, params: &QueryParams) 
             substitute_in_expression(list_expr, params)?;
             substitute_in_expression(predicate, params)?;
         }
-        LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => {
+        LogicalExpression::ExistsSubquery(_)
+        | LogicalExpression::CountSubquery(_)
+        | LogicalExpression::ValueSubquery(_) => {
             // Subqueries would need recursive parameter substitution
         }
         LogicalExpression::PatternComprehension { projection, .. } => {

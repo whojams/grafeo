@@ -4,8 +4,6 @@ Covers: MATCH, OPTIONAL MATCH, WHERE, WITH, UNWIND, UNION, UNION ALL,
 CALL procedure YIELD, CALL { subquery }.
 """
 
-import pytest
-
 # =============================================================================
 # MATCH
 # =============================================================================
@@ -219,7 +217,6 @@ class TestWith:
         assert len(result) == 1
         assert result[0]["n.name"] == "Alix"
 
-    @pytest.mark.xfail(reason="WITH * not supported in Cypher parser")
     def test_with_star(self, db):
         db.create_node(["Person"], {"name": "Alix"})
         result = list(db.execute_cypher("MATCH (n:Person) WITH * RETURN n.name"))
@@ -338,7 +335,6 @@ class TestCallSubquery:
         )
         assert result[0]["total"] == 2
 
-    @pytest.mark.xfail(reason="CALL { WITH outer_var ... } does not resolve outer scope variables")
     def test_call_subquery_with_outer_scope(self, db):
         """CALL { } with outer scope variable propagation."""
         a = db.create_node(["Person"], {"name": "Alix"})

@@ -156,6 +156,68 @@ def withdraw(db, account, amount):
         tx.commit()
 ```
 
+## What Gets Rolled Back
+
+When a transaction is rolled back (either fully or to a savepoint), all mutations made within the rollback scope are undone:
+
+| Mutation | Rolled Back? |
+| -------- | ------------ |
+| `SET n.prop = value` (property update) | Yes |
+| `SET n.prop = value` (new property) | Yes, property removed |
+| `REMOVE n.prop` | Yes, property restored |
+| `SET n:Label` (add label) | Yes, label removed |
+| `REMOVE n:Label` | Yes, label restored |
+| `MERGE ... ON MATCH SET` | Yes, properties restored |
+| `INSERT` (new node/edge) | Yes, entity removed |
+| `DELETE` (remove node/edge) | Yes, entity restored |
+
+## Savepoints
+
+Savepoints let you create named checkpoints within a transaction. Rolling back to a savepoint undoes only the changes made after it while preserving earlier work.
+
+### Usage
+
+```python
+tx = db.begin_transaction()
+
+tx.execute("MATCH (a:Account {id: 'A001'}) SET a.balance = 1000")
+
+tx.savepoint("before_bonus")
+
+tx.execute("MATCH (a:Account {id: 'A001'}) SET a.bonus = 500")
+
+# Undo only the bonus, keep the balance change
+tx.rollback_to_savepoint("before_bonus")
+
+# Release discards the savepoint but keeps changes
+# tx.release_savepoint("before_bonus")
+
+tx.commit()  # balance = 1000, no bonus property
+```
+
+### Nested Transactions
+
+Starting a transaction inside an existing one creates an implicit savepoint. Rolling back the inner transaction undoes only its changes:
+
+```python
+tx = db.begin_transaction()
+tx.execute("MATCH (n:Counter) SET n.value = 1")
+
+# Inner transaction (implicit savepoint)
+tx2 = db.begin_transaction()
+tx2.execute("MATCH (n:Counter) SET n.value = 99")
+tx2.rollback()  # Undoes SET n.value = 99
+
+# n.value is still 1
+tx.commit()
+```
+
+### Savepoint Rules
+
+1. Names must be unique within a transaction
+2. Rolling back to a savepoint also releases all savepoints created after it
+3. A full `ROLLBACK` undoes everything, including changes before any savepoints
+
 ## Transaction Lifecycle
 
 ### States
@@ -195,6 +257,11 @@ tx.rollback()
 with db.begin_transaction() as tx:
     tx.execute("CREATE (n:Test)")
     tx.commit()
+
+# Savepoints
+tx.savepoint("sp1")
+tx.rollback_to_savepoint("sp1")
+tx.release_savepoint("sp1")
 ```
 
 ### Rust
@@ -211,6 +278,11 @@ session.commit()?;
 
 // Or rollback
 session.rollback()?;
+
+// Savepoints
+session.savepoint("sp1")?;
+session.rollback_to_savepoint("sp1")?;
+session.release_savepoint("sp1")?;
 ```
 
 ## Garbage Collection

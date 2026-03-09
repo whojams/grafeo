@@ -6,7 +6,6 @@ parameters, property/index access, list predicates (all/any/none/single),
 regex match.
 """
 
-import pytest
 
 # =============================================================================
 # Operators (sec 5.1)
@@ -185,7 +184,6 @@ class TestExpressionForms:
         result = list(db.execute_cypher("MATCH (n:N) RETURN [x IN [1,2,3,4] WHERE x > 2] AS r"))
         assert result[0]["r"] == [3, 4]
 
-    @pytest.mark.xfail(reason="SliceAccess expression not executed at runtime")
     def test_list_slice(self, db):
         """list[start..end] slice syntax."""
         db.create_node(["N"], {"v": 1})
@@ -210,7 +208,6 @@ class TestExpressionForms:
         assert result[0]["r"]["name"] == "Alix"
         assert result[0]["r"]["age"] == 30
 
-    @pytest.mark.xfail(reason="n { .* } wraps properties under nested '*' key instead of expanding")
     def test_map_projection_all(self, db):
         """node { .* } all-properties map projection."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
@@ -218,7 +215,6 @@ class TestExpressionForms:
         assert result[0]["r"]["name"] == "Alix"
         assert result[0]["r"]["age"] == 30
 
-    @pytest.mark.xfail(reason="n['prop'] bracket access returns None")
     def test_bracket_property_access(self, db):
         """n['prop'] bracket access."""
         db.create_node(["N"], {"name": "Alix"})
@@ -294,6 +290,18 @@ class TestListPredicates:
         result = list(db.execute_cypher("MATCH (n:N) RETURN any(x IN [1, 2, 3] WHERE x > 2) AS r"))
         assert result[0]["r"] is True
 
+    def test_any_with_labels_in_where(self, db):
+        """any(label IN labels(n) WHERE ...) in WHERE clause (Deriva FR-2)."""
+        db.create_node(["Graph", "MyNS"], {"name": "test"})
+        db.create_node(["Graph", "Other"], {"name": "skip"})
+        result = list(
+            db.execute_cypher(
+                "MATCH (n) WHERE any(label IN labels(n) WHERE label STARTS WITH 'My') RETURN n.name"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["n.name"] == "test"
+
     def test_none(self, db):
         db.create_node(["N"], {"v": 1})
         result = list(db.execute_cypher("MATCH (n:N) RETURN none(x IN [1, 2, 3] WHERE x > 5) AS r"))
@@ -304,4 +312,25 @@ class TestListPredicates:
         result = list(
             db.execute_cypher("MATCH (n:N) RETURN single(x IN [1, 2, 3] WHERE x > 2) AS r")
         )
+        assert result[0]["r"] is True
+
+
+# =============================================================================
+# Binary expressions in RETURN (Deriva FR-1)
+# =============================================================================
+
+
+class TestReturnExpressions:
+    """Complex expressions in RETURN clause."""
+
+    def test_comparison_in_return(self, db):
+        """Boolean comparison in RETURN: n.v > 5."""
+        db.create_node(["N"], {"v": 10})
+        result = list(db.execute_cypher("MATCH (n:N) RETURN n.v > 5 AS r"))
+        assert result[0]["r"] is True
+
+    def test_aggregate_comparison_in_return(self, db):
+        """count(n) > 0 in RETURN (Deriva FR-1)."""
+        db.create_node(["N"], {"v": 1})
+        result = list(db.execute_cypher("MATCH (n:N) RETURN count(n) > 0 AS r"))
         assert result[0]["r"] is True

@@ -301,14 +301,16 @@ pub fn convert_filter_expression(expr: &LogicalExpression) -> Result<FilterExpre
                 predicate: Box::new(pred),
             })
         }
-        LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => {
+        LogicalExpression::ExistsSubquery(_)
+        | LogicalExpression::CountSubquery(_)
+        | LogicalExpression::ValueSubquery(_) => {
             // Complex subqueries are handled at the plan_filter level via semi-join
             // or Apply rewrites. If we reach here, the subquery is in a position that
             // cannot be rewritten (e.g., nested inside a CASE expression). Return a
             // literal false/zero as a safe fallback.
             Err(Error::Internal(
                 "Subquery expressions in this position require the semi-join or Apply rewrite; \
-                 move the EXISTS/COUNT subquery to a top-level WHERE predicate"
+                 move the EXISTS/COUNT/VALUE subquery to a top-level WHERE predicate or RETURN"
                     .to_string(),
             ))
         }

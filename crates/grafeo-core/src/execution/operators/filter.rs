@@ -444,13 +444,19 @@ impl ExpressionPredicate {
                 Some(Value::List(values.into()))
             }
             FilterExpression::Map(pairs) => {
-                let map: BTreeMap<PropertyKey, Value> = pairs
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        self.eval_expr(v, chunk, row)
-                            .map(|val| (PropertyKey::new(k.as_str()), val))
-                    })
-                    .collect();
+                let mut map = BTreeMap::new();
+                for (k, v) in pairs {
+                    if let Some(val) = self.eval_expr(v, chunk, row) {
+                        if k == "*" {
+                            // AllProperties marker: flatten the inner map into the result
+                            if let Value::Map(inner) = val {
+                                map.extend(inner.iter().map(|(pk, pv)| (pk.clone(), pv.clone())));
+                            }
+                        } else {
+                            map.insert(PropertyKey::new(k.as_str()), val);
+                        }
+                    }
+                }
                 Some(Value::Map(Arc::new(map)))
             }
             FilterExpression::IndexAccess { base, index } => {
@@ -481,6 +487,26 @@ impl ExpressionPredicate {
                     (Value::Map(m), Value::String(key)) => {
                         let prop_key = PropertyKey::new(key.as_str());
                         m.get(&prop_key).cloned()
+                    }
+                    (_, Value::String(key)) => {
+                        // Node/edge bracket access: n['name'] looks up a property
+                        // via the store when the base variable refers to a node or edge.
+                        if let FilterExpression::Variable(var) = base.as_ref()
+                            && let Some(&col_idx) = self.variable_columns.get(var)
+                            && let Some(col) = chunk.column(col_idx)
+                        {
+                            if let Some(node_id) = col.get_node_id(row)
+                                && let Some(node) = self.store.get_node(node_id)
+                            {
+                                return node.get_property(key.as_str()).cloned();
+                            }
+                            if let Some(edge_id) = col.get_edge_id(row)
+                                && let Some(edge) = self.store.get_edge(edge_id)
+                            {
+                                return edge.get_property(key.as_str()).cloned();
+                            }
+                        }
+                        None
                     }
                     _ => None,
                 }

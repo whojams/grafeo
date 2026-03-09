@@ -504,7 +504,19 @@ impl<'a> Parser<'a> {
             false
         };
 
-        let items = self.parse_projection_items()?;
+        // Check for WITH *
+        let is_wildcard = if self.current.kind == TokenKind::Star {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        let items = if is_wildcard {
+            Vec::new()
+        } else {
+            self.parse_projection_items()?
+        };
 
         let where_clause = if self.current.kind == TokenKind::Where {
             Some(Box::new(self.parse_where_clause()?))
@@ -515,6 +527,7 @@ impl<'a> Parser<'a> {
         Ok(WithClause {
             distinct,
             items,
+            is_wildcard,
             where_clause,
             span: None,
         })
@@ -794,12 +807,12 @@ impl<'a> Parser<'a> {
         // Check for path continuation
         if matches!(
             self.current.kind,
-            TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus
+            TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus | TokenKind::DoubleDash
         ) {
             let mut chain = Vec::new();
             while matches!(
                 self.current.kind,
-                TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus
+                TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus | TokenKind::DoubleDash
             ) {
                 chain.push(self.parse_relationship_pattern()?);
             }
@@ -846,12 +859,12 @@ impl<'a> Parser<'a> {
         // Check for path continuation
         if matches!(
             self.current.kind,
-            TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus
+            TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus | TokenKind::DoubleDash
         ) {
             let mut chain = Vec::new();
             while matches!(
                 self.current.kind,
-                TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus
+                TokenKind::Arrow | TokenKind::LeftArrow | TokenKind::Minus | TokenKind::DoubleDash
             ) {
                 chain.push(self.parse_relationship_pattern()?);
             }
@@ -908,27 +921,48 @@ impl<'a> Parser<'a> {
                 (Direction::Outgoing, false)
             }
             TokenKind::LeftArrow => {
-                // <-
+                // <- possibly followed by - for <-- (anonymous incoming)
                 self.advance();
-                (Direction::Incoming, false)
+                if self.current.kind == TokenKind::LBracket {
+                    // <-[...]- (incoming with bracket details)
+                    (Direction::Incoming, true)
+                } else if self.current.kind == TokenKind::Minus {
+                    // <-- (anonymous incoming shorthand)
+                    self.advance();
+                    (Direction::Incoming, false)
+                } else {
+                    (Direction::Incoming, false)
+                }
             }
             TokenKind::Minus => {
-                // - followed by [ or - or >
+                // - followed by [ or > or ->
                 self.advance();
 
                 if self.current.kind == TokenKind::LBracket {
                     // -[...]- or -[...]->
                     (Direction::Undirected, true) // Direction will be updated based on closing
-                } else if self.current.kind == TokenKind::Gt {
-                    // ->
+                } else if self.current.kind == TokenKind::Arrow {
+                    // --> (Minus then Arrow): anonymous outgoing shorthand
                     self.advance();
                     (Direction::Outgoing, false)
-                } else if self.current.kind == TokenKind::Minus {
-                    // --
+                } else if self.current.kind == TokenKind::Gt {
+                    // -> (Minus then Gt, fallback)
                     self.advance();
-                    (Direction::Undirected, false)
+                    (Direction::Outgoing, false)
                 } else {
                     return Err(self.error("Expected relationship pattern"));
+                }
+            }
+            TokenKind::DoubleDash => {
+                // -- or -->
+                self.advance();
+                if self.current.kind == TokenKind::Gt {
+                    // --> anonymous outgoing
+                    self.advance();
+                    (Direction::Outgoing, false)
+                } else {
+                    // -- anonymous undirected
+                    (Direction::Undirected, false)
                 }
             }
             _ => return Err(self.error("Expected relationship pattern")),

@@ -81,8 +81,8 @@ pub struct Session {
         parking_lot::Mutex<std::collections::HashMap<String, grafeo_common::types::Value>>,
     /// Override epoch for time-travel queries (None = use transaction/current epoch).
     viewing_epoch_override: parking_lot::Mutex<Option<EpochId>>,
-    /// Savepoints within the current transaction: name -> (next_node_id, next_edge_id) snapshot.
-    savepoints: parking_lot::Mutex<Vec<(String, u64, u64)>>,
+    /// Savepoints within the current transaction: name -> (next_node_id, next_edge_id, undo_log_position) snapshot.
+    savepoints: parking_lot::Mutex<Vec<(String, u64, u64, usize)>>,
     /// Nesting depth for nested transactions (0 = outermost).
     /// Nested `START TRANSACTION` creates an auto-savepoint; nested `COMMIT`
     /// releases it, nested `ROLLBACK` rolls back to it.
@@ -2416,6 +2416,9 @@ impl Session {
         #[cfg(feature = "rdf")]
         self.rdf_store.commit_transaction(transaction_id);
 
+        // Discard property undo log: changes are committed, no rollback possible
+        self.store.commit_transaction_properties(transaction_id);
+
         self.transaction_manager.commit(transaction_id)?;
 
         // Sync the LpgStore epoch with the TxManager so that
@@ -2516,7 +2519,7 @@ impl Session {
     ///
     /// Returns an error if no transaction is active.
     pub fn savepoint(&self, name: &str) -> Result<()> {
-        let _tx_id = self.current_transaction.lock().ok_or_else(|| {
+        let tx_id = self.current_transaction.lock().ok_or_else(|| {
             grafeo_common::utils::error::Error::Transaction(
                 grafeo_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
@@ -2526,9 +2529,10 @@ impl Session {
 
         let next_node = self.store.peek_next_node_id();
         let next_edge = self.store.peek_next_edge_id();
+        let undo_position = self.store.property_undo_log_position(tx_id);
         self.savepoints
             .lock()
-            .push((name.to_string(), next_node, next_edge));
+            .push((name.to_string(), next_node, next_edge, undo_position));
         Ok(())
     }
 
@@ -2554,7 +2558,7 @@ impl Session {
         // Find the savepoint by name (search from the end for nested savepoints)
         let pos = savepoints
             .iter()
-            .rposition(|(n, _, _)| n == name)
+            .rposition(|(n, _, _, _)| n == name)
             .ok_or_else(|| {
                 grafeo_common::utils::error::Error::Transaction(
                     grafeo_common::utils::error::TransactionError::InvalidState(format!(
@@ -2563,11 +2567,15 @@ impl Session {
                 )
             })?;
 
-        let (_, sp_next_node, sp_next_edge) = savepoints[pos].clone();
+        let (_, sp_next_node, sp_next_edge, sp_undo_position) = savepoints[pos].clone();
 
         // Remove this savepoint and all later ones
         savepoints.truncate(pos);
         drop(savepoints);
+
+        // Replay property/label undo entries recorded after the savepoint
+        self.store
+            .rollback_transaction_properties_to(transaction_id, sp_undo_position);
 
         // Discard all nodes with ID >= sp_next_node and edges with ID >= sp_next_edge
         let current_next_node = self.store.peek_next_node_id();
@@ -2601,7 +2609,7 @@ impl Session {
         let mut savepoints = self.savepoints.lock();
         let pos = savepoints
             .iter()
-            .rposition(|(n, _, _)| n == name)
+            .rposition(|(n, _, _, _)| n == name)
             .ok_or_else(|| {
                 grafeo_common::utils::error::Error::Transaction(
                     grafeo_common::utils::error::TransactionError::InvalidState(format!(

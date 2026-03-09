@@ -4,7 +4,6 @@ Covers: EXISTS { }, COUNT { }, VALUE { }, correlated subqueries,
 nested subqueries, COUNT in RETURN.
 """
 
-import pytest
 
 # =============================================================================
 # EXISTS Subquery (sec 19.4)
@@ -57,9 +56,6 @@ class TestExistsSubquery:
         assert "Gus" in names
         assert "Alix" not in names
 
-    @pytest.mark.xfail(
-        reason="Correlated EXISTS subquery does not resolve outer variable references"
-    )
     def test_exists_correlated(self, db):
         """Correlated EXISTS with outer variable reference."""
         db.create_node(["Person"], {"name": "Alix", "city": "Amsterdam"})
@@ -139,7 +135,6 @@ class TestCountSubquery:
 class TestValueSubquery:
     """VALUE { MATCH ... RETURN ... } scalar subquery."""
 
-    @pytest.mark.xfail(reason="VALUE { } subquery syntax not supported in GQL parser")
     def test_value_subquery(self, db):
         """VALUE { } returns scalar value."""
         db.create_node(["Config"], {"key": "max_retries", "val": 3})

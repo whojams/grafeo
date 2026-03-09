@@ -144,6 +144,7 @@ impl GraphQLRdfTranslator {
             plan = LogicalOperator::Project(ProjectOp {
                 projections,
                 input: Box::new(plan),
+                pass_through_input: false,
             });
         }
 

@@ -4,7 +4,6 @@ Covers: IS TYPED, IS NOT TYPED, CAST type checks, LIST<T>,
 record types, graph reference types.
 """
 
-import pytest
 
 # =============================================================================
 # IS TYPED / IS NOT TYPED predicates (sec 19.6)
@@ -39,7 +38,6 @@ class TestIsTyped:
         result = list(db.execute("MATCH (n:N) WHERE n.v IS NOT TYPED STRING RETURN n.v"))
         assert len(result) == 1
 
-    @pytest.mark.xfail(reason="SET with date() function may not store typed DATE value")
     def test_is_typed_date(self, db):
         db.create_node(["N"], {"v": 1})
         db.execute("MATCH (n:N) SET n.d = date('2024-01-15')")

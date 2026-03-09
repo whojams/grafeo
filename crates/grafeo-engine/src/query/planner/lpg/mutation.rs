@@ -82,6 +82,7 @@ impl super::Planner {
         let output_column = create.variable.as_ref().map(|v| {
             let idx = columns.len();
             columns.push(v.clone());
+            self.edge_columns.borrow_mut().insert(v.clone());
             idx
         });
 
@@ -140,9 +141,10 @@ impl super::Planner {
                 ))
             })?;
 
-        // Output schema for delete count
-        let output_schema = vec![LogicalType::Int64];
-        let output_columns = vec!["deleted_count".to_string()];
+        // Preserve input columns so downstream RETURN/aggregate can reference
+        // the deleted variable (e.g., DETACH DELETE n RETURN count(n)).
+        let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
+        let output_columns = columns.clone();
 
         // Auto-detect edge variables and use the correct operator
         let is_edge = self.edge_columns.borrow().contains(&delete.variable);
@@ -185,9 +187,10 @@ impl super::Planner {
                 ))
             })?;
 
-        // Output schema for delete count
-        let output_schema = vec![LogicalType::Int64];
-        let output_columns = vec!["deleted_count".to_string()];
+        // Preserve input columns so downstream clauses can reference the
+        // deleted variable (same pass-through pattern as delete_node).
+        let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
+        let output_columns = columns.clone();
 
         let operator = Box::new(
             DeleteEdgeOperator::new(
@@ -273,12 +276,9 @@ impl super::Planner {
         // The UNWIND expression should be a list - we need to find/evaluate it
         // Handle variable references, property access, and literal lists
 
-        // Find if the expression references an existing column (like a list property)
+        // Find if the expression references an existing column that is itself a list
         let list_col_idx = match &unwind.expression {
             LogicalExpression::Variable(var) => input_columns.iter().position(|c| c == var),
-            LogicalExpression::Property { variable, .. } => {
-                input_columns.iter().position(|c| c == variable)
-            }
             LogicalExpression::List(_) | LogicalExpression::Literal(_) => {
                 // Literal list expression - needs to be added as a column
                 None
@@ -286,8 +286,8 @@ impl super::Planner {
             _ => None,
         };
 
-        // When the expression is a literal list (including parameter-substituted lists)
-        // and there's prior input, add the list as an extra column via ProjectOperator.
+        // When the expression needs runtime evaluation (property access, literal list, etc.),
+        // wrap input in a ProjectOperator that computes the list as an extra column.
         let (final_input_op, final_input_columns, col_idx) = if let Some(idx) = list_col_idx {
             (input_op, input_columns, idx)
         } else if matches!(
@@ -295,14 +295,20 @@ impl super::Planner {
             LogicalExpression::List(_)
                 | LogicalExpression::Literal(Value::List(_))
                 | LogicalExpression::Literal(Value::Vector(_))
+                | LogicalExpression::Property { .. }
         ) {
             // Wrap input in a ProjectOperator that adds the list as an extra column
             let literal_list = self.convert_expression(&unwind.expression)?;
             let mut proj_exprs: Vec<ProjectExpr> =
                 (0..input_columns.len()).map(ProjectExpr::Column).collect();
+            let var_cols: HashMap<String, usize> = input_columns
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.clone(), i))
+                .collect();
             proj_exprs.push(ProjectExpr::Expression {
                 expr: literal_list,
-                variable_columns: HashMap::new(),
+                variable_columns: var_cols,
             });
             let mut proj_schema = self.derive_schema_from_columns(&input_columns);
             proj_schema.push(LogicalType::Any);
@@ -366,11 +372,11 @@ impl super::Planner {
     /// Plans a MERGE operator.
     pub(super) fn plan_merge(&self, merge: &MergeOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         // Plan the input operator if present (skip if Empty)
-        let mut columns = if matches!(merge.input.as_ref(), LogicalOperator::Empty) {
-            Vec::new()
+        let (input_op, mut columns) = if matches!(merge.input.as_ref(), LogicalOperator::Empty) {
+            (None, Vec::new())
         } else {
-            let (_input_op, cols) = self.plan_operator(&merge.input)?;
-            cols
+            let (op, cols) = self.plan_operator(&merge.input)?;
+            (Some(op), cols)
         };
 
         // Convert match properties from LogicalExpression to Value
@@ -412,17 +418,29 @@ impl super::Planner {
             })
             .collect();
 
-        // Add the merged node variable to output columns
+        // Column index for the merged node ID in the output
+        let output_column = columns.len();
         columns.push(merge.variable.clone());
 
-        let operator: Box<dyn Operator> = Box::new(MergeOperator::new(
-            Arc::clone(&self.store),
-            merge.variable.clone(),
-            merge.labels.clone(),
-            match_properties,
-            on_create_properties,
-            on_match_properties,
-        ));
+        // Build output schema
+        let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
+
+        let operator: Box<dyn Operator> = Box::new(
+            MergeOperator::new(
+                Arc::clone(&self.store),
+                input_op,
+                MergeConfig {
+                    variable: merge.variable.clone(),
+                    labels: merge.labels.clone(),
+                    match_properties,
+                    on_create_properties,
+                    on_match_properties,
+                    output_schema,
+                    output_column,
+                },
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id),
+        );
 
         Ok((operator, columns))
     }
@@ -515,11 +533,10 @@ impl super::Planner {
             edge_output_column,
         };
 
-        let operator: Box<dyn Operator> = Box::new(MergeRelationshipOperator::new(
-            Arc::clone(&self.store),
-            input_op,
-            config,
-        ));
+        let operator: Box<dyn Operator> = Box::new(
+            MergeRelationshipOperator::new(Arc::clone(&self.store), input_op, config)
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+        );
 
         Ok((operator, columns))
     }
@@ -661,6 +678,11 @@ impl super::Planner {
             ),
         );
 
+        // Procedure outputs are scalar values, not node/edge IDs
+        for col in &output_columns {
+            self.scalar_columns.borrow_mut().insert(col.clone());
+        }
+
         Ok((operator, output_columns))
     }
 
@@ -705,6 +727,11 @@ impl super::Planner {
             column_indices,
             row_index: 0,
         });
+
+        // Static result outputs are scalar values, not node/edge IDs
+        for col in &output_columns {
+            self.scalar_columns.borrow_mut().insert(col.clone());
+        }
 
         Ok((operator, output_columns))
     }
@@ -776,6 +803,11 @@ impl super::Planner {
             self.catalog.clone(),
         ));
 
+        // Procedure outputs are scalar values, not node/edge IDs
+        for col in &output_columns {
+            self.scalar_columns.borrow_mut().insert(col.clone());
+        }
+
         Ok((operator, output_columns))
     }
 
@@ -842,13 +874,16 @@ impl super::Planner {
         let output_schema = vec![LogicalType::Int64];
         let output_columns = vec!["labels_added".to_string()];
 
-        let operator = Box::new(AddLabelOperator::new(
-            Arc::clone(&self.store),
-            input_op,
-            node_column,
-            add_label.labels.clone(),
-            output_schema,
-        ));
+        let operator = Box::new(
+            AddLabelOperator::new(
+                Arc::clone(&self.store),
+                input_op,
+                node_column,
+                add_label.labels.clone(),
+                output_schema,
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id),
+        );
 
         Ok((operator, output_columns))
     }
@@ -875,13 +910,16 @@ impl super::Planner {
         let output_schema = vec![LogicalType::Int64];
         let output_columns = vec!["labels_removed".to_string()];
 
-        let operator = Box::new(RemoveLabelOperator::new(
-            Arc::clone(&self.store),
-            input_op,
-            node_column,
-            remove_label.labels.clone(),
-            output_schema,
-        ));
+        let operator = Box::new(
+            RemoveLabelOperator::new(
+                Arc::clone(&self.store),
+                input_op,
+                node_column,
+                remove_label.labels.clone(),
+                output_schema,
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id),
+        );
 
         Ok((operator, output_columns))
     }
@@ -928,7 +966,8 @@ impl super::Planner {
                 properties,
                 output_schema,
             )
-            .with_replace(set_prop.replace);
+            .with_replace(set_prop.replace)
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             if let Some(ref validator) = self.validator {
                 op = op.with_validator(Arc::clone(validator));
             }
@@ -941,7 +980,8 @@ impl super::Planner {
                 properties,
                 output_schema,
             )
-            .with_replace(set_prop.replace);
+            .with_replace(set_prop.replace)
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             if let Some(ref validator) = self.validator {
                 op = op.with_validator(Arc::clone(validator));
             }
@@ -1035,6 +1075,56 @@ impl super::Planner {
                             }
                             // Already a vector (from all-numeric list folding)
                             Value::Vector(v) => Some(Value::Vector(v)),
+                            _ => None,
+                        }
+                    }
+                    "date" | "todate" => {
+                        if args.len() != 1 {
+                            return None;
+                        }
+                        let val = Self::try_fold_expression(&args[0])?;
+                        match val {
+                            Value::String(s) => {
+                                grafeo_common::types::Date::parse(&s).map(Value::Date)
+                            }
+                            _ => None,
+                        }
+                    }
+                    "time" | "totime" | "local_time" => {
+                        if args.len() != 1 {
+                            return None;
+                        }
+                        let val = Self::try_fold_expression(&args[0])?;
+                        match val {
+                            Value::String(s) => {
+                                grafeo_common::types::Time::parse(&s).map(Value::Time)
+                            }
+                            _ => None,
+                        }
+                    }
+                    "datetime" | "localdatetime" | "local_datetime" | "todatetime" => {
+                        if args.len() != 1 {
+                            return None;
+                        }
+                        let val = Self::try_fold_expression(&args[0])?;
+                        match val {
+                            Value::String(s) => {
+                                if let Some(d) = grafeo_common::types::Date::parse(&s) {
+                                    return Some(Value::Timestamp(d.to_timestamp()));
+                                }
+                                if let Some(pos) = s.find('T') {
+                                    let (date_part, time_part) = (&s[..pos], &s[pos + 1..]);
+                                    if let (Some(d), Some(t)) = (
+                                        grafeo_common::types::Date::parse(date_part),
+                                        grafeo_common::types::Time::parse(time_part),
+                                    ) {
+                                        return Some(Value::Timestamp(
+                                            grafeo_common::types::Timestamp::from_date_time(d, t),
+                                        ));
+                                    }
+                                }
+                                None
+                            }
                             _ => None,
                         }
                     }

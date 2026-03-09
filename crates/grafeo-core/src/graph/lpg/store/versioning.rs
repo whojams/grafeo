@@ -14,7 +14,8 @@ impl LpgStore {
     /// Discards all uncommitted versions created by a transaction.
     ///
     /// This is called during transaction rollback to clean up uncommitted changes.
-    /// The method removes version chain entries created by the specified transaction.
+    /// The method removes version chain entries created by the specified transaction,
+    /// and replays the property undo log to restore property values.
     #[doc(hidden)]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn discard_uncommitted_versions(&self, transaction_id: TransactionId) {
@@ -37,6 +38,9 @@ impl LpgStore {
             // Remove completely empty chains (no versions left)
             edges.retain(|_, chain| !chain.is_empty());
         }
+
+        // Replay property undo log to restore pre-transaction property values
+        self.rollback_transaction_properties(transaction_id);
 
         // Counters may be out of sync after rollback: force full recompute
         self.needs_stats_recompute.store(true, Ordering::Relaxed);
@@ -105,6 +109,9 @@ impl LpgStore {
             // Remove completely empty indexes (no versions left)
             versions.retain(|_, index| !index.is_empty());
         }
+
+        // Replay property undo log to restore pre-transaction property values
+        self.rollback_transaction_properties(transaction_id);
 
         // Counters may be out of sync after rollback: force full recompute
         self.needs_stats_recompute.store(true, Ordering::Relaxed);

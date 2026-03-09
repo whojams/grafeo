@@ -611,6 +611,9 @@ impl Binder {
             LogicalOperator::Apply(apply) => {
                 self.bind_operator(&apply.input)?;
                 self.bind_operator(&apply.subplan)?;
+                // Register output columns from the subplan so the outer Return
+                // can reference them (e.g., VALUE subquery lifting).
+                Self::register_subplan_columns(&apply.subplan, &mut self.context);
                 Ok(())
             }
             LogicalOperator::MultiWayJoin(mwj) => {
@@ -873,6 +876,57 @@ impl Binder {
         Ok(())
     }
 
+    /// Registers output columns from a subplan into the binding context.
+    /// Walks through wrapping operators to find a Return and extracts column names.
+    fn register_subplan_columns(plan: &LogicalOperator, ctx: &mut BindingContext) {
+        match plan {
+            LogicalOperator::Return(ret) => {
+                for item in &ret.items {
+                    let col_name = if let Some(alias) = &item.alias {
+                        alias.clone()
+                    } else {
+                        match &item.expression {
+                            LogicalExpression::Variable(name) => name.clone(),
+                            LogicalExpression::Property { variable, property } => {
+                                format!("{variable}.{property}")
+                            }
+                            _ => continue,
+                        }
+                    };
+                    ctx.add_variable(
+                        col_name.clone(),
+                        VariableInfo {
+                            name: col_name,
+                            data_type: LogicalType::Any,
+                            is_node: false,
+                            is_edge: false,
+                        },
+                    );
+                }
+            }
+            LogicalOperator::Sort(s) => Self::register_subplan_columns(&s.input, ctx),
+            LogicalOperator::Limit(l) => Self::register_subplan_columns(&l.input, ctx),
+            LogicalOperator::Distinct(d) => Self::register_subplan_columns(&d.input, ctx),
+            LogicalOperator::Aggregate(agg) => {
+                // Aggregate produces named output columns
+                for expr in &agg.aggregates {
+                    if let Some(alias) = &expr.alias {
+                        ctx.add_variable(
+                            alias.clone(),
+                            VariableInfo {
+                                name: alias.clone(),
+                                data_type: LogicalType::Any,
+                                is_node: false,
+                                is_edge: false,
+                            },
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Binds a return operator.
     fn bind_return(&mut self, ret: &ReturnOp) -> Result<()> {
         // First bind the input
@@ -1008,7 +1062,8 @@ impl Binder {
                 Ok(())
             }
             LogicalExpression::ExistsSubquery(subquery)
-            | LogicalExpression::CountSubquery(subquery) => {
+            | LogicalExpression::CountSubquery(subquery)
+            | LogicalExpression::ValueSubquery(subquery) => {
                 // Subqueries have their own binding context
                 // For now, just validate the structure exists
                 let _ = subquery; // Would need recursive binding
@@ -1752,6 +1807,7 @@ mod tests {
                     label: None,
                     input: None,
                 })),
+                pass_through_input: false,
             })),
         }));
 
@@ -1773,6 +1829,7 @@ mod tests {
                 alias: Some("x".to_string()),
             }],
             input: Box::new(LogicalOperator::Empty),
+            pass_through_input: false,
         }));
 
         let mut binder = Binder::new();

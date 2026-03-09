@@ -5,7 +5,6 @@ ORDER BY, LIMIT, SKIP, OFFSET, FETCH FIRST, WITH, UNWIND, LET, FOR,
 NEXT, GROUP BY, HAVING, CALL.
 """
 
-import pytest
 
 # =============================================================================
 # MATCH (sec 14.4)
@@ -192,7 +191,6 @@ class TestReturn:
         result = list(db.execute("MATCH (n:Person) RETURN n.name AS person_name"))
         assert result[0]["person_name"] == "Alix"
 
-    @pytest.mark.xfail(reason="RETURN DISTINCT does not deduplicate results")
     def test_return_distinct(self, db):
         """RETURN DISTINCT deduplicates."""
         db.create_node(["Person"], {"name": "Alix", "city": "Amsterdam"})
@@ -350,7 +348,6 @@ class TestUnwind:
         vals = [r["x"] for r in result]
         assert vals == [1, 2, 3]
 
-    @pytest.mark.xfail(reason="List properties may not roundtrip as lists through GQL UNWIND")
     def test_unwind_property_list(self, db):
         """UNWIND a property that is a list."""
         db.create_node(["Item"], {"tags": ["a", "b", "c"]})
@@ -366,9 +363,6 @@ class TestUnwind:
 class TestLet:
     """LET variable binding."""
 
-    @pytest.mark.xfail(
-        reason="LET clause does not resolve variables from preceding WITH/MATCH scope"
-    )
     def test_let_simple(self, db):
         """LET var = expr parallel assignment."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
@@ -377,9 +371,6 @@ class TestLet:
         )
         assert result[0]["doubled"] == 60
 
-    @pytest.mark.xfail(
-        reason="LET clause does not resolve variables from preceding WITH/MATCH scope"
-    )
     def test_let_multiple(self, db):
         """LET with multiple bindings."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
@@ -504,7 +495,6 @@ class TestCall:
         labels = [r["label"] for r in result]
         assert "Person" in labels
 
-    @pytest.mark.xfail(reason="Inline CALL { subquery } syntax not supported in GQL parser")
     def test_call_subquery(self, db):
         """CALL { subquery } inline block."""
         db.create_node(["Person"], {"name": "Alix"})
@@ -518,7 +508,6 @@ class TestCall:
         )
         assert len(result) == 2
 
-    @pytest.mark.xfail(reason="Inline CALL { subquery } syntax not supported in GQL parser")
     def test_optional_call(self, db):
         """OPTIONAL CALL returns null when subquery yields no rows."""
         db.create_node(["Person"], {"name": "Alix"})

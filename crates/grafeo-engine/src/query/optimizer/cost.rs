@@ -782,6 +782,7 @@ mod tests {
                 },
             ],
             input: Box::new(LogicalOperator::Empty),
+            pass_through_input: false,
         };
         let cost = model.project_cost(&project, 1000.0);
 

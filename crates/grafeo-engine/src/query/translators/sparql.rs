@@ -141,6 +141,7 @@ impl SparqlTranslator {
                 plan = LogicalOperator::Project(ProjectOp {
                     projections,
                     input: Box::new(plan),
+                    pass_through_input: false,
                 });
             }
         }
@@ -1762,6 +1763,7 @@ impl SparqlTranslator {
         Ok(LogicalOperator::Project(ProjectOp {
             projections,
             input: Box::new(input),
+            pass_through_input: false,
         }))
     }
 
@@ -1792,6 +1794,7 @@ impl SparqlTranslator {
         Ok(LogicalOperator::Project(ProjectOp {
             projections,
             input: Box::new(input),
+            pass_through_input: false,
         }))
     }
 

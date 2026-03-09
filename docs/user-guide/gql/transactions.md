@@ -54,6 +54,60 @@ COMMIT
 ROLLBACK
 ```
 
+### Savepoints
+
+Create named savepoints within a transaction for partial rollback:
+
+```sql
+-- Create a savepoint
+SAVEPOINT sp1
+
+-- Roll back to savepoint (undo changes made after it)
+ROLLBACK TO SAVEPOINT sp1
+
+-- Release a savepoint (discard it, keep changes)
+RELEASE SAVEPOINT sp1
+```
+
+### Example: Savepoint Workflow
+
+```sql
+START TRANSACTION READ WRITE
+
+-- First update
+MATCH (a:Account {id: 'A001'})
+SET a.balance = a.balance + 500
+
+SAVEPOINT before_bonus
+
+-- Tentative bonus
+MATCH (a:Account {id: 'A001'})
+SET a.bonus = 100
+
+-- Changed our mind, undo the bonus
+ROLLBACK TO SAVEPOINT before_bonus
+
+-- The +500 balance change is preserved
+COMMIT
+```
+
+### Nested Transactions
+
+Starting a transaction inside an existing transaction creates an implicit savepoint:
+
+```sql
+START TRANSACTION READ WRITE
+MATCH (n:Counter) SET n.value = 1
+
+-- Creates implicit savepoint (inner transaction)
+START TRANSACTION
+MATCH (n:Counter) SET n.value = 99
+ROLLBACK  -- Rolls back to the implicit savepoint
+
+-- n.value is still 1
+COMMIT
+```
+
 ### Example: Transaction Workflow
 
 ```sql

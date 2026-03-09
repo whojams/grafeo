@@ -40,7 +40,6 @@ class TestNamedProcedureCall:
         assert "name" in keys
         assert "age" in keys
 
-    @pytest.mark.xfail(reason="WHERE filtering on CALL YIELD may not work in GQL parser")
     def test_call_with_where(self, db):
         """CALL ... YIELD ... WHERE filters yielded rows."""
         db.create_node(["Person"], {"name": "Alix"})
@@ -66,7 +65,6 @@ class TestNamedProcedureCall:
 class TestInlineCall:
     """CALL { ... } inline subquery block."""
 
-    @pytest.mark.xfail(reason="Inline CALL { subquery } syntax not supported in GQL parser")
     def test_call_subquery_basic(self, db):
         """CALL { subquery } with WITH propagation."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
@@ -80,7 +78,6 @@ class TestInlineCall:
         )
         assert len(result) == 2
 
-    @pytest.mark.xfail(reason="Inline CALL { subquery } syntax not supported in GQL parser")
     def test_call_subquery_aggregation(self, db):
         """CALL { } with aggregation inside."""
         db.create_node(["Person"], {"name": "Alix", "age": 30})
@@ -97,7 +94,6 @@ class TestInlineCall:
 class TestOptionalCall:
     """OPTIONAL CALL returns null when subquery yields no rows."""
 
-    @pytest.mark.xfail(reason="Inline CALL { subquery } syntax not supported in GQL parser")
     def test_optional_call_no_match(self, db):
         """OPTIONAL CALL with empty subquery result."""
         db.create_node(["Person"], {"name": "Alix"})
@@ -113,7 +109,6 @@ class TestOptionalCall:
         assert len(result) == 1
         assert result[0]["found"] is None
 
-    @pytest.mark.xfail(reason="Inline CALL { subquery } syntax not supported in GQL parser")
     def test_optional_call_with_match(self, db):
         """OPTIONAL CALL with matching subquery result."""
         a = db.create_node(["Person"], {"name": "Alix"})

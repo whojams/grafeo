@@ -3,8 +3,6 @@
 Covers: CREATE, DELETE, DETACH DELETE, SET, REMOVE, MERGE, FOREACH.
 """
 
-import pytest
-
 # =============================================================================
 # CREATE (sec 3.1)
 # =============================================================================
@@ -35,7 +33,6 @@ class TestCreate:
         )
         assert result[0]["t"] == "KNOWS"
 
-    @pytest.mark.xfail(reason="CREATE relationship does not return properties via r.prop")
     def test_create_relationship_with_properties(self, db):
         db.create_node(["Person"], {"name": "Alix"})
         db.create_node(["Person"], {"name": "Gus"})
@@ -92,6 +89,18 @@ class TestDelete:
         names = {r["n.name"] for r in result}
         assert "Alix" not in names
         assert "Gus" in names
+
+    def test_detach_delete_with_return(self, db):
+        """DETACH DELETE n RETURN count(n) should return delete count (Deriva FR-3)."""
+        a = db.create_node(["Person"], {"name": "Alix"})
+        b = db.create_node(["Person"], {"name": "Gus"})
+        db.create_edge(a.id, b.id, "KNOWS")
+        result = list(
+            db.execute_cypher(
+                "MATCH (n:Person {name: 'Alix'}) DETACH DELETE n RETURN count(n) AS deleted"
+            )
+        )
+        assert result[0]["deleted"] == 1
 
 
 # =============================================================================
@@ -223,6 +232,33 @@ class TestMerge:
             db.execute_cypher("MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN b.name")
         )
         assert result[0]["b.name"] == "Gus"
+
+    def test_merge_relationship_set(self, db):
+        """MATCH + MERGE (a)-[r:REL]->(b) SET r.prop works with pre-matched nodes."""
+        db.create_node(["Person"], {"name": "Alix"})
+        db.create_node(["Person"], {"name": "Gus"})
+        list(
+            db.execute_cypher(
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) "
+                "MERGE (a)-[r:KNOWS {since: 2020}]->(b) SET r.weight = 0.5"
+            )
+        )
+        result = list(
+            db.execute_cypher(
+                "MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) RETURN r.weight"
+            )
+        )
+        assert result[0]["r.weight"] == 0.5
+
+    def test_merge_inline_relationship_set(self, db):
+        """MERGE (a:L)-[r:REL]->(b:L) SET r.prop with inline node creation (Deriva FR-4)."""
+        list(
+            db.execute_cypher(
+                "MERGE (a:M {id: 1})-[r:REL {type: 'test'}]->(b:M {id: 2}) SET r.weight = 0.5"
+            )
+        )
+        result = list(db.execute_cypher("MATCH (:M {id: 1})-[r:REL]->(:M {id: 2}) RETURN r.weight"))
+        assert result[0]["r.weight"] == 0.5
 
 
 # =============================================================================

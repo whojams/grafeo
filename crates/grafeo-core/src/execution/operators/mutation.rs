@@ -596,7 +596,8 @@ impl Operator for DeleteNodeOperator {
         let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
 
         if let Some(chunk) = self.input.next()? {
-            let mut deleted_count = 0;
+            let mut builder =
+                DataChunkBuilder::with_capacity(&self.output_schema, chunk.row_count());
 
             for row in chunk.selected_indices() {
                 let node_val = chunk
@@ -631,17 +632,23 @@ impl Operator for DeleteNodeOperator {
                 }
 
                 // Delete the node with MVCC versioning
-                if self.store.delete_node_versioned(node_id, epoch, tx) {
-                    deleted_count += 1;
-                }
-            }
+                self.store.delete_node_versioned(node_id, epoch, tx);
 
-            // Return a chunk with the delete count
-            let mut builder = DataChunkBuilder::with_capacity(&self.output_schema, 1);
-            if let Some(dst) = builder.column_mut(0) {
-                dst.push_value(Value::Int64(deleted_count));
+                // Pass through all input columns so downstream RETURN can
+                // reference the variable (e.g., count(n) after DELETE n).
+                for col_idx in 0..chunk.column_count() {
+                    if let (Some(src), Some(dst)) =
+                        (chunk.column(col_idx), builder.column_mut(col_idx))
+                    {
+                        if let Some(val) = src.get_value(row) {
+                            dst.push_value(val);
+                        } else {
+                            dst.push_value(Value::Null);
+                        }
+                    }
+                }
+                builder.advance_row();
             }
-            builder.advance_row();
 
             return Ok(Some(builder.finish()));
         }
@@ -712,7 +719,8 @@ impl Operator for DeleteEdgeOperator {
         let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
 
         if let Some(chunk) = self.input.next()? {
-            let mut deleted_count = 0;
+            let mut builder =
+                DataChunkBuilder::with_capacity(&self.output_schema, chunk.row_count());
 
             for row in chunk.selected_indices() {
                 let edge_val = chunk
@@ -733,17 +741,22 @@ impl Operator for DeleteEdgeOperator {
                 };
 
                 // Delete the edge with MVCC versioning
-                if self.store.delete_edge_versioned(edge_id, epoch, tx) {
-                    deleted_count += 1;
-                }
-            }
+                self.store.delete_edge_versioned(edge_id, epoch, tx);
 
-            // Return a chunk with the delete count
-            let mut builder = DataChunkBuilder::with_capacity(&self.output_schema, 1);
-            if let Some(dst) = builder.column_mut(0) {
-                dst.push_value(Value::Int64(deleted_count));
+                // Pass through all input columns
+                for col_idx in 0..chunk.column_count() {
+                    if let (Some(src), Some(dst)) =
+                        (chunk.column(col_idx), builder.column_mut(col_idx))
+                    {
+                        if let Some(val) = src.get_value(row) {
+                            dst.push_value(val);
+                        } else {
+                            dst.push_value(Value::Null);
+                        }
+                    }
+                }
+                builder.advance_row();
             }
-            builder.advance_row();
 
             return Ok(Some(builder.finish()));
         }
@@ -771,6 +784,10 @@ pub struct AddLabelOperator {
     labels: Vec<String>,
     /// Output schema.
     output_schema: Vec<LogicalType>,
+    /// Epoch for MVCC versioning.
+    viewing_epoch: Option<EpochId>,
+    /// Transaction ID for undo log tracking.
+    transaction_id: Option<TransactionId>,
 }
 
 impl AddLabelOperator {
@@ -788,7 +805,20 @@ impl AddLabelOperator {
             node_column,
             labels,
             output_schema,
+            viewing_epoch: None,
+            transaction_id: None,
         }
+    }
+
+    /// Sets the transaction context for versioned label mutations.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
+        self
     }
 }
 
@@ -817,7 +847,12 @@ impl Operator for AddLabelOperator {
 
                 // Add all labels
                 for label in &self.labels {
-                    if self.store.add_label(node_id, label) {
+                    let added = if let Some(tid) = self.transaction_id {
+                        self.store.add_label_versioned(node_id, label, tid)
+                    } else {
+                        self.store.add_label(node_id, label)
+                    };
+                    if added {
                         updated_count += 1;
                     }
                 }
@@ -856,6 +891,10 @@ pub struct RemoveLabelOperator {
     labels: Vec<String>,
     /// Output schema.
     output_schema: Vec<LogicalType>,
+    /// Epoch for MVCC versioning.
+    viewing_epoch: Option<EpochId>,
+    /// Transaction ID for undo log tracking.
+    transaction_id: Option<TransactionId>,
 }
 
 impl RemoveLabelOperator {
@@ -873,7 +912,20 @@ impl RemoveLabelOperator {
             node_column,
             labels,
             output_schema,
+            viewing_epoch: None,
+            transaction_id: None,
         }
+    }
+
+    /// Sets the transaction context for versioned label mutations.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
+        self
     }
 }
 
@@ -902,7 +954,12 @@ impl Operator for RemoveLabelOperator {
 
                 // Remove all labels
                 for label in &self.labels {
-                    if self.store.remove_label(node_id, label) {
+                    let removed = if let Some(tid) = self.transaction_id {
+                        self.store.remove_label_versioned(node_id, label, tid)
+                    } else {
+                        self.store.remove_label(node_id, label)
+                    };
+                    if removed {
                         updated_count += 1;
                     }
                 }
@@ -954,6 +1011,10 @@ pub struct SetPropertyOperator {
     labels: Vec<String>,
     /// Edge type (for edge constraint validation).
     edge_type_name: Option<String>,
+    /// Epoch for MVCC versioning.
+    viewing_epoch: Option<EpochId>,
+    /// Transaction ID for undo log tracking.
+    transaction_id: Option<TransactionId>,
 }
 
 impl SetPropertyOperator {
@@ -976,6 +1037,8 @@ impl SetPropertyOperator {
             validator: None,
             labels: Vec::new(),
             edge_type_name: None,
+            viewing_epoch: None,
+            transaction_id: None,
         }
     }
 
@@ -998,6 +1061,8 @@ impl SetPropertyOperator {
             validator: None,
             labels: Vec::new(),
             edge_type_name: None,
+            viewing_epoch: None,
+            transaction_id: None,
         }
     }
 
@@ -1022,6 +1087,20 @@ impl SetPropertyOperator {
     /// Sets the edge type name (for edge constraint validation).
     pub fn with_edge_type(mut self, edge_type: String) -> Self {
         self.edge_type_name = Some(edge_type);
+        self
+    }
+
+    /// Sets the transaction context for versioned property mutations.
+    ///
+    /// When a transaction ID is provided, property changes are recorded in
+    /// an undo log so they can be restored on rollback.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
         self
     }
 }
@@ -1080,7 +1159,8 @@ impl Operator for SetPropertyOperator {
                     }
                 }
 
-                // Write all properties
+                // Write all properties (use versioned methods when inside a transaction)
+                let tx_id = self.transaction_id;
                 for (prop_name, value) in resolved_props {
                     if prop_name == "*" {
                         // Map assignment: value should be a Map
@@ -1095,8 +1175,16 @@ impl Operator for SetPropertyOperator {
                                             .map(|(k, _)| k.as_str().to_string())
                                             .collect();
                                         for key in keys {
-                                            self.store
-                                                .remove_edge_property(EdgeId(entity_id), &key);
+                                            if let Some(tid) = tx_id {
+                                                self.store.remove_edge_property_versioned(
+                                                    EdgeId(entity_id),
+                                                    &key,
+                                                    tid,
+                                                );
+                                            } else {
+                                                self.store
+                                                    .remove_edge_property(EdgeId(entity_id), &key);
+                                            }
                                         }
                                     }
                                 } else if let Some(node) = self.store.get_node(NodeId(entity_id)) {
@@ -1106,17 +1194,42 @@ impl Operator for SetPropertyOperator {
                                         .map(|(k, _)| k.as_str().to_string())
                                         .collect();
                                     for key in keys {
-                                        self.store.remove_node_property(NodeId(entity_id), &key);
+                                        if let Some(tid) = tx_id {
+                                            self.store.remove_node_property_versioned(
+                                                NodeId(entity_id),
+                                                &key,
+                                                tid,
+                                            );
+                                        } else {
+                                            self.store
+                                                .remove_node_property(NodeId(entity_id), &key);
+                                        }
                                     }
                                 }
                             }
                             // Set each map entry
                             for (key, val) in map.iter() {
                                 if self.is_edge {
-                                    self.store.set_edge_property(
-                                        EdgeId(entity_id),
+                                    if let Some(tid) = tx_id {
+                                        self.store.set_edge_property_versioned(
+                                            EdgeId(entity_id),
+                                            key.as_str(),
+                                            val.clone(),
+                                            tid,
+                                        );
+                                    } else {
+                                        self.store.set_edge_property(
+                                            EdgeId(entity_id),
+                                            key.as_str(),
+                                            val.clone(),
+                                        );
+                                    }
+                                } else if let Some(tid) = tx_id {
+                                    self.store.set_node_property_versioned(
+                                        NodeId(entity_id),
                                         key.as_str(),
                                         val.clone(),
+                                        tid,
                                     );
                                 } else {
                                     self.store.set_node_property(
@@ -1128,8 +1241,24 @@ impl Operator for SetPropertyOperator {
                             }
                         }
                     } else if self.is_edge {
-                        self.store
-                            .set_edge_property(EdgeId(entity_id), &prop_name, value);
+                        if let Some(tid) = tx_id {
+                            self.store.set_edge_property_versioned(
+                                EdgeId(entity_id),
+                                &prop_name,
+                                value,
+                                tid,
+                            );
+                        } else {
+                            self.store
+                                .set_edge_property(EdgeId(entity_id), &prop_name, value);
+                        }
+                    } else if let Some(tid) = tx_id {
+                        self.store.set_node_property_versioned(
+                            NodeId(entity_id),
+                            &prop_name,
+                            value,
+                            tid,
+                        );
                     } else {
                         self.store
                             .set_node_property(NodeId(entity_id), &prop_name, value);
@@ -1291,13 +1420,13 @@ mod tests {
             Arc::clone(&store),
             MockInput::boxed(node_id_chunk(&[node_id])),
             0,
-            vec![LogicalType::Int64],
+            vec![LogicalType::Node],
             false,
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(deleted, 1);
+        // Pass-through: output row contains the original node ID
+        assert_eq!(chunk.row_count(), 1);
         assert_eq!(store.node_count(), 0);
     }
 
@@ -1316,12 +1445,11 @@ mod tests {
             Arc::clone(&store),
             MockInput::boxed(edge_id_chunk(&[eid])),
             0,
-            vec![LogicalType::Int64],
+            vec![LogicalType::Node],
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(deleted, 1);
+        assert_eq!(chunk.row_count(), 1);
         assert_eq!(store.edge_count(), 0);
     }
 
@@ -1353,12 +1481,11 @@ mod tests {
             Arc::clone(&store),
             MockInput::boxed(edge_id_chunk(&[e1, e2])),
             0,
-            vec![LogicalType::Int64],
+            vec![LogicalType::Node],
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(deleted, 2);
+        assert_eq!(chunk.row_count(), 2);
         assert_eq!(store.edge_count(), 0);
     }
 
@@ -1378,13 +1505,12 @@ mod tests {
             Arc::clone(&store),
             MockInput::boxed(node_id_chunk(&[n1])),
             0,
-            vec![LogicalType::Int64],
+            vec![LogicalType::Node],
             true, // detach = true
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(deleted, 1);
+        assert_eq!(chunk.row_count(), 1);
         assert_eq!(store.node_count(), 1);
         assert_eq!(store.edge_count(), 0); // edges detached
     }

@@ -9,7 +9,7 @@ use crate::query::plan::LogicalExpression;
 use grafeo_common::types::LogicalType;
 use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::execution::operators::{
-    ApplyOperator, DistinctOperator, ExceptOperator, HashJoinOperator, IntersectOperator,
+    DistinctOperator, ExceptOperator, HashJoinOperator, IntersectOperator,
     JoinType as PhysicalJoinType, LimitOperator, Operator, OtherwiseOperator, ProjectExpr,
     ProjectOperator, SkipOperator, UnionOperator,
 };
@@ -108,18 +108,6 @@ pub(crate) fn build_otherwise(
 ) -> (Box<dyn Operator>, Vec<String>) {
     let operator = Box::new(OtherwiseOperator::new(left, right));
     (operator, columns)
-}
-
-/// Builds an APPLY (lateral join) physical operator.
-pub(crate) fn build_apply(
-    outer: Box<dyn Operator>,
-    inner: Box<dyn Operator>,
-    mut outer_columns: Vec<String>,
-    inner_columns: Vec<String>,
-) -> (Box<dyn Operator>, Vec<String>) {
-    outer_columns.extend(inner_columns);
-    let operator = Box::new(ApplyOperator::new(outer, inner));
-    (operator, outer_columns)
 }
 
 /// Builds an ANTI JOIN physical operator.

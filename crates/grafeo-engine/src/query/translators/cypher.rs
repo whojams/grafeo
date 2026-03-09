@@ -265,10 +265,15 @@ impl CypherTranslator {
         if input.is_some()
             && let Some(ast::Clause::With(with_clause)) = inner.clauses.first()
         {
-            for item in &with_clause.items {
-                if let ast::Expression::Variable(name) = &item.expression {
-                    let var_name = item.alias.as_deref().unwrap_or(name);
-                    shared_variables.push(var_name.to_string());
+            if with_clause.is_wildcard {
+                // WITH * imports all outer variables
+                shared_variables.push("*".to_string());
+            } else {
+                for item in &with_clause.items {
+                    if let ast::Expression::Variable(name) = &item.expression {
+                        let var_name = item.alias.as_deref().unwrap_or(name);
+                        shared_variables.push(var_name.to_string());
+                    }
                 }
             }
             if !shared_variables.is_empty() {
@@ -296,6 +301,7 @@ impl CypherTranslator {
                 input: Box::new(outer),
                 subplan: Box::new(inner_plan),
                 shared_variables,
+                optional: false,
             })),
             None => Ok(inner_plan),
         }
@@ -814,6 +820,22 @@ impl CypherTranslator {
         // If there's no input, use Empty which produces a single row for projection evaluation
         let input = input.unwrap_or(LogicalOperator::Empty);
 
+        // WITH *: skip projection, all variables pass through unchanged
+        if with_clause.is_wildcard {
+            let mut plan = input;
+
+            if let Some(where_clause) = &with_clause.where_clause {
+                let predicate = self.translate_expression(&where_clause.predicate)?;
+                plan = wrap_filter(plan, predicate);
+            }
+
+            if with_clause.distinct {
+                plan = wrap_distinct(plan);
+            }
+
+            return Ok(plan);
+        }
+
         // Check if WITH contains aggregate functions (e.g. WITH collect(n) AS people)
         let has_aggregates = with_clause
             .items
@@ -842,6 +864,7 @@ impl CypherTranslator {
                 LogicalOperator::Project(ProjectOp {
                     projections,
                     input: Box::new(agg_op),
+                    pass_through_input: false,
                 })
             } else {
                 agg_op
@@ -890,6 +913,7 @@ impl CypherTranslator {
             LogicalOperator::Project(ProjectOp {
                 projections,
                 input: Box::new(input),
+                pass_through_input: false,
             })
         };
 
@@ -1010,6 +1034,8 @@ impl CypherTranslator {
         merge_clause: &ast::MergeClause,
         input: LogicalOperator,
     ) -> Result<LogicalOperator> {
+        let mut current_input = input;
+
         // Extract source node variable
         let source_variable = path.start.variable.clone().ok_or_else(|| {
             Error::Query(QueryError::new(
@@ -1017,6 +1043,26 @@ impl CypherTranslator {
                 "MERGE relationship pattern requires a source node variable",
             ))
         })?;
+
+        // If source node has labels or properties, it's an inline definition:
+        // emit a MergeOp to create-or-match the node first.
+        if !path.start.labels.is_empty() || !path.start.properties.is_empty() {
+            let node_props: Vec<(String, LogicalExpression)> = path
+                .start
+                .properties
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                .collect::<Result<Vec<_>>>()?;
+
+            current_input = LogicalOperator::Merge(MergeOp {
+                variable: source_variable.clone(),
+                labels: path.start.labels.clone(),
+                match_properties: node_props,
+                on_create: Vec::new(),
+                on_match: Vec::new(),
+                input: Box::new(current_input),
+            });
+        }
 
         // Extract the first (and only) relationship segment
         let rel = path.chain.first().ok_or_else(|| {
@@ -1049,6 +1095,25 @@ impl CypherTranslator {
             ))
         })?;
 
+        // If target node has labels or properties, emit a MergeOp for it too.
+        if !rel.target.labels.is_empty() || !rel.target.properties.is_empty() {
+            let node_props: Vec<(String, LogicalExpression)> = rel
+                .target
+                .properties
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                .collect::<Result<Vec<_>>>()?;
+
+            current_input = LogicalOperator::Merge(MergeOp {
+                variable: target_variable.clone(),
+                labels: rel.target.labels.clone(),
+                match_properties: node_props,
+                on_create: Vec::new(),
+                on_match: Vec::new(),
+                input: Box::new(current_input),
+            });
+        }
+
         // Extract relationship properties
         let match_properties: Vec<(String, LogicalExpression)> = rel
             .properties
@@ -1078,7 +1143,7 @@ impl CypherTranslator {
             match_properties,
             on_create,
             on_match,
-            input: Box::new(input),
+            input: Box::new(current_input),
         }))
     }
 
@@ -2325,6 +2390,7 @@ impl CypherTranslator {
                     input: Box::new(current_input),
                     subplan: Box::new(inner_plan),
                     shared_variables: vec![anchor],
+                    optional: false,
                 });
 
                 // 6. Replace expression with Variable reference

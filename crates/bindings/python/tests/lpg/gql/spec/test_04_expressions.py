@@ -5,7 +5,6 @@ CASE, NULLIF, COALESCE, CAST, LET IN END, list comprehensions, reduce,
 literals, parameters, property access, SESSION_USER.
 """
 
-import pytest
 
 # =============================================================================
 # Operators (sec 20)
@@ -45,13 +44,11 @@ class TestArithmeticOperators:
         result = list(db.execute("MATCH (n:N) RETURN -n.v AS r"))
         assert result[0]["r"] == -5
 
-    @pytest.mark.xfail(reason="Unary + operator not supported by GQL parser")
     def test_unary_plus(self, db):
         db.create_node(["N"], {"v": 5})
         result = list(db.execute("MATCH (n:N) RETURN +n.v AS r"))
         assert result[0]["r"] == 5
 
-    @pytest.mark.xfail(reason="|| operator returns only the first operand instead of concatenation")
     def test_string_concatenation_pipe(self, db):
         """|| ISO string concatenation operator."""
         db.create_node(["N"], {"a": "hello", "b": "world"})
@@ -380,9 +377,6 @@ class TestExpressionForms:
         result = list(db.execute("MATCH (n:N) RETURN CAST(n.v AS ZONED DATETIME) AS r"))
         assert result[0]["r"] is not None
 
-    @pytest.mark.xfail(
-        reason="LET x = expr IN expr END expression syntax not supported by GQL parser"
-    )
     def test_let_in_expression(self, db):
         """LET ... IN ... END expression binding."""
         db.create_node(["N"], {"v": 5})

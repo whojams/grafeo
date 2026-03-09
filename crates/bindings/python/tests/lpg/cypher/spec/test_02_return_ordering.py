@@ -4,8 +4,6 @@ Covers: RETURN, RETURN DISTINCT, RETURN *, ORDER BY, SKIP, LIMIT,
 RETURN expressions, aliases, aggregation in RETURN.
 """
 
-import pytest
-
 # =============================================================================
 # RETURN
 # =============================================================================
@@ -25,7 +23,6 @@ class TestReturn:
         result = list(db.execute_cypher("MATCH (n:Person) RETURN n.name AS person_name"))
         assert result[0]["person_name"] == "Alix"
 
-    @pytest.mark.xfail(reason="RETURN DISTINCT does not deduplicate results")
     def test_return_distinct(self, db):
         db.create_node(["Person"], {"name": "Alix", "city": "Amsterdam"})
         db.create_node(["Person"], {"name": "Gus", "city": "Amsterdam"})

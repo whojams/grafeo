@@ -171,6 +171,7 @@ impl GremlinTranslator {
                                         alias: Some(alias.clone()),
                                     }],
                                     input: Box::new(plan.clone()),
+                                    pass_through_input: false,
                                 }),
                                 LogicalOperator::Project(ProjectOp {
                                     projections: vec![Projection {
@@ -178,6 +179,7 @@ impl GremlinTranslator {
                                         alias: Some(alias.clone()),
                                     }],
                                     input: Box::new(plan),
+                                    pass_through_input: false,
                                 }),
                             ],
                         });
@@ -206,6 +208,7 @@ impl GremlinTranslator {
                                 alias: Some(alias.clone()),
                             }],
                             input: Box::new(plan),
+                            pass_through_input: false,
                         });
                         current_var = alias;
                     }
@@ -237,6 +240,7 @@ impl GremlinTranslator {
                         plan = LogicalOperator::Project(ProjectOp {
                             projections,
                             input: Box::new(plan),
+                            pass_through_input: false,
                         });
                         if let Some(alias) = first_alias {
                             current_var = alias;
@@ -759,6 +763,7 @@ impl GremlinTranslator {
                                     alias: Some(alias.clone()),
                                 }],
                                 input: Box::new(input.clone()),
+                                pass_through_input: false,
                             })
                         })
                         .collect();
@@ -779,6 +784,7 @@ impl GremlinTranslator {
                     let plan = LogicalOperator::Project(ProjectOp {
                         projections,
                         input: Box::new(input),
+                        pass_through_input: false,
                     });
                     let new_var = keys.first().cloned();
                     Ok((plan, new_var))
@@ -791,6 +797,7 @@ impl GremlinTranslator {
                         alias: Some("id".to_string()),
                     }],
                     input: Box::new(input),
+                    pass_through_input: false,
                 });
                 Ok((plan, Some("id".to_string())))
             }
@@ -806,6 +813,7 @@ impl GremlinTranslator {
                         alias: Some("label".to_string()),
                     }],
                     input: Box::new(input),
+                    pass_through_input: false,
                 });
                 Ok((plan, Some("label".to_string())))
             }
@@ -1108,6 +1116,7 @@ impl GremlinTranslator {
                         alias: Some(alias.clone()),
                     }],
                     input: Box::new(input),
+                    pass_through_input: false,
                 });
                 Ok((plan, Some(alias)))
             }
@@ -1174,6 +1183,7 @@ impl GremlinTranslator {
                 let plan = LogicalOperator::Project(ProjectOp {
                     projections,
                     input: Box::new(input),
+                    pass_through_input: false,
                 });
                 // Set first key as current_var so Return uses a valid column.
                 // The full Return items are set below.
@@ -1622,6 +1632,7 @@ impl GremlinTranslator {
                     alias: Some(alias.to_string()),
                 }],
                 input: Box::new(branch_plan),
+                pass_through_input: false,
             });
             branches.push(branch_plan);
         }

@@ -5,7 +5,6 @@ named paths, shortestPath, allShortestPaths, pattern comprehensions,
 EXISTS/COUNT subquery patterns.
 """
 
-import pytest
 
 # =============================================================================
 # Node Patterns (sec 4.1)
@@ -110,7 +109,6 @@ class TestRelationshipPatterns:
         )
         assert result[0]["t"] == "KNOWS"
 
-    @pytest.mark.xfail(reason="--> anonymous relationship shorthand not parsed")
     def test_anonymous_relationship(self, db):
         a = db.create_node(["Person"], {"name": "Alix"})
         b = db.create_node(["Person"], {"name": "Gus"})

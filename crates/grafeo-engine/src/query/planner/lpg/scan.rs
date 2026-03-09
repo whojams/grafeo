@@ -22,6 +22,13 @@ impl super::Planner {
         if let Some(input) = &scan.input {
             let (input_op, mut input_columns) = self.plan_operator(input)?;
 
+            // If the scan variable already exists in the input (e.g., from a
+            // correlated ParameterScan), skip the redundant scan and reuse the
+            // bound value. This avoids a cross product in CALL { WITH var MATCH (var)... }.
+            if input_columns.contains(&scan.variable) {
+                return Ok((input_op, input_columns));
+            }
+
             // Build output schema: input columns + scan column
             let mut output_schema: Vec<LogicalType> =
                 input_columns.iter().map(|_| LogicalType::Any).collect();

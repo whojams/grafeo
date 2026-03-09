@@ -13,9 +13,9 @@ use crate::query::plan::{
     CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, EntityKind, ExceptOp,
     ExpandDirection, ExpandOp, HorizontalAggregateOp, IntersectOp, JoinCondition, JoinOp, JoinType,
     LeftJoinOp, LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, MergeRelationshipOp,
-    NodeScanOp, NullsOrdering, OtherwiseOp, PathMode, ProcedureYield, ProjectOp, Projection,
-    RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp,
-    UnwindOp,
+    NodeScanOp, NullsOrdering, OtherwiseOp, ParameterScanOp, PathMode, ProcedureYield, ProjectOp,
+    Projection, RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder,
+    UnaryOp, UnionOp, UnwindOp,
 };
 #[cfg(test)]
 use crate::query::plan::{FilterOp, LimitOp, SkipOp};
@@ -178,6 +178,7 @@ impl GqlTranslator {
                     input: Box::new(left_plan.root),
                     subplan: Box::new(right_plan.root),
                     shared_variables: Vec::new(),
+                    optional: false,
                 });
                 Ok(LogicalPlan::new(root))
             }
@@ -399,26 +400,11 @@ impl GqlTranslator {
                         plan = LogicalOperator::Project(ProjectOp {
                             projections,
                             input: Box::new(plan),
+                            pass_through_input: true,
                         });
                     }
                     ast::QueryClause::InlineCall { subquery, optional } => {
-                        // CALL { subquery } translates to Apply (lateral join):
-                        // for each row from the outer plan, execute the subquery.
-                        let subplan = self.translate_query(subquery)?.root;
-                        if *optional {
-                            // OPTIONAL CALL: use LeftJoin so outer rows survive
-                            plan = LogicalOperator::LeftJoin(LeftJoinOp {
-                                left: Box::new(plan),
-                                right: Box::new(subplan),
-                                condition: None,
-                            });
-                        } else {
-                            plan = LogicalOperator::Apply(ApplyOp {
-                                input: Box::new(plan),
-                                subplan: Box::new(subplan),
-                                shared_variables: Vec::new(),
-                            });
-                        }
+                        plan = self.translate_inline_call(subquery, plan, *optional)?;
                     }
                     ast::QueryClause::CallProcedure(call_stmt) => {
                         // CALL procedure(...) within a query context
@@ -430,6 +416,7 @@ impl GqlTranslator {
                                 input: Box::new(plan),
                                 subplan: Box::new(call_plan),
                                 shared_variables: Vec::new(),
+                                optional: false,
                             });
                         }
                     }
@@ -562,9 +549,28 @@ impl GqlTranslator {
                 plan = LogicalOperator::Project(ProjectOp {
                     projections,
                     input: Box::new(plan),
+                    pass_through_input: false,
                 });
             }
             // WITH * skips projection: all variables pass through unchanged
+
+            // Handle LET bindings attached to this WITH clause.
+            // LET adds new columns without replacing existing ones.
+            if !with_clause.let_bindings.is_empty() {
+                let mut let_projections = Vec::new();
+                for (name, expr) in &with_clause.let_bindings {
+                    let logical_expr = self.translate_expression(expr)?;
+                    let_projections.push(Projection {
+                        expression: logical_expr,
+                        alias: Some(name.clone()),
+                    });
+                }
+                plan = LogicalOperator::Project(ProjectOp {
+                    projections: let_projections,
+                    input: Box::new(plan),
+                    pass_through_input: true,
+                });
+            }
 
             // Apply WHERE filter if present in WITH clause
             if let Some(where_clause) = &with_clause.where_clause {
@@ -708,7 +714,7 @@ impl GqlTranslator {
         } else {
             // Apply RETURN first (closest to input), then Sort wraps it.
             // This ensures RETURN aliases are visible to ORDER BY in the binder.
-            let return_items = if query.return_clause.is_wildcard {
+            let mut return_items = if query.return_clause.is_wildcard {
                 // RETURN *: emit a wildcard marker that the planner expands
                 vec![ReturnItem {
                     expression: LogicalExpression::Variable("*".into()),
@@ -727,6 +733,27 @@ impl GqlTranslator {
                     })
                     .collect::<Result<Vec<_>>>()?
             };
+
+            // Lift VALUE subqueries: wrap with Apply and replace expression
+            // with a Variable reference to the inner plan's output column.
+            for item in &mut return_items {
+                if let LogicalExpression::ValueSubquery(inner_plan) = &item.expression {
+                    // Determine the output column name from the inner plan's RETURN
+                    let col_name =
+                        Self::extract_return_column_name(inner_plan).unwrap_or_else(|| {
+                            item.alias.clone().unwrap_or_else(|| "__value".to_string())
+                        });
+
+                    plan = LogicalOperator::Apply(ApplyOp {
+                        input: Box::new(plan),
+                        subplan: inner_plan.clone(),
+                        shared_variables: vec![],
+                        optional: false,
+                    });
+
+                    item.expression = LogicalExpression::Variable(col_name);
+                }
+            }
 
             plan = wrap_return(plan, return_items, query.return_clause.distinct);
 
@@ -755,6 +782,47 @@ impl GqlTranslator {
         }
 
         Ok(LogicalPlan::new(plan))
+    }
+
+    /// Recursively replaces `Variable(name)` references in `expr` with the
+    /// corresponding binding expression from `bindings`, implementing LET
+    /// expression inline substitution.
+    fn substitute_let_bindings(
+        expr: LogicalExpression,
+        bindings: &[(String, LogicalExpression)],
+    ) -> LogicalExpression {
+        match expr {
+            LogicalExpression::Variable(ref name) => {
+                for (bind_name, bind_expr) in bindings {
+                    if bind_name == name {
+                        return bind_expr.clone();
+                    }
+                }
+                expr
+            }
+            LogicalExpression::Binary { left, op, right } => LogicalExpression::Binary {
+                left: Box::new(Self::substitute_let_bindings(*left, bindings)),
+                op,
+                right: Box::new(Self::substitute_let_bindings(*right, bindings)),
+            },
+            LogicalExpression::Unary { op, operand } => LogicalExpression::Unary {
+                op,
+                operand: Box::new(Self::substitute_let_bindings(*operand, bindings)),
+            },
+            LogicalExpression::FunctionCall {
+                name,
+                args,
+                distinct,
+            } => LogicalExpression::FunctionCall {
+                name,
+                args: args
+                    .into_iter()
+                    .map(|a| Self::substitute_let_bindings(a, bindings))
+                    .collect(),
+                distinct,
+            },
+            other => other,
+        }
     }
 
     /// Extracts all named variables from a GQL AST pattern.
@@ -914,6 +982,176 @@ impl GqlTranslator {
                 "Empty MATCH clause",
             ))
         })
+    }
+
+    /// Translates `CALL { subquery }` to an Apply operator with proper scope.
+    ///
+    /// When the subquery starts with `WITH <vars>`, the variables are treated
+    /// as imports from the outer scope: a `ParameterScan` replaces `Empty` as
+    /// the inner plan root and `shared_variables` is populated so the planner
+    /// can wire them through `ParameterState`.
+    fn translate_inline_call(
+        &self,
+        subquery: &ast::QueryStatement,
+        outer: LogicalOperator,
+        optional: bool,
+    ) -> Result<LogicalOperator> {
+        let has_outer = !matches!(outer, LogicalOperator::Empty);
+
+        // Detect importing WITH: extract shared variable names and skip it.
+        let mut shared_variables = Vec::new();
+        let skip_with = if has_outer && !subquery.with_clauses.is_empty() {
+            let first_with = &subquery.with_clauses[0];
+            if first_with.is_wildcard {
+                shared_variables.push("*".to_string());
+                true
+            } else {
+                for item in &first_with.items {
+                    if let ast::Expression::Variable(name) = &item.expression {
+                        let var_name = item.alias.as_deref().unwrap_or(name);
+                        shared_variables.push(var_name.to_string());
+                    }
+                }
+                !shared_variables.is_empty()
+            }
+        } else {
+            false
+        };
+
+        // Build the inner plan: start from ParameterScan when importing variables.
+        let inner_plan = if skip_with && !shared_variables.is_empty() {
+            // Translate the subquery but override the first WITH clause:
+            // start from ParameterScan instead of Empty, skip the importing WITH.
+            let mut plan = LogicalOperator::ParameterScan(ParameterScanOp {
+                columns: shared_variables.clone(),
+            });
+
+            // Process MATCH clauses
+            for match_clause in &subquery.match_clauses {
+                if match_clause.optional {
+                    let match_plan = self.translate_match(match_clause)?;
+                    plan = LogicalOperator::LeftJoin(LeftJoinOp {
+                        left: Box::new(plan),
+                        right: Box::new(match_plan),
+                        condition: None,
+                    });
+                } else {
+                    let input = std::mem::replace(&mut plan, LogicalOperator::Empty);
+                    plan = self.translate_match_with_input(match_clause, Some(input))?;
+                }
+            }
+
+            // Apply WHERE filter
+            if let Some(where_clause) = &subquery.where_clause {
+                let predicate = self.translate_expression(&where_clause.expression)?;
+                plan = wrap_filter(plan, predicate);
+            }
+
+            // Process remaining WITH clauses (skip the first importing one)
+            for with_clause in subquery.with_clauses.iter().skip(1) {
+                if !with_clause.is_wildcard {
+                    let projections: Vec<Projection> = with_clause
+                        .items
+                        .iter()
+                        .map(|item| {
+                            Ok(Projection {
+                                expression: self.translate_expression(&item.expression)?,
+                                alias: item.alias.clone(),
+                            })
+                        })
+                        .collect::<Result<_>>()?;
+                    plan = LogicalOperator::Project(ProjectOp {
+                        projections,
+                        input: Box::new(plan),
+                        pass_through_input: false,
+                    });
+                }
+                // Handle LET bindings in inline call WITH clause
+                if !with_clause.let_bindings.is_empty() {
+                    let mut let_projections = Vec::new();
+                    for (name, expr) in &with_clause.let_bindings {
+                        let logical_expr = self.translate_expression(expr)?;
+                        let_projections.push(Projection {
+                            expression: logical_expr,
+                            alias: Some(name.clone()),
+                        });
+                    }
+                    plan = LogicalOperator::Project(ProjectOp {
+                        projections: let_projections,
+                        input: Box::new(plan),
+                        pass_through_input: true,
+                    });
+                }
+                if let Some(wc) = &with_clause.where_clause {
+                    let predicate = self.translate_expression(&wc.expression)?;
+                    plan = wrap_filter(plan, predicate);
+                }
+            }
+
+            // Translate RETURN clause
+            let has_aggregates = !subquery.return_clause.is_wildcard
+                && subquery
+                    .return_clause
+                    .items
+                    .iter()
+                    .any(|item| contains_aggregate(&item.expression));
+
+            if has_aggregates {
+                let (aggregates, auto_group_by, post_return) =
+                    self.extract_aggregates_and_groups(&subquery.return_clause.items)?;
+                let group_by = if subquery.return_clause.group_by.is_empty() {
+                    auto_group_by
+                } else {
+                    subquery
+                        .return_clause
+                        .group_by
+                        .iter()
+                        .map(|e| self.translate_expression(e))
+                        .collect::<Result<Vec<_>>>()?
+                };
+                let agg_op = LogicalOperator::Aggregate(AggregateOp {
+                    group_by,
+                    aggregates,
+                    input: Box::new(plan),
+                    having: None,
+                });
+                plan = if let Some(return_items) = post_return {
+                    wrap_return(agg_op, return_items, subquery.return_clause.distinct)
+                } else {
+                    agg_op
+                };
+            } else {
+                let return_items = subquery
+                    .return_clause
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(ReturnItem {
+                            expression: self.translate_expression(&item.expression)?,
+                            alias: item.alias.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                plan = wrap_return(plan, return_items, subquery.return_clause.distinct);
+            }
+            plan
+        } else {
+            // No importing WITH: translate the entire subquery independently
+            self.translate_query(subquery)?.root
+        };
+
+        // Wire the inner plan to the outer plan
+        if has_outer {
+            Ok(LogicalOperator::Apply(ApplyOp {
+                input: Box::new(outer),
+                subplan: Box::new(inner_plan),
+                shared_variables,
+                optional,
+            }))
+        } else {
+            // No outer input: just use the inner plan directly
+            Ok(inner_plan)
+        }
     }
 
     fn translate_match(&self, match_clause: &ast::MatchClause) -> Result<LogicalOperator> {
@@ -1178,12 +1416,33 @@ impl GqlTranslator {
         merge_clause: &ast::MergeClause,
         input: LogicalOperator,
     ) -> Result<LogicalOperator> {
+        let mut current_input = input;
+
         let source_variable = path.source.variable.clone().ok_or_else(|| {
             Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
                 "MERGE relationship pattern requires a source node variable",
             ))
         })?;
+
+        // If source node has labels or properties, emit a MergeOp for it
+        if !path.source.labels.is_empty() || !path.source.properties.is_empty() {
+            let node_props: Vec<(String, LogicalExpression)> = path
+                .source
+                .properties
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                .collect::<Result<Vec<_>>>()?;
+
+            current_input = LogicalOperator::Merge(MergeOp {
+                variable: source_variable.clone(),
+                labels: path.source.labels.clone(),
+                match_properties: node_props,
+                on_create: Vec::new(),
+                on_match: Vec::new(),
+                input: Box::new(current_input),
+            });
+        }
 
         let edge = path.edges.first().ok_or_else(|| {
             Error::Query(QueryError::new(
@@ -1210,6 +1469,25 @@ impl GqlTranslator {
                 "MERGE relationship pattern requires a target node variable",
             ))
         })?;
+
+        // If target node has labels or properties, emit a MergeOp for it
+        if !edge.target.labels.is_empty() || !edge.target.properties.is_empty() {
+            let node_props: Vec<(String, LogicalExpression)> = edge
+                .target
+                .properties
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                .collect::<Result<Vec<_>>>()?;
+
+            current_input = LogicalOperator::Merge(MergeOp {
+                variable: target_variable.clone(),
+                labels: edge.target.labels.clone(),
+                match_properties: node_props,
+                on_create: Vec::new(),
+                on_match: Vec::new(),
+                input: Box::new(current_input),
+            });
+        }
 
         let match_properties: Vec<(String, LogicalExpression)> = edge
             .properties
@@ -1249,7 +1527,7 @@ impl GqlTranslator {
             match_properties,
             on_create,
             on_match,
-            input: Box::new(input),
+            input: Box::new(current_input),
         }))
     }
 
@@ -1749,6 +2027,7 @@ impl GqlTranslator {
                             alias: Some(synthetic_var.clone()),
                         }],
                         input: Box::new(plan),
+                        pass_through_input: true,
                     });
                     plan = LogicalOperator::DeleteNode(DeleteNodeOp {
                         variable: synthetic_var,
@@ -1953,6 +2232,10 @@ impl GqlTranslator {
             }
             ast::Expression::Unary { op, operand } => {
                 let operand = self.translate_expression(operand)?;
+                // Unary positive is identity: just return the operand
+                if *op == ast::UnaryOp::Pos {
+                    return Ok(operand);
+                }
                 let op = self.translate_unary_op(*op);
                 Ok(LogicalExpression::Unary {
                     op,
@@ -2079,11 +2362,18 @@ impl GqlTranslator {
             }
             ast::Expression::ValueSubquery { query } => {
                 // VALUE { subquery } returns a scalar from the inner query.
-                // Translate the inner subquery and wrap as a correlated scalar subquery.
-                let inner_plan = self.translate_subquery_to_operator(query)?;
-                // We reuse CountSubquery infrastructure for now: the Apply operator
-                // will run the inner plan and extract the first result.
-                Ok(LogicalExpression::CountSubquery(Box::new(inner_plan)))
+                // If the inner RETURN is a count() aggregate over an edge pattern,
+                // use CountSubquery (optimized path that handles correlation).
+                // Otherwise, translate the full query and use ValueSubquery + Apply.
+                if Self::is_count_aggregate_return(&query.return_clause) {
+                    let inner_plan = self.translate_subquery_to_operator(query)?;
+                    Ok(LogicalExpression::CountSubquery(Box::new(inner_plan)))
+                } else {
+                    let inner_logical_plan = self.translate_query(query)?;
+                    Ok(LogicalExpression::ValueSubquery(Box::new(
+                        inner_logical_plan.root,
+                    )))
+                }
             }
             ast::Expression::ListComprehension {
                 variable,
@@ -2146,25 +2436,13 @@ impl GqlTranslator {
             }
             ast::Expression::LetIn { bindings, body } => {
                 // LET x = expr1, y = expr2 IN body END
-                // Desugar each binding to a nested CASE: the last binding wraps the body.
-                // Since our IR doesn't have variable scoping, we translate bindings as
-                // nested function calls: each binding becomes a property-like variable.
-                // For simple cases, we substitute bindings directly into the body.
-                // For the general case, we translate bindings as a chain of With projections,
-                // but at the expression level we can inline: translate body with substitution.
-                //
-                // Simple approach: translate all binding expressions, then translate the body.
-                // Variables defined in LET are in scope for the body. Since our logical
-                // expression IR doesn't have local scoping, we treat LET bindings as
-                // additional variables that the outer context can resolve.
-                let _binding_exprs: Vec<(String, LogicalExpression)> = bindings
+                // Translate each binding, then inline-substitute into the body.
+                let binding_exprs: Vec<(String, LogicalExpression)> = bindings
                     .iter()
                     .map(|(name, expr)| Ok((name.clone(), self.translate_expression(expr)?)))
                     .collect::<Result<_>>()?;
-                // Translate the body expression directly.
-                // The bindings introduce new variable names that will be resolved
-                // at execution time through the normal variable resolution mechanism.
-                self.translate_expression(body)
+                let body_expr = self.translate_expression(body)?;
+                Ok(Self::substitute_let_bindings(body_expr, &binding_exprs))
             }
         }
     }
@@ -2244,19 +2522,28 @@ impl GqlTranslator {
         match op {
             ast::UnaryOp::Not => UnaryOp::Not,
             ast::UnaryOp::Neg => UnaryOp::Neg,
+            // Pos is handled as a no-op at the call site; this arm is unreachable.
+            ast::UnaryOp::Pos => UnaryOp::Not,
             ast::UnaryOp::IsNull => UnaryOp::IsNull,
             ast::UnaryOp::IsNotNull => UnaryOp::IsNotNull,
         }
     }
 
     /// Translates a subquery to a logical operator (without Return).
+    ///
+    /// When the WHERE clause references variables not defined by the inner MATCH
+    /// patterns, a `ParameterScan` join is added so the filter planner can set up
+    /// correlated execution via `ApplyOperator`.
     fn translate_subquery_to_operator(
         &self,
         query: &ast::QueryStatement,
     ) -> Result<LogicalOperator> {
         let mut plan = LogicalOperator::Empty;
 
+        // Collect variables defined by inner MATCH patterns
+        let mut inner_defined = std::collections::HashSet::new();
         for match_clause in &query.match_clauses {
+            Self::collect_pattern_variables(&match_clause.patterns, &mut inner_defined);
             let match_plan = self.translate_match(match_clause)?;
             plan = if matches!(plan, LogicalOperator::Empty) {
                 match_plan
@@ -2271,11 +2558,138 @@ impl GqlTranslator {
         }
 
         if let Some(where_clause) = &query.where_clause {
+            // Detect outer variable references in WHERE
+            let mut referenced = std::collections::HashSet::new();
+            Self::collect_ast_expression_variables(&where_clause.expression, &mut referenced);
+            let outer_refs: Vec<String> = referenced.difference(&inner_defined).cloned().collect();
+
+            // If there are outer references, add ParameterScan for correlation
+            if !outer_refs.is_empty() {
+                plan = LogicalOperator::Join(JoinOp {
+                    left: Box::new(LogicalOperator::ParameterScan(ParameterScanOp {
+                        columns: outer_refs,
+                    })),
+                    right: Box::new(plan),
+                    join_type: JoinType::Cross,
+                    conditions: vec![],
+                });
+            }
+
             let predicate = self.translate_expression(&where_clause.expression)?;
             plan = wrap_filter(plan, predicate);
         }
 
         Ok(plan)
+    }
+
+    /// Returns true if the RETURN clause is a single count() aggregate.
+    fn is_count_aggregate_return(ret: &ast::ReturnClause) -> bool {
+        if ret.items.len() != 1 {
+            return false;
+        }
+        matches!(
+            &ret.items[0].expression,
+            ast::Expression::FunctionCall { name, .. } if name.eq_ignore_ascii_case("count")
+        )
+    }
+
+    /// Extracts the first output column name from a Return operator in a logical plan.
+    fn extract_return_column_name(plan: &LogicalOperator) -> Option<String> {
+        match plan {
+            LogicalOperator::Return(ret) => {
+                let item = ret.items.first()?;
+                if let Some(alias) = &item.alias {
+                    Some(alias.clone())
+                } else {
+                    // Derive name from expression
+                    match &item.expression {
+                        LogicalExpression::Variable(name) => Some(name.clone()),
+                        LogicalExpression::Property { variable, property } => {
+                            Some(format!("{variable}.{property}"))
+                        }
+                        _ => None,
+                    }
+                }
+            }
+            // Walk through wrapping operators to find the Return
+            LogicalOperator::Sort(s) => Self::extract_return_column_name(&s.input),
+            LogicalOperator::Limit(l) => Self::extract_return_column_name(&l.input),
+            LogicalOperator::Distinct(d) => Self::extract_return_column_name(&d.input),
+            _ => None,
+        }
+    }
+
+    /// Collects variable names defined by match patterns (nodes and edges).
+    fn collect_pattern_variables(
+        patterns: &[ast::AliasedPattern],
+        vars: &mut std::collections::HashSet<String>,
+    ) {
+        for aliased in patterns {
+            Self::collect_pattern_vars_inner(&aliased.pattern, vars);
+        }
+    }
+
+    /// Recursively collects variables from a single Pattern enum.
+    fn collect_pattern_vars_inner(
+        pattern: &ast::Pattern,
+        vars: &mut std::collections::HashSet<String>,
+    ) {
+        match pattern {
+            ast::Pattern::Node(node) => {
+                if let Some(v) = &node.variable {
+                    vars.insert(v.clone());
+                }
+            }
+            ast::Pattern::Path(path) => {
+                if let Some(v) = &path.source.variable {
+                    vars.insert(v.clone());
+                }
+                for edge in &path.edges {
+                    if let Some(v) = &edge.variable {
+                        vars.insert(v.clone());
+                    }
+                    if let Some(v) = &edge.target.variable {
+                        vars.insert(v.clone());
+                    }
+                }
+            }
+            ast::Pattern::Quantified { pattern: inner, .. } => {
+                Self::collect_pattern_vars_inner(inner, vars);
+            }
+            ast::Pattern::Union(patterns) | ast::Pattern::MultisetUnion(patterns) => {
+                for p in patterns {
+                    Self::collect_pattern_vars_inner(p, vars);
+                }
+            }
+        }
+    }
+
+    /// Collects all variable names referenced in an AST expression (for property access).
+    fn collect_ast_expression_variables(
+        expr: &ast::Expression,
+        vars: &mut std::collections::HashSet<String>,
+    ) {
+        match expr {
+            ast::Expression::PropertyAccess { variable, .. } => {
+                vars.insert(variable.clone());
+            }
+            ast::Expression::Variable(name) => {
+                vars.insert(name.clone());
+            }
+            ast::Expression::Binary { left, right, .. } => {
+                Self::collect_ast_expression_variables(left, vars);
+                Self::collect_ast_expression_variables(right, vars);
+            }
+            ast::Expression::Unary { operand, .. } => {
+                Self::collect_ast_expression_variables(operand, vars);
+            }
+            ast::Expression::FunctionCall { args, .. } => {
+                for arg in args {
+                    Self::collect_ast_expression_variables(arg, vars);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Extracts aggregate expressions and group-by expressions from RETURN items.
@@ -2384,8 +2798,12 @@ impl GqlTranslator {
                 }
             }
             ast::Expression::Unary { op, operand } => {
-                let unary_op = self.translate_unary_op(*op);
                 let (agg, sub) = self.extract_wrapped_aggregate(operand, synthetic_alias)?;
+                // Unary positive is identity: just return the operand
+                if *op == ast::UnaryOp::Pos {
+                    return Ok((agg, sub));
+                }
+                let unary_op = self.translate_unary_op(*op);
                 Ok((
                     agg,
                     LogicalExpression::Unary {

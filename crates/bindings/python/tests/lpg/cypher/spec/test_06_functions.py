@@ -165,7 +165,6 @@ class TestScalarFunctions:
         result = list(db.execute_cypher("MATCH (n:N) RETURN size(n.v) AS r"))
         assert result[0]["r"] == 5
 
-    @pytest.mark.xfail(reason="length() only accepts path variables, not property access")
     def test_length_string(self, db):
         db.create_node(["N"], {"v": "hello"})
         result = list(db.execute_cypher("MATCH (n:N) RETURN length(n.v) AS r"))

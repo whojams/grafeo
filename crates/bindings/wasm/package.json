@@ -29,6 +29,7 @@
   "files": [
     "grafeo_wasm.js",
     "grafeo_wasm.d.ts",
+    "grafeo_wasm_bg.js",
     "grafeo_wasm_bg.wasm",
     "grafeo_wasm_bg.wasm.d.ts"
   ],

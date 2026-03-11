@@ -1,6 +1,11 @@
 //! Projection, RETURN, sort, limit, and skip planning.
 
-use super::*;
+use super::{
+    Arc, Error, GraphStore, HashMap, LimitOp, LogicalExpression, LogicalOperator, LogicalType,
+    NullOrder, Operator, PhysicalSortKey, ProjectExpr, ProjectOperator, Result, ReturnOp, SkipOp,
+    SortDirection, SortOp, SortOperator, SortOrder, common, expression_to_string,
+    value_to_logical_type,
+};
 
 impl super::Planner {
     /// Plans a RETURN clause.
@@ -273,12 +278,15 @@ impl super::Planner {
                 }
             }
 
-            let operator = Box::new(ProjectOperator::with_store(
-                input_op,
-                projections,
-                output_types,
-                Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            ));
+            let operator = Box::new(
+                ProjectOperator::with_store(
+                    input_op,
+                    projections,
+                    output_types,
+                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+            );
 
             Ok((operator, columns))
         } else {
@@ -317,12 +325,15 @@ impl super::Planner {
                 // No reordering or resolution needed
                 Ok((input_op, columns))
             } else {
-                let operator = Box::new(ProjectOperator::with_store(
-                    input_op,
-                    projections,
-                    output_types,
-                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
-                ));
+                let operator = Box::new(
+                    ProjectOperator::with_store(
+                        input_op,
+                        projections,
+                        output_types,
+                        Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                    )
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                );
                 Ok((operator, columns))
             }
         }
@@ -428,12 +439,15 @@ impl super::Planner {
             output_columns.push(col_name);
         }
 
-        let operator = Box::new(ProjectOperator::with_store(
-            input_op,
-            projections,
-            output_types,
-            Arc::clone(&self.store) as Arc<dyn GraphStore>,
-        ));
+        let operator = Box::new(
+            ProjectOperator::with_store(
+                input_op,
+                projections,
+                output_types,
+                Arc::clone(&self.store) as Arc<dyn GraphStore>,
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id),
+        );
 
         Ok((operator, output_columns))
     }
@@ -607,12 +621,15 @@ impl super::Planner {
                 output_columns.push(col_name.clone());
             }
 
-            input_op = Box::new(ProjectOperator::with_store(
-                input_op,
-                projections,
-                output_types,
-                Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            ));
+            input_op = Box::new(
+                ProjectOperator::with_store(
+                    input_op,
+                    projections,
+                    output_types,
+                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+            );
         }
 
         // Convert logical sort keys to physical sort keys

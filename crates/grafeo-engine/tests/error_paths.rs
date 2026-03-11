@@ -583,3 +583,153 @@ fn test_sql_pgq_error_shows_position() {
         "SQL/PGQ error should show position, got: {err_str}"
     );
 }
+
+// ============================================================================
+// Malformed / adversarial parser input (T3-09)
+// ============================================================================
+
+#[test]
+fn test_whitespace_only_query() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("   \t\n  ");
+    assert!(result.is_err(), "whitespace-only query should error");
+}
+
+#[test]
+fn test_null_byte_in_query() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("MATCH (n\0:Person) RETURN n");
+    // Should error or handle gracefully, not panic
+    let _ = result;
+}
+
+#[test]
+fn test_deeply_nested_parentheses() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    // 50 levels of nested parens in WHERE clause
+    let mut query = String::from("MATCH (n:Person) WHERE ");
+    for _ in 0..50 {
+        query.push('(');
+    }
+    query.push_str("n.age > 0");
+    for _ in 0..50 {
+        query.push(')');
+    }
+    query.push_str(" RETURN n");
+    // Should either parse successfully or error gracefully
+    let _ = session.execute(&query);
+}
+
+#[test]
+fn test_very_long_identifier() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let long_label = "A".repeat(10_000);
+    let query = format!("MATCH (n:{long_label}) RETURN n");
+    // Should not panic
+    let _ = session.execute(&query);
+}
+
+#[test]
+fn test_unclosed_string_literal() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("MATCH (n:Person) WHERE n.name = 'unclosed RETURN n");
+    assert!(result.is_err(), "unclosed string literal should error");
+}
+
+#[test]
+fn test_mismatched_brackets_in_edge() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("MATCH (a)-[:KNOWS->(b) RETURN a");
+    assert!(result.is_err(), "mismatched brackets should error");
+}
+
+#[test]
+fn test_binary_garbage_input() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let garbage = String::from_utf8_lossy(&[0xFF, 0xFE, 0x00, 0x01, 0x80, 0x90]).to_string();
+    let result = session.execute(&garbage);
+    assert!(result.is_err(), "binary garbage should error");
+}
+
+// ============================================================================
+// Parser error message content verification (T3-02)
+// ============================================================================
+
+#[test]
+fn test_gql_error_names_unexpected_token() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    // Use a genuinely invalid query: RETURN without MATCH is not valid GQL
+    let result = session.execute("MATCH (n:Person) RETURNING n");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    // Error should mention the unexpected token or provide context
+    assert!(
+        err.contains("RETURNING") || err.contains("unexpected") || err.contains("expected"),
+        "error should name the unexpected token or suggest expected tokens, got: {err}"
+    );
+}
+
+#[test]
+fn test_gql_error_includes_line_and_column() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("MATCH (n:Person)\nWHERE n.age >\nRETURN n");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    // Should include position info with line:column format
+    assert!(
+        err.contains("-->"),
+        "multiline error should include position marker, got: {err}"
+    );
+}
+
+#[test]
+fn test_gql_error_includes_caret_marker() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("MATCH (n:Person) WHERE n. RETURN n");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    // Error should include the caret (^) pointing to the issue
+    assert!(
+        err.contains('^') || err.contains("-->"),
+        "error should include visual position markers, got: {err}"
+    );
+}
+
+#[test]
+#[cfg(feature = "sparql")]
+fn test_sparql_error_includes_position() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    // Use genuinely invalid SPARQL syntax
+    let result = session.execute_sparql("GRAB ?s WHERE { ?s ?p ?o }");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("-->") || err.contains("SELECT") || err.contains("expected"),
+        "SPARQL error should include position or name bad token, got: {err}"
+    );
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn test_cypher_error_names_bad_token() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute_cypher("MTCH (n) RETURN n");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("-->") || err.contains("MTCH") || err.contains("expected"),
+        "Cypher error should include position or name bad token, got: {err}"
+    );
+}

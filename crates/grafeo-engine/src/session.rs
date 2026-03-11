@@ -22,6 +22,53 @@ use crate::database::QueryResult;
 use crate::query::cache::QueryCache;
 use crate::transaction::TransactionManager;
 
+/// Parses a DDL default-value literal string into a [`Value`].
+///
+/// Handles string literals (single- or double-quoted), integers, floats,
+/// booleans (`true`/`false`), and `NULL`.
+fn parse_default_literal(text: &str) -> Value {
+    if text.eq_ignore_ascii_case("null") {
+        return Value::Null;
+    }
+    if text.eq_ignore_ascii_case("true") {
+        return Value::Bool(true);
+    }
+    if text.eq_ignore_ascii_case("false") {
+        return Value::Bool(false);
+    }
+    // String literal: strip surrounding quotes
+    if (text.starts_with('\'') && text.ends_with('\''))
+        || (text.starts_with('"') && text.ends_with('"'))
+    {
+        return Value::String(text[1..text.len() - 1].into());
+    }
+    // Try integer, then float
+    if let Ok(i) = text.parse::<i64>() {
+        return Value::Int64(i);
+    }
+    if let Ok(f) = text.parse::<f64>() {
+        return Value::Float64(f);
+    }
+    // Fallback: treat as string
+    Value::String(text.into())
+}
+
+/// Runtime configuration for creating a new session.
+///
+/// Groups the shared parameters passed to all session constructors, keeping
+/// call sites readable and avoiding long argument lists.
+pub(crate) struct SessionConfig {
+    pub transaction_manager: Arc<TransactionManager>,
+    pub query_cache: Arc<QueryCache>,
+    pub catalog: Arc<Catalog>,
+    pub adaptive_config: AdaptiveConfig,
+    pub factorized_execution: bool,
+    pub graph_model: GraphModel,
+    pub query_timeout: Option<Duration>,
+    pub commit_counter: Arc<AtomicUsize>,
+    pub gc_interval: usize,
+}
+
 /// Your handle to the database - execute queries and manage transactions.
 ///
 /// Get one from [`GrafeoDB::session()`](crate::GrafeoDB::session). Each session
@@ -69,6 +116,9 @@ pub struct Session {
     /// WAL for logging schema changes.
     #[cfg(feature = "wal")]
     wal: Option<Arc<grafeo_adapters::storage::wal::LpgWal>>,
+    /// Shared WAL graph context tracker for named graph awareness.
+    #[cfg(feature = "wal")]
+    wal_graph_context: Option<Arc<parking_lot::Mutex<Option<String>>>>,
     /// CDC log for change tracking.
     #[cfg(feature = "cdc")]
     cdc_log: Arc<crate::cdc::CdcLog>,
@@ -81,51 +131,66 @@ pub struct Session {
         parking_lot::Mutex<std::collections::HashMap<String, grafeo_common::types::Value>>,
     /// Override epoch for time-travel queries (None = use transaction/current epoch).
     viewing_epoch_override: parking_lot::Mutex<Option<EpochId>>,
-    /// Savepoints within the current transaction: name -> (next_node_id, next_edge_id, undo_log_position) snapshot.
-    savepoints: parking_lot::Mutex<Vec<(String, u64, u64, usize)>>,
+    /// Savepoints within the current transaction.
+    savepoints: parking_lot::Mutex<Vec<SavepointState>>,
     /// Nesting depth for nested transactions (0 = outermost).
     /// Nested `START TRANSACTION` creates an auto-savepoint; nested `COMMIT`
     /// releases it, nested `ROLLBACK` rolls back to it.
     transaction_nesting_depth: parking_lot::Mutex<u32>,
+    /// Named graphs touched during the current transaction (for cross-graph atomicity).
+    /// `None` represents the default graph. Populated at `BEGIN` time and on each
+    /// `USE GRAPH` / `SESSION SET GRAPH` switch within a transaction.
+    touched_graphs: parking_lot::Mutex<Vec<Option<String>>>,
+}
+
+/// Per-graph savepoint snapshot, capturing the store state at the time of the savepoint.
+#[derive(Clone)]
+struct GraphSavepoint {
+    graph_name: Option<String>,
+    next_node_id: u64,
+    next_edge_id: u64,
+    undo_log_position: usize,
+}
+
+/// Savepoint state: name + per-graph snapshots + the graph that was active.
+#[derive(Clone)]
+struct SavepointState {
+    name: String,
+    graph_snapshots: Vec<GraphSavepoint>,
+    /// The graph that was active when the savepoint was created.
+    /// Reserved for future use (e.g., restoring graph context on rollback).
+    #[allow(dead_code)]
+    active_graph: Option<String>,
 }
 
 impl Session {
     /// Creates a new session with adaptive execution configuration.
-    #[allow(dead_code, clippy::too_many_arguments)]
-    pub(crate) fn with_adaptive(
-        store: Arc<LpgStore>,
-        transaction_manager: Arc<TransactionManager>,
-        query_cache: Arc<QueryCache>,
-        catalog: Arc<Catalog>,
-        adaptive_config: AdaptiveConfig,
-        factorized_execution: bool,
-        graph_model: GraphModel,
-        query_timeout: Option<Duration>,
-        commit_counter: Arc<AtomicUsize>,
-        gc_interval: usize,
-    ) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn with_adaptive(store: Arc<LpgStore>, cfg: SessionConfig) -> Self {
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         Self {
             store,
             graph_store,
-            catalog,
+            catalog: cfg.catalog,
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
-            transaction_manager,
-            query_cache,
+            transaction_manager: cfg.transaction_manager,
+            query_cache: cfg.query_cache,
             current_transaction: parking_lot::Mutex::new(None),
             read_only_tx: parking_lot::Mutex::new(false),
             auto_commit: true,
-            adaptive_config,
-            factorized_execution,
-            graph_model,
-            query_timeout,
-            commit_counter,
-            gc_interval,
+            adaptive_config: cfg.adaptive_config,
+            factorized_execution: cfg.factorized_execution,
+            graph_model: cfg.graph_model,
+            query_timeout: cfg.query_timeout,
+            commit_counter: cfg.commit_counter,
+            gc_interval: cfg.gc_interval,
             transaction_start_node_count: AtomicUsize::new(0),
             transaction_start_edge_count: AtomicUsize::new(0),
             #[cfg(feature = "wal")]
             wal: None,
+            #[cfg(feature = "wal")]
+            wal_graph_context: None,
             #[cfg(feature = "cdc")]
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             current_graph: parking_lot::Mutex::new(None),
@@ -134,6 +199,7 @@ impl Session {
             viewing_epoch_override: parking_lot::Mutex::new(None),
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
+            touched_graphs: parking_lot::Mutex::new(Vec::new()),
         }
     }
 
@@ -142,13 +208,19 @@ impl Session {
     /// This also wraps `graph_store` in a [`WalGraphStore`] so that mutation
     /// operators (INSERT, DELETE, SET via queries) log to the WAL.
     #[cfg(feature = "wal")]
-    pub(crate) fn set_wal(&mut self, wal: Arc<grafeo_adapters::storage::wal::LpgWal>) {
+    pub(crate) fn set_wal(
+        &mut self,
+        wal: Arc<grafeo_adapters::storage::wal::LpgWal>,
+        wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
+    ) {
         // Wrap the graph store so query-engine mutations are WAL-logged
         self.graph_store = Arc::new(crate::database::wal_store::WalGraphStore::new(
             Arc::clone(&self.store),
             Arc::clone(&wal),
+            Arc::clone(&wal_graph_context),
         ));
         self.wal = Some(wal);
+        self.wal_graph_context = Some(wal_graph_context);
     }
 
     /// Sets the CDC log for this session (shared with the database).
@@ -159,41 +231,34 @@ impl Session {
 
     /// Creates a new session with RDF store and adaptive configuration.
     #[cfg(feature = "rdf")]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_rdf_store_and_adaptive(
         store: Arc<LpgStore>,
         rdf_store: Arc<RdfStore>,
-        transaction_manager: Arc<TransactionManager>,
-        query_cache: Arc<QueryCache>,
-        catalog: Arc<Catalog>,
-        adaptive_config: AdaptiveConfig,
-        factorized_execution: bool,
-        graph_model: GraphModel,
-        query_timeout: Option<Duration>,
-        commit_counter: Arc<AtomicUsize>,
-        gc_interval: usize,
+        cfg: SessionConfig,
     ) -> Self {
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         Self {
             store,
             graph_store,
-            catalog,
+            catalog: cfg.catalog,
             rdf_store,
-            transaction_manager,
-            query_cache,
+            transaction_manager: cfg.transaction_manager,
+            query_cache: cfg.query_cache,
             current_transaction: parking_lot::Mutex::new(None),
             read_only_tx: parking_lot::Mutex::new(false),
             auto_commit: true,
-            adaptive_config,
-            factorized_execution,
-            graph_model,
-            query_timeout,
-            commit_counter,
-            gc_interval,
+            adaptive_config: cfg.adaptive_config,
+            factorized_execution: cfg.factorized_execution,
+            graph_model: cfg.graph_model,
+            query_timeout: cfg.query_timeout,
+            commit_counter: cfg.commit_counter,
+            gc_interval: cfg.gc_interval,
             transaction_start_node_count: AtomicUsize::new(0),
             transaction_start_edge_count: AtomicUsize::new(0),
             #[cfg(feature = "wal")]
             wal: None,
+            #[cfg(feature = "wal")]
+            wal_graph_context: None,
             #[cfg(feature = "cdc")]
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             current_graph: parking_lot::Mutex::new(None),
@@ -202,6 +267,7 @@ impl Session {
             viewing_epoch_override: parking_lot::Mutex::new(None),
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
+            touched_graphs: parking_lot::Mutex::new(Vec::new()),
         }
     }
 
@@ -209,40 +275,37 @@ impl Session {
     ///
     /// The external store handles all data operations. Transaction management
     /// (begin/commit/rollback) is not supported for external stores.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal arena allocation fails (out of memory).
     pub(crate) fn with_external_store(
         store: Arc<dyn GraphStoreMut>,
-        transaction_manager: Arc<TransactionManager>,
-        query_cache: Arc<QueryCache>,
-        catalog: Arc<Catalog>,
-        adaptive_config: AdaptiveConfig,
-        factorized_execution: bool,
-        graph_model: GraphModel,
-        query_timeout: Option<Duration>,
-        commit_counter: Arc<AtomicUsize>,
-        gc_interval: usize,
-    ) -> Self {
-        Self {
-            store: Arc::new(LpgStore::new().expect("arena allocation for dummy LpgStore")), // dummy for LpgStore-specific ops
+        cfg: SessionConfig,
+    ) -> Result<Self> {
+        Ok(Self {
+            store: Arc::new(LpgStore::new()?),
             graph_store: store,
-            catalog,
+            catalog: cfg.catalog,
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
-            transaction_manager,
-            query_cache,
+            transaction_manager: cfg.transaction_manager,
+            query_cache: cfg.query_cache,
             current_transaction: parking_lot::Mutex::new(None),
             read_only_tx: parking_lot::Mutex::new(false),
             auto_commit: true,
-            adaptive_config,
-            factorized_execution,
-            graph_model,
-            query_timeout,
-            commit_counter,
-            gc_interval,
+            adaptive_config: cfg.adaptive_config,
+            factorized_execution: cfg.factorized_execution,
+            graph_model: cfg.graph_model,
+            query_timeout: cfg.query_timeout,
+            commit_counter: cfg.commit_counter,
+            gc_interval: cfg.gc_interval,
             transaction_start_node_count: AtomicUsize::new(0),
             transaction_start_edge_count: AtomicUsize::new(0),
             #[cfg(feature = "wal")]
             wal: None,
+            #[cfg(feature = "wal")]
+            wal_graph_context: None,
             #[cfg(feature = "cdc")]
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             current_graph: parking_lot::Mutex::new(None),
@@ -251,7 +314,8 @@ impl Session {
             viewing_epoch_override: parking_lot::Mutex::new(None),
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
-        }
+            touched_graphs: parking_lot::Mutex::new(Vec::new()),
+        })
     }
 
     /// Returns the graph model this session operates on.
@@ -271,6 +335,81 @@ impl Session {
     #[must_use]
     pub fn current_graph(&self) -> Option<String> {
         self.current_graph.lock().clone()
+    }
+
+    /// Returns the graph store for the currently active graph.
+    ///
+    /// If `current_graph` is `None` or `"default"`, returns the session's
+    /// default `graph_store` (already WAL-wrapped for the default graph).
+    /// Otherwise looks up the named graph in the root store and wraps it
+    /// in a [`WalGraphStore`] so mutations are WAL-logged with the correct
+    /// graph context.
+    fn active_store(&self) -> Arc<dyn GraphStoreMut> {
+        let graph_name = self.current_graph.lock().clone();
+        match graph_name {
+            None => Arc::clone(&self.graph_store),
+            Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.graph_store),
+            Some(ref name) => match self.store.graph(name) {
+                Some(named_store) => {
+                    #[cfg(feature = "wal")]
+                    if let (Some(wal), Some(ctx)) = (&self.wal, &self.wal_graph_context) {
+                        return Arc::new(crate::database::wal_store::WalGraphStore::new_for_graph(
+                            named_store,
+                            Arc::clone(wal),
+                            name.clone(),
+                            Arc::clone(ctx),
+                        )) as Arc<dyn GraphStoreMut>;
+                    }
+                    named_store as Arc<dyn GraphStoreMut>
+                }
+                None => Arc::clone(&self.graph_store),
+            },
+        }
+    }
+
+    /// Returns the concrete `LpgStore` for the currently active graph.
+    ///
+    /// Used by direct CRUD methods that need the concrete store type
+    /// for versioned operations.
+    fn active_lpg_store(&self) -> Arc<LpgStore> {
+        let graph_name = self.current_graph.lock().clone();
+        match graph_name {
+            None => Arc::clone(&self.store),
+            Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
+            Some(ref name) => self
+                .store
+                .graph(name)
+                .unwrap_or_else(|| Arc::clone(&self.store)),
+        }
+    }
+
+    /// Resolves a graph name to a concrete `LpgStore`.
+    /// `None` and `"default"` resolve to the session's root store.
+    fn resolve_store(&self, graph_name: &Option<String>) -> Arc<LpgStore> {
+        match graph_name {
+            None => Arc::clone(&self.store),
+            Some(name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
+            Some(name) => self
+                .store
+                .graph(name)
+                .unwrap_or_else(|| Arc::clone(&self.store)),
+        }
+    }
+
+    /// Records the current graph as "touched" if a transaction is active.
+    fn track_graph_touch(&self) {
+        if self.current_transaction.lock().is_some() {
+            let graph = self.current_graph.lock().clone();
+            // Normalize: treat Some("default") as None
+            let normalized = match graph {
+                Some(ref name) if name.eq_ignore_ascii_case("default") => None,
+                other => other,
+            };
+            let mut touched = self.touched_graphs.lock();
+            if !touched.contains(&normalized) {
+                touched.push(normalized);
+            }
+        }
     }
 
     /// Sets the session time zone.
@@ -330,7 +469,7 @@ impl Session {
     /// Properties and labels reflect the current state (not versioned per-epoch).
     #[must_use]
     pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
-        self.store.get_node_history(id)
+        self.active_lpg_store().get_node_history(id)
     }
 
     /// Returns all versions of an edge with their creation/deletion epochs.
@@ -338,7 +477,7 @@ impl Session {
     /// Properties reflect the current state (not versioned per-epoch).
     #[must_use]
     pub fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
-        self.store.get_edge_history(id)
+        self.active_lpg_store().get_edge_history(id)
     }
 
     /// Checks that the session's graph model supports LPG operations.
@@ -397,6 +536,14 @@ impl Session {
                         format!("Graph '{name}' already exists"),
                     )));
                 }
+                if created {
+                    #[cfg(feature = "wal")]
+                    self.log_schema_wal(
+                        &grafeo_adapters::storage::wal::WalRecord::CreateNamedGraph {
+                            name: name.clone(),
+                        },
+                    );
+                }
 
                 // AS COPY OF: copy data from source graph
                 if let Some(ref src) = copy_of {
@@ -432,6 +579,22 @@ impl Session {
                         format!("Graph '{name}' does not exist"),
                     )));
                 }
+                if dropped {
+                    #[cfg(feature = "wal")]
+                    self.log_schema_wal(
+                        &grafeo_adapters::storage::wal::WalRecord::DropNamedGraph {
+                            name: name.clone(),
+                        },
+                    );
+                    // If this session was using the dropped graph, reset to default
+                    let mut current = self.current_graph.lock();
+                    if current
+                        .as_deref()
+                        .is_some_and(|g| g.eq_ignore_ascii_case(&name))
+                    {
+                        *current = None;
+                    }
+                }
                 Ok(QueryResult::empty())
             }
             SessionCommand::UseGraph(name) => {
@@ -443,10 +606,14 @@ impl Session {
                     )));
                 }
                 self.use_graph(&name);
+                // Track the new graph if in a transaction
+                self.track_graph_touch();
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionSetGraph(name) => {
                 self.use_graph(&name);
+                // Track the new graph if in a transaction
+                self.track_graph_touch();
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionSetTimeZone(tz) => {
@@ -572,10 +739,14 @@ impl Session {
                             name: p.name.clone(),
                             data_type: PropertyDataType::from_type_name(&p.data_type),
                             nullable: p.nullable,
-                            default_value: None,
+                            default_value: p
+                                .default_value
+                                .as_ref()
+                                .map(|s| parse_default_literal(s)),
                         })
                         .collect(),
                     constraints: Vec::new(),
+                    parent_types: stmt.parent_types.clone(),
                 };
                 let result = if stmt.or_replace {
                     let _ = self.catalog.drop_node_type(&stmt.name);
@@ -624,10 +795,15 @@ impl Session {
                             name: p.name.clone(),
                             data_type: PropertyDataType::from_type_name(&p.data_type),
                             nullable: p.nullable,
-                            default_value: None,
+                            default_value: p
+                                .default_value
+                                .as_ref()
+                                .map(|s| parse_default_literal(s)),
                         })
                         .collect(),
                     constraints: Vec::new(),
+                    source_node_types: stmt.source_node_types.clone(),
+                    target_node_types: stmt.target_node_types.clone(),
                 };
                 let result = if stmt.or_replace {
                     let _ = self.catalog.drop_edge_type_def(&stmt.name);
@@ -662,7 +838,7 @@ impl Session {
             }
             SchemaStatement::CreateVectorIndex(stmt) => {
                 Self::create_vector_index_on_store(
-                    &self.store,
+                    &self.active_lpg_store(),
                     &stmt.node_label,
                     &stmt.property,
                     stmt.dimensions,
@@ -716,6 +892,7 @@ impl Session {
             }
             SchemaStatement::CreateIndex(stmt) => {
                 use grafeo_adapters::query::gql::ast::IndexKind;
+                let active = self.active_lpg_store();
                 let index_type_str = match stmt.index_kind {
                     IndexKind::Property => "property",
                     IndexKind::BTree => "btree",
@@ -725,18 +902,18 @@ impl Session {
                 match stmt.index_kind {
                     IndexKind::Property | IndexKind::BTree => {
                         for prop in &stmt.properties {
-                            self.store.create_property_index(prop);
+                            active.create_property_index(prop);
                         }
                     }
                     IndexKind::Text => {
                         for prop in &stmt.properties {
-                            Self::create_text_index_on_store(&self.store, &stmt.label, prop)?;
+                            Self::create_text_index_on_store(&active, &stmt.label, prop)?;
                         }
                     }
                     IndexKind::Vector => {
                         for prop in &stmt.properties {
                             Self::create_vector_index_on_store(
-                                &self.store,
+                                &active,
                                 &stmt.label,
                                 prop,
                                 stmt.options.dimensions,
@@ -764,7 +941,7 @@ impl Session {
             }
             SchemaStatement::DropIndex { name, if_exists } => {
                 // Try to drop property index by name
-                let dropped = self.store.drop_property_index(&name);
+                let dropped = self.active_lpg_store().drop_property_index(&name);
                 if dropped || if_exists {
                     if dropped {
                         wal_log!(self, WalRecord::DropIndex { name: name.clone() });
@@ -782,6 +959,7 @@ impl Session {
                 }
             }
             SchemaStatement::CreateConstraint(stmt) => {
+                use crate::catalog::TypeConstraint;
                 use grafeo_adapters::query::gql::ast::ConstraintKind;
                 let kind_str = match stmt.constraint_kind {
                     ConstraintKind::Unique => "unique",
@@ -793,6 +971,45 @@ impl Session {
                     .name
                     .clone()
                     .unwrap_or_else(|| format!("{}_{kind_str}", stmt.label));
+
+                // Register constraint in catalog type definitions
+                match stmt.constraint_kind {
+                    ConstraintKind::Unique => {
+                        for prop in &stmt.properties {
+                            let label_id = self.catalog.get_or_create_label(&stmt.label);
+                            let prop_id = self.catalog.get_or_create_property_key(prop);
+                            let _ = self.catalog.add_unique_constraint(label_id, prop_id);
+                        }
+                        let _ = self.catalog.add_constraint_to_type(
+                            &stmt.label,
+                            TypeConstraint::Unique(stmt.properties.clone()),
+                        );
+                    }
+                    ConstraintKind::NodeKey => {
+                        for prop in &stmt.properties {
+                            let label_id = self.catalog.get_or_create_label(&stmt.label);
+                            let prop_id = self.catalog.get_or_create_property_key(prop);
+                            let _ = self.catalog.add_unique_constraint(label_id, prop_id);
+                            let _ = self.catalog.add_required_property(label_id, prop_id);
+                        }
+                        let _ = self.catalog.add_constraint_to_type(
+                            &stmt.label,
+                            TypeConstraint::PrimaryKey(stmt.properties.clone()),
+                        );
+                    }
+                    ConstraintKind::NotNull | ConstraintKind::Exists => {
+                        for prop in &stmt.properties {
+                            let label_id = self.catalog.get_or_create_label(&stmt.label);
+                            let prop_id = self.catalog.get_or_create_property_key(prop);
+                            let _ = self.catalog.add_required_property(label_id, prop_id);
+                            let _ = self.catalog.add_constraint_to_type(
+                                &stmt.label,
+                                TypeConstraint::NotNull(prop.clone()),
+                            );
+                        }
+                    }
+                }
+
                 wal_log!(
                     self,
                     WalRecord::CreateConstraint {
@@ -851,7 +1068,10 @@ impl Session {
                 for inline in &stmt.inline_types {
                     match inline {
                         InlineElementType::Node {
-                            name, properties, ..
+                            name,
+                            properties,
+                            key_labels,
+                            ..
                         } => {
                             let def = NodeTypeDefinition {
                                 name: name.clone(),
@@ -865,6 +1085,7 @@ impl Session {
                                     })
                                     .collect(),
                                 constraints: Vec::new(),
+                                parent_types: key_labels.clone(),
                             };
                             // Register or replace so inline defs override existing
                             self.catalog.register_or_replace_node_type(def);
@@ -885,7 +1106,11 @@ impl Session {
                             }
                         }
                         InlineElementType::Edge {
-                            name, properties, ..
+                            name,
+                            properties,
+                            source_node_types,
+                            target_node_types,
+                            ..
                         } => {
                             let def = EdgeTypeDefinition {
                                 name: name.clone(),
@@ -899,6 +1124,8 @@ impl Session {
                                     })
                                     .collect(),
                                 constraints: Vec::new(),
+                                source_node_types: source_node_types.clone(),
+                                target_node_types: target_node_types.clone(),
                             };
                             self.catalog.register_or_replace_edge_type_def(def);
                             #[cfg(feature = "wal")]
@@ -1018,7 +1245,10 @@ impl Session {
                                 name: prop.name.clone(),
                                 data_type: PropertyDataType::from_type_name(&prop.data_type),
                                 nullable: prop.nullable,
-                                default_value: None,
+                                default_value: prop
+                                    .default_value
+                                    .as_ref()
+                                    .map(|s| parse_default_literal(s)),
                             };
                             self.catalog
                                 .alter_node_type_add_property(&stmt.name, typed)
@@ -1070,7 +1300,10 @@ impl Session {
                                 name: prop.name.clone(),
                                 data_type: PropertyDataType::from_type_name(&prop.data_type),
                                 nullable: prop.nullable,
-                                default_value: None,
+                                default_value: prop
+                                    .default_value
+                                    .as_ref()
+                                    .map(|s| parse_default_literal(s)),
                             };
                             self.catalog
                                 .alter_edge_type_add_property(&stmt.name, typed)
@@ -1250,6 +1483,30 @@ impl Session {
                 wal_log!(self, WalRecord::DropProcedure { name: name.clone() });
                 Ok(QueryResult::status(format!("Dropped procedure '{name}'")))
             }
+            SchemaStatement::ShowIndexes => {
+                return self.execute_show_indexes();
+            }
+            SchemaStatement::ShowConstraints => {
+                return self.execute_show_constraints();
+            }
+            SchemaStatement::ShowNodeTypes => {
+                return self.execute_show_node_types();
+            }
+            SchemaStatement::ShowEdgeTypes => {
+                return self.execute_show_edge_types();
+            }
+            SchemaStatement::ShowGraphTypes => {
+                return self.execute_show_graph_types();
+            }
+            SchemaStatement::ShowGraphType(name) => {
+                return self.execute_show_graph_type(&name);
+            }
+            SchemaStatement::ShowCurrentGraphType => {
+                return self.execute_show_current_graph_type();
+            }
+            SchemaStatement::ShowGraphs => {
+                return self.execute_show_graphs();
+            }
         };
 
         // Invalidate all cached query plans after any successful DDL change.
@@ -1416,6 +1673,204 @@ impl Session {
         })
     }
 
+    /// Returns a table of all registered node types.
+    fn execute_show_node_types(&self) -> Result<QueryResult> {
+        let columns = vec![
+            "name".to_string(),
+            "properties".to_string(),
+            "constraints".to_string(),
+            "parents".to_string(),
+        ];
+        let type_names = self.catalog.all_node_type_names();
+        let rows: Vec<Vec<Value>> = type_names
+            .into_iter()
+            .filter_map(|name| {
+                let def = self.catalog.get_node_type(&name)?;
+                let props: Vec<String> = def
+                    .properties
+                    .iter()
+                    .map(|p| {
+                        let nullable = if p.nullable { "" } else { " NOT NULL" };
+                        format!("{} {}{}", p.name, p.data_type, nullable)
+                    })
+                    .collect();
+                let constraints: Vec<String> =
+                    def.constraints.iter().map(|c| format!("{c:?}")).collect();
+                let parents = def.parent_types.join(", ");
+                Some(vec![
+                    Value::from(name),
+                    Value::from(props.join(", ")),
+                    Value::from(constraints.join(", ")),
+                    Value::from(parents),
+                ])
+            })
+            .collect();
+        Ok(QueryResult {
+            columns,
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns a table of all registered edge types.
+    fn execute_show_edge_types(&self) -> Result<QueryResult> {
+        let columns = vec![
+            "name".to_string(),
+            "properties".to_string(),
+            "source_types".to_string(),
+            "target_types".to_string(),
+        ];
+        let type_names = self.catalog.all_edge_type_names();
+        let rows: Vec<Vec<Value>> = type_names
+            .into_iter()
+            .filter_map(|name| {
+                let def = self.catalog.get_edge_type_def(&name)?;
+                let props: Vec<String> = def
+                    .properties
+                    .iter()
+                    .map(|p| {
+                        let nullable = if p.nullable { "" } else { " NOT NULL" };
+                        format!("{} {}{}", p.name, p.data_type, nullable)
+                    })
+                    .collect();
+                let src = def.source_node_types.join(", ");
+                let tgt = def.target_node_types.join(", ");
+                Some(vec![
+                    Value::from(name),
+                    Value::from(props.join(", ")),
+                    Value::from(src),
+                    Value::from(tgt),
+                ])
+            })
+            .collect();
+        Ok(QueryResult {
+            columns,
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns a table of all registered graph types.
+    fn execute_show_graph_types(&self) -> Result<QueryResult> {
+        let columns = vec![
+            "name".to_string(),
+            "open".to_string(),
+            "node_types".to_string(),
+            "edge_types".to_string(),
+        ];
+        let type_names = self.catalog.all_graph_type_names();
+        let rows: Vec<Vec<Value>> = type_names
+            .into_iter()
+            .filter_map(|name| {
+                let def = self.catalog.get_graph_type_def(&name)?;
+                Some(vec![
+                    Value::from(name),
+                    Value::from(def.open),
+                    Value::from(def.allowed_node_types.join(", ")),
+                    Value::from(def.allowed_edge_types.join(", ")),
+                ])
+            })
+            .collect();
+        Ok(QueryResult {
+            columns,
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns the list of named graphs in the database.
+    fn execute_show_graphs(&self) -> Result<QueryResult> {
+        let mut names = self.store.graph_names();
+        names.sort();
+        let rows: Vec<Vec<Value>> = names.into_iter().map(|n| vec![Value::from(n)]).collect();
+        Ok(QueryResult {
+            columns: vec!["name".to_string()],
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns detailed info for a specific graph type.
+    fn execute_show_graph_type(&self, name: &str) -> Result<QueryResult> {
+        use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind};
+
+        let def = self.catalog.get_graph_type_def(name).ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                format!("Graph type '{name}' not found"),
+            ))
+        })?;
+
+        let columns = vec![
+            "name".to_string(),
+            "open".to_string(),
+            "node_types".to_string(),
+            "edge_types".to_string(),
+        ];
+        let rows = vec![vec![
+            Value::from(def.name),
+            Value::from(def.open),
+            Value::from(def.allowed_node_types.join(", ")),
+            Value::from(def.allowed_edge_types.join(", ")),
+        ]];
+        Ok(QueryResult {
+            columns,
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns the graph type bound to the current graph.
+    fn execute_show_current_graph_type(&self) -> Result<QueryResult> {
+        let graph_name = self
+            .current_graph()
+            .unwrap_or_else(|| "default".to_string());
+        let columns = vec![
+            "graph".to_string(),
+            "graph_type".to_string(),
+            "open".to_string(),
+            "node_types".to_string(),
+            "edge_types".to_string(),
+        ];
+
+        if let Some(type_name) = self.catalog.get_graph_type_binding(&graph_name)
+            && let Some(def) = self.catalog.get_graph_type_def(&type_name)
+        {
+            let rows = vec![vec![
+                Value::from(graph_name),
+                Value::from(type_name),
+                Value::from(def.open),
+                Value::from(def.allowed_node_types.join(", ")),
+                Value::from(def.allowed_edge_types.join(", ")),
+            ]];
+            return Ok(QueryResult {
+                columns,
+                column_types: Vec::new(),
+                rows,
+                ..QueryResult::empty()
+            });
+        }
+
+        // No graph type binding found
+        Ok(QueryResult {
+            columns,
+            column_types: Vec::new(),
+            rows: vec![vec![
+                Value::from(graph_name),
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::Null,
+            ]],
+            ..QueryResult::empty()
+        })
+    }
+
     /// Executes a GQL query.
     ///
     /// # Errors
@@ -1481,7 +1936,7 @@ impl Session {
         };
 
         // Create cache key for this query
-        let cache_key = CacheKey::new(query, QueryLanguage::Gql);
+        let cache_key = CacheKey::with_graph(query, QueryLanguage::Gql, self.current_graph());
 
         // Try to get cached optimized plan, or use the plan we just translated
         let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
@@ -1492,7 +1947,8 @@ impl Session {
             let _binding_context = binder.bind(&logical_plan)?;
 
             // Optimize the plan
-            let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+            let active = self.active_store();
+            let optimizer = Optimizer::from_graph_store(&*active);
             let plan = optimizer.optimize(logical_plan)?;
 
             // Cache the optimized plan for future use
@@ -1501,11 +1957,14 @@ impl Session {
             plan
         };
 
+        // Resolve the active store for query execution
+        let active = self.active_store();
+
         // EXPLAIN: annotate pushdown hints and return the plan tree
         if optimized_plan.explain {
             use crate::query::processor::{annotate_pushdown_hints, explain_result};
             let mut plan = optimized_plan;
-            annotate_pushdown_hints(&mut plan.root, self.graph_store.as_ref());
+            annotate_pushdown_hints(&mut plan.root, active.as_ref());
             return Ok(explain_result(&plan));
         }
 
@@ -1514,7 +1973,11 @@ impl Session {
             let has_mutations = optimized_plan.root.has_mutations();
             return self.with_auto_commit(has_mutations, || {
                 let (viewing_epoch, transaction_id) = self.get_transaction_context();
-                let planner = self.create_planner(viewing_epoch, transaction_id);
+                let planner = self.create_planner_for_store(
+                    Arc::clone(&active),
+                    viewing_epoch,
+                    transaction_id,
+                );
                 let (mut physical_plan, entries) = planner.plan_profiled(&optimized_plan)?;
 
                 let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -1550,7 +2013,8 @@ impl Session {
 
             // Convert to physical plan with transaction context
             // (Physical planning cannot be cached as it depends on transaction state)
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1603,6 +2067,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -1610,9 +2075,9 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
-            );
+            )?;
 
             // Apply transaction context if in a transaction
             let processor = if let Some(transaction_id) = transaction_id {
@@ -1684,6 +2149,9 @@ impl Session {
             cypher::CypherTranslationResult::ShowConstraints => {
                 return self.execute_show_constraints();
             }
+            cypher::CypherTranslationResult::ShowCurrentGraphType => {
+                return self.execute_show_current_graph_type();
+            }
             cypher::CypherTranslationResult::Plan(_) => {
                 // Fall through to normal execution below
             }
@@ -1693,7 +2161,7 @@ impl Session {
         let start_time = std::time::Instant::now();
 
         // Create cache key for this query
-        let cache_key = CacheKey::new(query, QueryLanguage::Cypher);
+        let cache_key = CacheKey::with_graph(query, QueryLanguage::Cypher, self.current_graph());
 
         // Try to get cached optimized plan
         let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
@@ -1707,7 +2175,8 @@ impl Session {
             let _binding_context = binder.bind(&logical_plan)?;
 
             // Optimize the plan
-            let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+            let active = self.active_store();
+            let optimizer = Optimizer::from_graph_store(&*active);
             let plan = optimizer.optimize(logical_plan)?;
 
             // Cache the optimized plan
@@ -1716,11 +2185,14 @@ impl Session {
             plan
         };
 
+        // Resolve the active store for query execution
+        let active = self.active_store();
+
         // EXPLAIN
         if optimized_plan.explain {
             use crate::query::processor::{annotate_pushdown_hints, explain_result};
             let mut plan = optimized_plan;
-            annotate_pushdown_hints(&mut plan.root, self.graph_store.as_ref());
+            annotate_pushdown_hints(&mut plan.root, active.as_ref());
             return Ok(explain_result(&plan));
         }
 
@@ -1729,7 +2201,11 @@ impl Session {
             let has_mutations = optimized_plan.root.has_mutations();
             return self.with_auto_commit(has_mutations, || {
                 let (viewing_epoch, transaction_id) = self.get_transaction_context();
-                let planner = self.create_planner(viewing_epoch, transaction_id);
+                let planner = self.create_planner_for_store(
+                    Arc::clone(&active),
+                    viewing_epoch,
+                    transaction_id,
+                );
                 let (mut physical_plan, entries) = planner.plan_profiled(&optimized_plan)?;
 
                 let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -1764,7 +2240,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1809,7 +2286,8 @@ impl Session {
         let _binding_context = binder.bind(&logical_plan)?;
 
         // Optimize the plan
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let has_mutations = optimized_plan.root.has_mutations();
@@ -1819,7 +2297,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1843,6 +2322,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -1850,9 +2330,9 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
-            );
+            )?;
 
             // Apply transaction context if in a transaction
             let processor = if let Some(transaction_id) = transaction_id {
@@ -1900,7 +2380,8 @@ impl Session {
         let _binding_context = binder.bind(&logical_plan)?;
 
         // Optimize the plan
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let has_mutations = optimized_plan.root.has_mutations();
@@ -1910,7 +2391,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1934,6 +2416,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -1941,9 +2424,9 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
-            );
+            )?;
 
             // Apply transaction context if in a transaction
             let processor = if let Some(transaction_id) = transaction_id {
@@ -1969,11 +2452,14 @@ impl Session {
 
         let logical_plan = graphql_rdf::translate(query, "http://example.org/")?;
 
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let planner = RdfPlanner::new(Arc::clone(&self.rdf_store))
             .with_transaction_id(*self.current_transaction.lock());
+        #[cfg(feature = "wal")]
+        let planner = planner.with_wal(self.wal.clone());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -1995,14 +2481,15 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
-            );
+            )?;
 
             let processor = if let Some(transaction_id) = transaction_id {
                 processor.with_transaction_context(viewing_epoch, transaction_id)
@@ -2067,7 +2554,7 @@ impl Session {
         }
 
         // Create cache key for query plans
-        let cache_key = CacheKey::new(query, QueryLanguage::SqlPgq);
+        let cache_key = CacheKey::with_graph(query, QueryLanguage::SqlPgq, self.current_graph());
 
         // Try to get cached optimized plan
         let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
@@ -2078,7 +2565,8 @@ impl Session {
             let _binding_context = binder.bind(&logical_plan)?;
 
             // Optimize the plan
-            let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+            let active = self.active_store();
+            let optimizer = Optimizer::from_graph_store(&*active);
             let plan = optimizer.optimize(logical_plan)?;
 
             // Cache the optimized plan
@@ -2087,6 +2575,7 @@ impl Session {
             plan
         };
 
+        let active = self.active_store();
         let has_mutations = optimized_plan.root.has_mutations();
 
         self.with_auto_commit(has_mutations, || {
@@ -2094,7 +2583,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -2118,6 +2608,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -2125,9 +2616,9 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
-            );
+            )?;
 
             // Apply transaction context if in a transaction
             let processor = if let Some(transaction_id) = transaction_id {
@@ -2155,12 +2646,15 @@ impl Session {
         let logical_plan = sparql::translate(query)?;
 
         // Optimize the plan
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         // Convert to physical plan using RDF planner
         let planner = RdfPlanner::new(Arc::clone(&self.rdf_store))
             .with_transaction_id(*self.current_transaction.lock());
+        #[cfg(feature = "wal")]
+        let planner = planner.with_wal(self.wal.clone());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
@@ -2189,11 +2683,14 @@ impl Session {
 
         substitute_params(&mut logical_plan, &params)?;
 
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let planner = RdfPlanner::new(Arc::clone(&self.rdf_store))
             .with_transaction_id(*self.current_transaction.lock());
+        #[cfg(feature = "wal")]
+        let planner = planner.with_wal(self.wal.clone());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -2228,11 +2725,12 @@ impl Session {
                 if let Some(p) = params {
                     use crate::query::processor::{QueryLanguage, QueryProcessor};
                     let has_mutations = Self::query_looks_like_mutation(query);
+                    let active = self.active_store();
                     self.with_auto_commit(has_mutations, || {
                         let processor = QueryProcessor::for_graph_store_with_transaction(
-                            Arc::clone(&self.graph_store),
+                            Arc::clone(&active),
                             Arc::clone(&self.transaction_manager),
-                        );
+                        )?;
                         let (viewing_epoch, transaction_id) = self.get_transaction_context();
                         let processor = if let Some(transaction_id) = transaction_id {
                             processor.with_transaction_context(viewing_epoch, transaction_id)
@@ -2366,10 +2864,11 @@ impl Session {
             return Ok(());
         }
 
+        let active = self.active_lpg_store();
         self.transaction_start_node_count
-            .store(self.store.node_count(), Ordering::Relaxed);
+            .store(active.node_count(), Ordering::Relaxed);
         self.transaction_start_edge_count
-            .store(self.store.edge_count(), Ordering::Relaxed);
+            .store(active.edge_count(), Ordering::Relaxed);
         let transaction_id = if let Some(level) = isolation_level {
             self.transaction_manager.begin_with_isolation(level)
         } else {
@@ -2377,6 +2876,17 @@ impl Session {
         };
         *current = Some(transaction_id);
         *self.read_only_tx.lock() = read_only;
+
+        // Record the initial graph as "touched" for cross-graph atomicity.
+        let graph = self.current_graph.lock().clone();
+        let normalized = match graph {
+            Some(ref name) if name.eq_ignore_ascii_case("default") => None,
+            other => other,
+        };
+        let mut touched = self.touched_graphs.lock();
+        touched.clear();
+        touched.push(normalized);
+
         Ok(())
     }
 
@@ -2412,31 +2922,63 @@ impl Session {
             )
         })?;
 
-        // Commit RDF store pending operations
+        // Validate the transaction first (conflict detection) before committing data.
+        // If this fails, we rollback the data changes instead of making them permanent.
+        let touched = self.touched_graphs.lock().clone();
+        let commit_epoch = match self.transaction_manager.commit(transaction_id) {
+            Ok(epoch) => epoch,
+            Err(e) => {
+                // Conflict detected: rollback the data changes
+                for graph_name in &touched {
+                    let store = self.resolve_store(graph_name);
+                    store.rollback_transaction_properties(transaction_id);
+                }
+                #[cfg(feature = "rdf")]
+                self.rdf_store.rollback_transaction(transaction_id);
+                *self.read_only_tx.lock() = false;
+                self.savepoints.lock().clear();
+                self.touched_graphs.lock().clear();
+                return Err(e);
+            }
+        };
+
+        // Finalize PENDING epochs: make uncommitted versions visible at the commit epoch.
+        for graph_name in &touched {
+            let store = self.resolve_store(graph_name);
+            store.finalize_version_epochs(transaction_id, commit_epoch);
+        }
+
+        // Commit succeeded: discard undo logs (make changes permanent)
         #[cfg(feature = "rdf")]
         self.rdf_store.commit_transaction(transaction_id);
 
-        // Discard property undo log: changes are committed, no rollback possible
-        self.store.commit_transaction_properties(transaction_id);
+        for graph_name in &touched {
+            let store = self.resolve_store(graph_name);
+            store.commit_transaction_properties(transaction_id);
+        }
 
-        self.transaction_manager.commit(transaction_id)?;
+        // Sync epoch for all touched graphs so that convenience lookups
+        // (edge_type, get_edge, get_node) can see versions at the latest epoch.
+        let current_epoch = self.transaction_manager.current_epoch();
+        for graph_name in &touched {
+            let store = self.resolve_store(graph_name);
+            store.sync_epoch(current_epoch);
+        }
 
-        // Sync the LpgStore epoch with the TxManager so that
-        // convenience lookups (edge_type, get_edge, get_node) that use
-        // store.current_epoch() can see versions created at the latest epoch.
-        self.store
-            .sync_epoch(self.transaction_manager.current_epoch());
-
-        // Reset read-only flag and clear savepoints
+        // Reset read-only flag, clear savepoints and touched graphs
         *self.read_only_tx.lock() = false;
         self.savepoints.lock().clear();
+        self.touched_graphs.lock().clear();
 
         // Auto-GC: periodically prune old MVCC versions
         if self.gc_interval > 0 {
             let count = self.commit_counter.fetch_add(1, Ordering::Relaxed) + 1;
             if count.is_multiple_of(self.gc_interval) {
                 let min_epoch = self.transaction_manager.min_active_epoch();
-                self.store.gc_versions(min_epoch);
+                for graph_name in &touched {
+                    let store = self.resolve_store(graph_name);
+                    store.gc_versions(min_epoch);
+                }
                 self.transaction_manager.gc();
             }
         }
@@ -2495,15 +3037,20 @@ impl Session {
         // Reset read-only flag
         *self.read_only_tx.lock() = false;
 
-        // Discard uncommitted versions in the LPG store
-        self.store.discard_uncommitted_versions(transaction_id);
+        // Discard uncommitted versions in ALL touched LPG stores (cross-graph atomicity).
+        let touched = self.touched_graphs.lock().clone();
+        for graph_name in &touched {
+            let store = self.resolve_store(graph_name);
+            store.discard_uncommitted_versions(transaction_id);
+        }
 
         // Discard pending operations in the RDF store
         #[cfg(feature = "rdf")]
         self.rdf_store.rollback_transaction(transaction_id);
 
-        // Clear savepoints
+        // Clear savepoints and touched graphs
         self.savepoints.lock().clear();
+        self.touched_graphs.lock().clear();
 
         // Mark transaction as aborted in the manager
         self.transaction_manager.abort(transaction_id)
@@ -2527,12 +3074,26 @@ impl Session {
             )
         })?;
 
-        let next_node = self.store.peek_next_node_id();
-        let next_edge = self.store.peek_next_edge_id();
-        let undo_position = self.store.property_undo_log_position(tx_id);
-        self.savepoints
-            .lock()
-            .push((name.to_string(), next_node, next_edge, undo_position));
+        // Capture state for every graph touched so far.
+        let touched = self.touched_graphs.lock().clone();
+        let graph_snapshots: Vec<GraphSavepoint> = touched
+            .iter()
+            .map(|graph_name| {
+                let store = self.resolve_store(graph_name);
+                GraphSavepoint {
+                    graph_name: graph_name.clone(),
+                    next_node_id: store.peek_next_node_id(),
+                    next_edge_id: store.peek_next_edge_id(),
+                    undo_log_position: store.property_undo_log_position(tx_id),
+                }
+            })
+            .collect();
+
+        self.savepoints.lock().push(SavepointState {
+            name: name.to_string(),
+            graph_snapshots,
+            active_graph: self.current_graph.lock().clone(),
+        });
         Ok(())
     }
 
@@ -2558,7 +3119,7 @@ impl Session {
         // Find the savepoint by name (search from the end for nested savepoints)
         let pos = savepoints
             .iter()
-            .rposition(|(n, _, _, _)| n == name)
+            .rposition(|sp| sp.name == name)
             .ok_or_else(|| {
                 grafeo_common::utils::error::Error::Transaction(
                     grafeo_common::utils::error::TransactionError::InvalidState(format!(
@@ -2567,26 +3128,57 @@ impl Session {
                 )
             })?;
 
-        let (_, sp_next_node, sp_next_edge, sp_undo_position) = savepoints[pos].clone();
+        let sp_state = savepoints[pos].clone();
 
         // Remove this savepoint and all later ones
         savepoints.truncate(pos);
         drop(savepoints);
 
-        // Replay property/label undo entries recorded after the savepoint
-        self.store
-            .rollback_transaction_properties_to(transaction_id, sp_undo_position);
+        // Roll back each graph that was captured in the savepoint.
+        for gs in &sp_state.graph_snapshots {
+            let store = self.resolve_store(&gs.graph_name);
 
-        // Discard all nodes with ID >= sp_next_node and edges with ID >= sp_next_edge
-        let current_next_node = self.store.peek_next_node_id();
-        let current_next_edge = self.store.peek_next_edge_id();
+            // Replay property/label undo entries recorded after the savepoint
+            store.rollback_transaction_properties_to(transaction_id, gs.undo_log_position);
 
-        let node_ids: Vec<NodeId> = (sp_next_node..current_next_node).map(NodeId::new).collect();
-        let edge_ids: Vec<EdgeId> = (sp_next_edge..current_next_edge).map(EdgeId::new).collect();
+            // Discard entities created after the savepoint
+            let current_next_node = store.peek_next_node_id();
+            let current_next_edge = store.peek_next_edge_id();
 
-        if !node_ids.is_empty() || !edge_ids.is_empty() {
-            self.store
-                .discard_entities_by_id(transaction_id, &node_ids, &edge_ids);
+            let node_ids: Vec<NodeId> = (gs.next_node_id..current_next_node)
+                .map(NodeId::new)
+                .collect();
+            let edge_ids: Vec<EdgeId> = (gs.next_edge_id..current_next_edge)
+                .map(EdgeId::new)
+                .collect();
+
+            if !node_ids.is_empty() || !edge_ids.is_empty() {
+                store.discard_entities_by_id(transaction_id, &node_ids, &edge_ids);
+            }
+        }
+
+        // Also roll back any graphs that were touched AFTER the savepoint
+        // but not captured in it. These need full discard since the savepoint
+        // didn't include them.
+        let touched = self.touched_graphs.lock().clone();
+        for graph_name in &touched {
+            let already_captured = sp_state
+                .graph_snapshots
+                .iter()
+                .any(|gs| gs.graph_name == *graph_name);
+            if !already_captured {
+                let store = self.resolve_store(graph_name);
+                store.discard_uncommitted_versions(transaction_id);
+            }
+        }
+
+        // Restore touched_graphs to only the graphs that were known at savepoint time.
+        let mut touched = self.touched_graphs.lock();
+        touched.clear();
+        for gs in &sp_state.graph_snapshots {
+            if !touched.contains(&gs.graph_name) {
+                touched.push(gs.graph_name.clone());
+            }
         }
 
         Ok(())
@@ -2609,7 +3201,7 @@ impl Session {
         let mut savepoints = self.savepoints.lock();
         let pos = savepoints
             .iter()
-            .rposition(|(n, _, _, _)| n == name)
+            .rposition(|sp| sp.name == name)
             .ok_or_else(|| {
                 grafeo_common::utils::error::Error::Transaction(
                     grafeo_common::utils::error::TransactionError::InvalidState(format!(
@@ -2644,7 +3236,7 @@ impl Session {
     pub(crate) fn node_count_delta(&self) -> (usize, usize) {
         (
             self.transaction_start_node_count.load(Ordering::Relaxed),
-            self.store.node_count(),
+            self.active_lpg_store().node_count(),
         )
     }
 
@@ -2653,7 +3245,7 @@ impl Session {
     pub(crate) fn edge_count_delta(&self) -> (usize, usize) {
         (
             self.transaction_start_edge_count.load(Ordering::Relaxed),
-            self.store.edge_count(),
+            self.active_lpg_store().edge_count(),
         )
     }
 
@@ -2802,15 +3394,19 @@ impl Session {
     }
 
     /// Creates a planner with transaction context and constraint validator.
-    fn create_planner(
+    ///
+    /// The `store` parameter is the graph store to plan against (use
+    /// `self.active_store()` for graph-aware execution).
+    fn create_planner_for_store(
         &self,
+        store: Arc<dyn GraphStoreMut>,
         viewing_epoch: EpochId,
         transaction_id: Option<TransactionId>,
     ) -> crate::query::Planner {
         use crate::query::Planner;
 
         let mut planner = Planner::with_context(
-            Arc::clone(&self.graph_store),
+            Arc::clone(&store),
             Arc::clone(&self.transaction_manager),
             transaction_id,
             viewing_epoch,
@@ -2819,7 +3415,8 @@ impl Session {
         .with_catalog(Arc::clone(&self.catalog));
 
         // Attach the constraint validator for schema enforcement
-        let validator = CatalogConstraintValidator::new(Arc::clone(&self.catalog));
+        let validator =
+            CatalogConstraintValidator::new(Arc::clone(&self.catalog)).with_store(store);
         planner = planner.with_validator(Arc::new(validator));
 
         planner
@@ -2831,7 +3428,7 @@ impl Session {
     /// If a transaction is active, the node will be versioned with the transaction ID.
     pub fn create_node(&self, labels: &[&str]) -> NodeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store.create_node_versioned(
+        self.active_lpg_store().create_node_versioned(
             labels,
             epoch,
             transaction_id.unwrap_or(TransactionId::SYSTEM),
@@ -2847,7 +3444,7 @@ impl Session {
         properties: impl IntoIterator<Item = (&'a str, Value)>,
     ) -> NodeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store.create_node_with_props_versioned(
+        self.active_lpg_store().create_node_with_props_versioned(
             labels,
             properties,
             epoch,
@@ -2866,7 +3463,7 @@ impl Session {
         edge_type: &str,
     ) -> grafeo_common::types::EdgeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store.create_edge_versioned(
+        self.active_lpg_store().create_edge_versioned(
             src,
             dst,
             edge_type,
@@ -2905,8 +3502,11 @@ impl Session {
     #[must_use]
     pub fn get_node(&self, id: NodeId) -> Option<Node> {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store
-            .get_node_versioned(id, epoch, transaction_id.unwrap_or(TransactionId::SYSTEM))
+        self.active_lpg_store().get_node_versioned(
+            id,
+            epoch,
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
+        )
     }
 
     /// Gets a single property from a node by ID, bypassing query planning.
@@ -2947,8 +3547,11 @@ impl Session {
     #[must_use]
     pub fn get_edge(&self, id: EdgeId) -> Option<Edge> {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store
-            .get_edge_versioned(id, epoch, transaction_id.unwrap_or(TransactionId::SYSTEM))
+        self.active_lpg_store().get_edge_versioned(
+            id,
+            epoch,
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
+        )
     }
 
     /// Gets outgoing neighbors of a node directly, bypassing query planning.
@@ -2978,7 +3581,9 @@ impl Session {
     /// ```
     #[must_use]
     pub fn get_neighbors_outgoing(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
-        self.store.edges_from(node, Direction::Outgoing).collect()
+        self.active_lpg_store()
+            .edges_from(node, Direction::Outgoing)
+            .collect()
     }
 
     /// Gets incoming neighbors of a node directly, bypassing query planning.
@@ -2991,7 +3596,9 @@ impl Session {
     /// - Uses backward adjacency index for direct access
     #[must_use]
     pub fn get_neighbors_incoming(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
-        self.store.edges_from(node, Direction::Incoming).collect()
+        self.active_lpg_store()
+            .edges_from(node, Direction::Incoming)
+            .collect()
     }
 
     /// Gets outgoing neighbors filtered by edge type, bypassing query planning.
@@ -3011,7 +3618,7 @@ impl Session {
         node: NodeId,
         edge_type: &str,
     ) -> Vec<(NodeId, EdgeId)> {
-        self.store
+        self.active_lpg_store()
             .edges_from(node, Direction::Outgoing)
             .filter(|(_, edge_id)| {
                 self.get_edge(*edge_id)
@@ -3042,8 +3649,9 @@ impl Session {
     /// Returns (outgoing_degree, incoming_degree).
     #[must_use]
     pub fn get_degree(&self, node: NodeId) -> (usize, usize) {
-        let out = self.store.out_degree(node);
-        let in_degree = self.store.in_degree(node);
+        let active = self.active_lpg_store();
+        let out = active.out_degree(node);
+        let in_degree = active.in_degree(node);
         (out, in_degree)
     }
 
@@ -3060,8 +3668,9 @@ impl Session {
     pub fn get_nodes_batch(&self, ids: &[NodeId]) -> Vec<Option<Node>> {
         let (epoch, transaction_id) = self.get_transaction_context();
         let tx = transaction_id.unwrap_or(TransactionId::SYSTEM);
+        let active = self.active_lpg_store();
         ids.iter()
-            .map(|&id| self.store.get_node_versioned(id, epoch, tx))
+            .map(|&id| active.get_node_versioned(id, epoch, tx))
             .collect()
     }
 
@@ -3094,6 +3703,16 @@ impl Session {
         end_epoch: EpochId,
     ) -> Result<Vec<crate::cdc::ChangeEvent>> {
         Ok(self.cdc_log.changes_between(start_epoch, end_epoch))
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Auto-rollback any active transaction to prevent leaked MVCC state,
+        // dangling write locks, and uncommitted versions lingering in the store.
+        if self.in_transaction() {
+            let _ = self.rollback_inner();
+        }
     }
 }
 
@@ -3182,8 +3801,20 @@ mod tests {
             .create_node_versioned(&["Person"], epoch, transaction_id);
         assert!(node_in_tx.is_valid());
 
-        // Should see 2 nodes at this point
-        assert_eq!(db.node_count(), 2, "Should have 2 nodes during transaction");
+        // Uncommitted nodes use EpochId::PENDING, so they are invisible to
+        // non-versioned lookups like node_count(). Verify the node is visible
+        // only through the owning transaction.
+        assert_eq!(
+            db.node_count(),
+            1,
+            "PENDING nodes should be invisible to non-versioned node_count()"
+        );
+        assert!(
+            db.store()
+                .get_node_versioned(node_in_tx, epoch, transaction_id)
+                .is_some(),
+            "Transaction node should be visible to its own transaction"
+        );
 
         // Rollback the transaction
         session.rollback().unwrap();
@@ -3228,13 +3859,26 @@ mod tests {
         // Start a transaction and create a node through the session
         let mut session = db.session();
         session.begin_transaction().unwrap();
+        let transaction_id = session.current_transaction.lock().unwrap();
 
         // Create a node through session.create_node() - should be versioned with tx
         let node_in_tx = session.create_node(&["Person"]);
         assert!(node_in_tx.is_valid());
 
-        // Should see 2 nodes at this point
-        assert_eq!(db.node_count(), 2, "Should have 2 nodes during transaction");
+        // Uncommitted nodes use EpochId::PENDING, so they are invisible to
+        // non-versioned lookups. Verify the node is visible only to its own tx.
+        assert_eq!(
+            db.node_count(),
+            1,
+            "PENDING nodes should be invisible to non-versioned node_count()"
+        );
+        let epoch = db.store().current_epoch();
+        assert!(
+            db.store()
+                .get_node_versioned(node_in_tx, epoch, transaction_id)
+                .is_some(),
+            "Transaction node should be visible to its own transaction"
+        );
 
         // Rollback the transaction
         session.rollback().unwrap();
@@ -3261,13 +3905,26 @@ mod tests {
         // Start a transaction and create a node with properties
         let mut session = db.session();
         session.begin_transaction().unwrap();
+        let transaction_id = session.current_transaction.lock().unwrap();
 
         let node_in_tx =
             session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
         assert!(node_in_tx.is_valid());
 
-        // Should see 2 nodes
-        assert_eq!(db.node_count(), 2, "Should have 2 nodes during transaction");
+        // Uncommitted nodes use EpochId::PENDING, so they are invisible to
+        // non-versioned lookups. Verify the node is visible only to its own tx.
+        assert_eq!(
+            db.node_count(),
+            1,
+            "PENDING nodes should be invisible to non-versioned node_count()"
+        );
+        let epoch = db.store().current_epoch();
+        assert!(
+            db.store()
+                .get_node_versioned(node_in_tx, epoch, transaction_id)
+                .is_some(),
+            "Transaction node should be visible to its own transaction"
+        );
 
         // Rollback the transaction
         session.rollback().unwrap();
@@ -3916,14 +4573,19 @@ mod tests {
             Arc::new(grafeo_core::graph::lpg::LpgStore::new().unwrap()) as Arc<dyn GraphStoreMut>;
         let db = GrafeoDB::with_store(store, config).unwrap();
 
-        let session = db.session();
+        let mut session = db.session();
 
-        // Create data through a query (goes through the external graph_store)
+        // Use an explicit transaction so that INSERT and MATCH share the same
+        // transaction context. With PENDING epochs, uncommitted versions are
+        // only visible to the owning transaction.
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Test {name: 'hello'})").unwrap();
 
-        // Verify we can query through it
+        // Verify we can query through it within the same transaction
         let result = session.execute("MATCH (n:Test) RETURN n.name").unwrap();
         assert_eq!(result.row_count(), 1);
+
+        session.commit().unwrap();
     }
 
     // ==================== Session Command Tests ====================
@@ -3931,6 +4593,7 @@ mod tests {
     #[cfg(feature = "gql")]
     mod session_command_tests {
         use super::*;
+        use grafeo_common::types::Value;
 
         #[test]
         fn test_use_graph_sets_current_graph() {
@@ -4228,6 +4891,149 @@ mod tests {
 
             assert_eq!(session1.current_graph(), Some("first".to_string()));
             assert_eq!(session2.current_graph(), Some("second".to_string()));
+        }
+
+        #[test]
+        fn test_show_node_types() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            session
+                .execute("CREATE NODE TYPE Person (name STRING NOT NULL, age INTEGER)")
+                .unwrap();
+
+            let result = session.execute("SHOW NODE TYPES").unwrap();
+            assert_eq!(
+                result.columns,
+                vec!["name", "properties", "constraints", "parents"]
+            );
+            assert_eq!(result.rows.len(), 1);
+            // First column is the type name
+            assert_eq!(result.rows[0][0], Value::from("Person"));
+        }
+
+        #[test]
+        fn test_show_edge_types() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            session
+                .execute("CREATE EDGE TYPE KNOWS CONNECTING (Person) TO (Person) (since INTEGER)")
+                .unwrap();
+
+            let result = session.execute("SHOW EDGE TYPES").unwrap();
+            assert_eq!(
+                result.columns,
+                vec!["name", "properties", "source_types", "target_types"]
+            );
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], Value::from("KNOWS"));
+        }
+
+        #[test]
+        fn test_show_graph_types() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            session
+                .execute("CREATE NODE TYPE Person (name STRING)")
+                .unwrap();
+            session
+                .execute(
+                    "CREATE GRAPH TYPE social (\
+                        NODE TYPE Person (name STRING)\
+                    )",
+                )
+                .unwrap();
+
+            let result = session.execute("SHOW GRAPH TYPES").unwrap();
+            assert_eq!(
+                result.columns,
+                vec!["name", "open", "node_types", "edge_types"]
+            );
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], Value::from("social"));
+        }
+
+        #[test]
+        fn test_show_graph_type_named() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            session
+                .execute("CREATE NODE TYPE Person (name STRING)")
+                .unwrap();
+            session
+                .execute(
+                    "CREATE GRAPH TYPE social (\
+                        NODE TYPE Person (name STRING)\
+                    )",
+                )
+                .unwrap();
+
+            let result = session.execute("SHOW GRAPH TYPE social").unwrap();
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], Value::from("social"));
+        }
+
+        #[test]
+        fn test_show_graph_type_not_found() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            let result = session.execute("SHOW GRAPH TYPE nonexistent");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_show_indexes_via_gql() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            let result = session.execute("SHOW INDEXES").unwrap();
+            assert_eq!(result.columns, vec!["name", "type", "label", "property"]);
+        }
+
+        #[test]
+        fn test_show_constraints_via_gql() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            let result = session.execute("SHOW CONSTRAINTS").unwrap();
+            assert_eq!(result.columns, vec!["name", "type", "label", "properties"]);
+        }
+
+        #[test]
+        fn test_pattern_form_graph_type_roundtrip() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            // Register the types first
+            session
+                .execute("CREATE NODE TYPE Person (name STRING NOT NULL)")
+                .unwrap();
+            session
+                .execute("CREATE NODE TYPE City (name STRING)")
+                .unwrap();
+            session
+                .execute("CREATE EDGE TYPE KNOWS (since INTEGER)")
+                .unwrap();
+            session.execute("CREATE EDGE TYPE LIVES_IN").unwrap();
+
+            // Create graph type using pattern form
+            session
+                .execute(
+                    "CREATE GRAPH TYPE social (\
+                        (:Person {name STRING NOT NULL})-[:KNOWS {since INTEGER}]->(:Person),\
+                        (:Person)-[:LIVES_IN]->(:City)\
+                    )",
+                )
+                .unwrap();
+
+            // Verify it was created
+            let result = session.execute("SHOW GRAPH TYPE social").unwrap();
+            assert_eq!(result.rows.len(), 1);
+            assert_eq!(result.rows[0][0], Value::from("social"));
         }
     }
 }

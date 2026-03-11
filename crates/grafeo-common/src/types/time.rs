@@ -443,4 +443,25 @@ mod tests {
         assert_eq!(t.minute(), 0);
         assert_eq!(t.second(), 0);
     }
+
+    #[test]
+    fn test_add_duration_wraps_at_midnight() {
+        use crate::types::Duration;
+        // 23:00:00 + 2 hours should wrap to 01:00:00
+        let t = Time::from_hms(23, 0, 0).unwrap();
+        let dur = Duration::from_nanos(2 * 3_600_000_000_000); // 2 hours
+        let result = t.add_duration(&dur);
+        assert_eq!(result.hour(), 1);
+        assert_eq!(result.minute(), 0);
+    }
+
+    #[test]
+    fn test_add_duration_within_day() {
+        use crate::types::Duration;
+        let t = Time::from_hms(10, 30, 0).unwrap();
+        let dur = Duration::from_nanos(90 * 60 * 1_000_000_000); // 90 minutes
+        let result = t.add_duration(&dur);
+        assert_eq!(result.hour(), 12);
+        assert_eq!(result.minute(), 0);
+    }
 }

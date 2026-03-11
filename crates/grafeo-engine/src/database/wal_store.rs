@@ -19,19 +19,65 @@ use arcstr::ArcStr;
 /// [`LpgStore`] and additionally logs mutation operations to the WAL.
 ///
 /// Read-only methods are forwarded without any WAL interaction.
+///
+/// For named graphs, emits a [`WalRecord::SwitchGraph`] before data mutations
+/// when the WAL context differs from this store's graph. The shared
+/// `wal_graph_context` mutex ensures atomicity of context-switch + mutation
+/// pairs across concurrent sessions.
 pub(crate) struct WalGraphStore {
     inner: Arc<LpgStore>,
     wal: Arc<LpgWal>,
+    /// Which named graph this store represents (`None` = default graph).
+    graph_name: Option<String>,
+    /// Shared tracker: the last graph context emitted to the WAL.
+    /// Held across a (SwitchGraph + mutation) pair to prevent interleaving.
+    wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl WalGraphStore {
-    /// Creates a new WAL-aware store wrapper.
-    pub fn new(inner: Arc<LpgStore>, wal: Arc<LpgWal>) -> Self {
-        Self { inner, wal }
+    /// Creates a new WAL-aware store wrapper for the default graph.
+    pub fn new(
+        inner: Arc<LpgStore>,
+        wal: Arc<LpgWal>,
+        wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
+    ) -> Self {
+        Self {
+            inner,
+            wal,
+            graph_name: None,
+            wal_graph_context,
+        }
     }
 
-    /// Logs a WAL record, warning on failure (mirrors `GrafeoDB::log_wal`).
-    fn log(&self, record: &WalRecord) {
+    /// Creates a new WAL-aware store wrapper for a named graph.
+    pub fn new_for_graph(
+        inner: Arc<LpgStore>,
+        wal: Arc<LpgWal>,
+        graph_name: String,
+        wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
+    ) -> Self {
+        Self {
+            inner,
+            wal,
+            graph_name: Some(graph_name),
+            wal_graph_context,
+        }
+    }
+
+    /// Logs a WAL record with graph context tracking.
+    ///
+    /// Acquires the shared context lock, emits a `SwitchGraph` record if the
+    /// WAL context differs from this store's graph, then logs the data record.
+    /// Both writes happen under the same lock to prevent concurrent sessions
+    /// from interleaving context switches with unrelated mutations.
+    fn log_with_context(&self, record: &WalRecord) {
+        let mut ctx = self.wal_graph_context.lock();
+        if *ctx != self.graph_name {
+            let _ = self.wal.log(&WalRecord::SwitchGraph {
+                name: self.graph_name.clone(),
+            });
+            (*ctx).clone_from(&self.graph_name);
+        }
         if let Err(e) = self.wal.log(record) {
             tracing::warn!("WAL log failed: {e}");
         }
@@ -133,6 +179,10 @@ impl GraphStore for WalGraphStore {
         self.inner.node_ids()
     }
 
+    fn all_node_ids(&self) -> Vec<NodeId> {
+        self.inner.all_node_ids()
+    }
+
     fn nodes_by_label(&self, label: &str) -> Vec<NodeId> {
         self.inner.nodes_by_label(label)
     }
@@ -219,6 +269,34 @@ impl GraphStore for WalGraphStore {
         self.inner.all_property_keys()
     }
 
+    fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        self.inner.is_node_visible_at_epoch(id, epoch)
+    }
+
+    fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.inner
+            .is_node_visible_versioned(id, epoch, transaction_id)
+    }
+
+    fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        self.inner.filter_visible_node_ids(ids, epoch)
+    }
+
+    fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        self.inner
+            .filter_visible_node_ids_versioned(ids, epoch, transaction_id)
+    }
+
     fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
         self.inner.get_node_history(id)
     }
@@ -235,7 +313,7 @@ impl GraphStore for WalGraphStore {
 impl GraphStoreMut for WalGraphStore {
     fn create_node(&self, labels: &[&str]) -> NodeId {
         let id = self.inner.create_node(labels);
-        self.log(&WalRecord::CreateNode {
+        self.log_with_context(&WalRecord::CreateNode {
             id,
             labels: labels.iter().map(|s| (*s).to_string()).collect(),
         });
@@ -251,7 +329,7 @@ impl GraphStoreMut for WalGraphStore {
         let id = self
             .inner
             .create_node_versioned(labels, epoch, transaction_id);
-        self.log(&WalRecord::CreateNode {
+        self.log_with_context(&WalRecord::CreateNode {
             id,
             labels: labels.iter().map(|s| (*s).to_string()).collect(),
         });
@@ -260,7 +338,7 @@ impl GraphStoreMut for WalGraphStore {
 
     fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
         let id = self.inner.create_edge(src, dst, edge_type);
-        self.log(&WalRecord::CreateEdge {
+        self.log_with_context(&WalRecord::CreateEdge {
             id,
             src,
             dst,
@@ -280,7 +358,7 @@ impl GraphStoreMut for WalGraphStore {
         let id = self
             .inner
             .create_edge_versioned(src, dst, edge_type, epoch, transaction_id);
-        self.log(&WalRecord::CreateEdge {
+        self.log_with_context(&WalRecord::CreateEdge {
             id,
             src,
             dst,
@@ -292,7 +370,7 @@ impl GraphStoreMut for WalGraphStore {
     fn batch_create_edges(&self, edges: &[(NodeId, NodeId, &str)]) -> Vec<EdgeId> {
         let ids = self.inner.batch_create_edges(edges);
         for (id, (src, dst, edge_type)) in ids.iter().zip(edges) {
-            self.log(&WalRecord::CreateEdge {
+            self.log_with_context(&WalRecord::CreateEdge {
                 id: *id,
                 src: *src,
                 dst: *dst,
@@ -305,7 +383,7 @@ impl GraphStoreMut for WalGraphStore {
     fn delete_node(&self, id: NodeId) -> bool {
         let deleted = self.inner.delete_node(id);
         if deleted {
-            self.log(&WalRecord::DeleteNode { id });
+            self.log_with_context(&WalRecord::DeleteNode { id });
         }
         deleted
     }
@@ -318,7 +396,7 @@ impl GraphStoreMut for WalGraphStore {
     ) -> bool {
         let deleted = self.inner.delete_node_versioned(id, epoch, transaction_id);
         if deleted {
-            self.log(&WalRecord::DeleteNode { id });
+            self.log_with_context(&WalRecord::DeleteNode { id });
         }
         deleted
     }
@@ -339,14 +417,14 @@ impl GraphStoreMut for WalGraphStore {
         self.inner.delete_node_edges(node_id);
 
         for id in outgoing.into_iter().chain(incoming) {
-            self.log(&WalRecord::DeleteEdge { id });
+            self.log_with_context(&WalRecord::DeleteEdge { id });
         }
     }
 
     fn delete_edge(&self, id: EdgeId) -> bool {
         let deleted = self.inner.delete_edge(id);
         if deleted {
-            self.log(&WalRecord::DeleteEdge { id });
+            self.log_with_context(&WalRecord::DeleteEdge { id });
         }
         deleted
     }
@@ -359,13 +437,13 @@ impl GraphStoreMut for WalGraphStore {
     ) -> bool {
         let deleted = self.inner.delete_edge_versioned(id, epoch, transaction_id);
         if deleted {
-            self.log(&WalRecord::DeleteEdge { id });
+            self.log_with_context(&WalRecord::DeleteEdge { id });
         }
         deleted
     }
 
     fn set_node_property(&self, id: NodeId, key: &str, value: Value) {
-        self.log(&WalRecord::SetNodeProperty {
+        self.log_with_context(&WalRecord::SetNodeProperty {
             id,
             key: key.to_string(),
             value: value.clone(),
@@ -374,7 +452,7 @@ impl GraphStoreMut for WalGraphStore {
     }
 
     fn set_edge_property(&self, id: EdgeId, key: &str, value: Value) {
-        self.log(&WalRecord::SetEdgeProperty {
+        self.log_with_context(&WalRecord::SetEdgeProperty {
             id,
             key: key.to_string(),
             value: value.clone(),
@@ -385,7 +463,7 @@ impl GraphStoreMut for WalGraphStore {
     fn remove_node_property(&self, id: NodeId, key: &str) -> Option<Value> {
         let removed = self.inner.remove_node_property(id, key);
         if removed.is_some() {
-            self.log(&WalRecord::RemoveNodeProperty {
+            self.log_with_context(&WalRecord::RemoveNodeProperty {
                 id,
                 key: key.to_string(),
             });
@@ -396,7 +474,7 @@ impl GraphStoreMut for WalGraphStore {
     fn remove_edge_property(&self, id: EdgeId, key: &str) -> Option<Value> {
         let removed = self.inner.remove_edge_property(id, key);
         if removed.is_some() {
-            self.log(&WalRecord::RemoveEdgeProperty {
+            self.log_with_context(&WalRecord::RemoveEdgeProperty {
                 id,
                 key: key.to_string(),
             });
@@ -407,7 +485,7 @@ impl GraphStoreMut for WalGraphStore {
     fn add_label(&self, node_id: NodeId, label: &str) -> bool {
         let added = self.inner.add_label(node_id, label);
         if added {
-            self.log(&WalRecord::AddNodeLabel {
+            self.log_with_context(&WalRecord::AddNodeLabel {
                 id: node_id,
                 label: label.to_string(),
             });
@@ -418,7 +496,7 @@ impl GraphStoreMut for WalGraphStore {
     fn remove_label(&self, node_id: NodeId, label: &str) -> bool {
         let removed = self.inner.remove_label(node_id, label);
         if removed {
-            self.log(&WalRecord::RemoveNodeLabel {
+            self.log_with_context(&WalRecord::RemoveNodeLabel {
                 id: node_id,
                 label: label.to_string(),
             });
@@ -437,7 +515,8 @@ mod tests {
         let store = Arc::new(LpgStore::new().unwrap());
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
-        (WalGraphStore::new(store, wal), wal_ref)
+        let ctx = Arc::new(parking_lot::Mutex::new(None));
+        (WalGraphStore::new(store, wal, ctx), wal_ref)
     }
 
     #[test]

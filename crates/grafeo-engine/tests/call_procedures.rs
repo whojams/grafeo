@@ -5,7 +5,7 @@
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
-/// Creates a small test graph: Alix -> Gus -> Harm (all :Person, connected via :KNOWS).
+/// Creates 3 Person nodes (Alix, Gus, Harm) with 2 KNOWS edges.
 fn setup_graph() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let alix = db.create_node(&["Person"]);

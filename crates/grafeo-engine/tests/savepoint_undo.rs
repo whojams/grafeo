@@ -207,3 +207,44 @@ fn test_full_rollback_after_savepoint_undoes_everything() {
         "balance should be restored to original 500 after full rollback"
     );
 }
+
+// ============================================================================
+// Savepoint rollback with labels: covers property_ops.rs rollback_transaction_properties_to
+// ============================================================================
+
+#[test]
+fn test_savepoint_rollback_preserves_earlier_label() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+
+    session.execute("INSERT (:Base {name: 'test'})").unwrap();
+
+    session.begin_transaction().unwrap();
+
+    // Mutation before savepoint
+    session.execute("MATCH (n:Base) SET n:First").unwrap();
+
+    session.savepoint("sp1").unwrap();
+
+    // Mutation after savepoint
+    session.execute("MATCH (n:Base) SET n:Second").unwrap();
+
+    let during = session.execute("MATCH (n:Second) RETURN n.name").unwrap();
+    assert_eq!(during.rows.len(), 1);
+
+    // Rollback to savepoint: Second removed, First preserved
+    session.rollback_to_savepoint("sp1").unwrap();
+
+    let first_check = session.execute("MATCH (n:First) RETURN n.name").unwrap();
+    assert_eq!(
+        first_check.rows.len(),
+        1,
+        "First label should survive savepoint rollback"
+    );
+
+    let second_check = session.execute("MATCH (n:Second) RETURN n.name").unwrap();
+    assert!(
+        second_check.rows.is_empty(),
+        "Second label should be rolled back"
+    );
+}

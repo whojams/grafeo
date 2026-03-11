@@ -5,7 +5,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
 use crate::graph::lpg::{Edge, Node};
-use grafeo_common::types::{LogicalType, PropertyKey, Value};
+use grafeo_common::types::{EpochId, LogicalType, PropertyKey, TransactionId, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -56,6 +56,10 @@ pub struct ProjectOperator {
     output_types: Vec<LogicalType>,
     /// Optional store for property access.
     store: Option<Arc<dyn GraphStore>>,
+    /// Transaction ID for MVCC-aware property lookups.
+    transaction_id: Option<TransactionId>,
+    /// Viewing epoch for MVCC-aware property lookups.
+    viewing_epoch: Option<EpochId>,
 }
 
 impl ProjectOperator {
@@ -71,6 +75,8 @@ impl ProjectOperator {
             projections,
             output_types,
             store: None,
+            transaction_id: None,
+            viewing_epoch: None,
         }
     }
 
@@ -87,7 +93,20 @@ impl ProjectOperator {
             projections,
             output_types,
             store: Some(store),
+            transaction_id: None,
+            viewing_epoch: None,
         }
+    }
+
+    /// Sets the transaction context for MVCC-aware property lookups.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
+        self
     }
 
     /// Creates a project operator that selects specific columns.
@@ -161,27 +180,38 @@ impl Operator for ProjectOperator {
                     // same Int64 value, so we verify against the store to resolve
                     // the entity type.
                     let prop_key = PropertyKey::new(property);
+                    let epoch = self.viewing_epoch;
+                    let tx_id = self.transaction_id;
                     for row in input.selected_indices() {
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
-                            if let Some(prop) = store
-                                .get_node(node_id)
-                                .and_then(|node| node.get_property(property).cloned())
+                            let node = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                store.get_node_versioned(node_id, ep, tx)
+                            } else {
+                                store.get_node(node_id)
+                            };
+                            if let Some(prop) = node.and_then(|n| n.get_property(property).cloned())
                             {
                                 prop
                             } else if let Some(edge_id) = input_col.get_edge_id(row) {
                                 // Node lookup failed: the ID may belong to an
                                 // edge (common with Generic columns after joins).
-                                store
-                                    .get_edge(edge_id)
-                                    .and_then(|edge| edge.get_property(property).cloned())
+                                let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                    store.get_edge_versioned(edge_id, ep, tx)
+                                } else {
+                                    store.get_edge(edge_id)
+                                };
+                                edge.and_then(|e| e.get_property(property).cloned())
                                     .unwrap_or(Value::Null)
                             } else {
                                 Value::Null
                             }
                         } else if let Some(edge_id) = input_col.get_edge_id(row) {
-                            store
-                                .get_edge(edge_id)
-                                .and_then(|edge| edge.get_property(property).cloned())
+                            let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                store.get_edge_versioned(edge_id, ep, tx)
+                            } else {
+                                store.get_edge(edge_id)
+                            };
+                            edge.and_then(|e| e.get_property(property).cloned())
                                 .unwrap_or(Value::Null)
                         } else if let Some(Value::Map(map)) = input_col.get_value(row) {
                             map.get(&prop_key).cloned().unwrap_or(Value::Null)
@@ -205,9 +235,16 @@ impl Operator for ProjectOperator {
                         OperatorError::Execution("Store required for edge type access".to_string())
                     })?;
 
+                    let epoch = self.viewing_epoch;
+                    let tx_id = self.transaction_id;
                     for row in input.selected_indices() {
                         let value = if let Some(edge_id) = input_col.get_edge_id(row) {
-                            store.edge_type(edge_id).map_or(Value::Null, Value::String)
+                            let etype = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                store.edge_type_versioned(edge_id, ep, tx)
+                            } else {
+                                store.edge_type(edge_id)
+                            };
+                            etype.map_or(Value::Null, Value::String)
                         } else {
                             Value::Null
                         };
@@ -229,11 +266,14 @@ impl Operator for ProjectOperator {
                     })?;
 
                     // Use the ExpressionPredicate for expression evaluation
-                    let evaluator = ExpressionPredicate::new(
+                    let mut evaluator = ExpressionPredicate::new(
                         expr.clone(),
                         variable_columns.clone(),
                         Arc::clone(store),
                     );
+                    if let (Some(ep), tx_id) = (self.viewing_epoch, self.transaction_id) {
+                        evaluator = evaluator.with_transaction_context(ep, tx_id);
+                    }
 
                     for row in input.selected_indices() {
                         let value = evaluator.eval_at(&input, row).unwrap_or(Value::Null);
@@ -253,11 +293,16 @@ impl Operator for ProjectOperator {
                         OperatorError::Execution("Store required for node resolution".to_string())
                     })?;
 
+                    let epoch = self.viewing_epoch;
+                    let tx_id = self.transaction_id;
                     for row in input.selected_indices() {
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
-                            store
-                                .get_node(node_id)
-                                .map_or(Value::Null, |n| node_to_map(&n))
+                            let node = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                store.get_node_versioned(node_id, ep, tx)
+                            } else {
+                                store.get_node(node_id)
+                            };
+                            node.map_or(Value::Null, |n| node_to_map(&n))
                         } else {
                             Value::Null
                         };
@@ -277,11 +322,16 @@ impl Operator for ProjectOperator {
                         OperatorError::Execution("Store required for edge resolution".to_string())
                     })?;
 
+                    let epoch = self.viewing_epoch;
+                    let tx_id = self.transaction_id;
                     for row in input.selected_indices() {
                         let value = if let Some(edge_id) = input_col.get_edge_id(row) {
-                            store
-                                .get_edge(edge_id)
-                                .map_or(Value::Null, |e| edge_to_map(&e))
+                            let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                store.get_edge_versioned(edge_id, ep, tx)
+                            } else {
+                                store.get_edge(edge_id)
+                            };
+                            edge.map_or(Value::Null, |e| edge_to_map(&e))
                         } else {
                             Value::Null
                         };

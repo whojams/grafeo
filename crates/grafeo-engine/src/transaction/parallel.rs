@@ -244,14 +244,15 @@ impl ParallelExecutor {
     ///
     /// # Panics
     ///
-    /// Panics if num_workers is 0.
+    /// Panics if `num_workers` is 0 or if the thread pool cannot be created.
+    #[must_use]
     pub fn new(num_workers: usize) -> Self {
         assert!(num_workers > 0, "num_workers must be positive");
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_workers)
             .build()
-            .expect("Failed to build thread pool");
+            .expect("failed to build thread pool");
 
         Self { num_workers, pool }
     }

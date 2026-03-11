@@ -4,8 +4,10 @@
 //! - `HashJoinOperator`: Efficient hash-based join for equality conditions
 //! - `NestedLoopJoinOperator`: General-purpose join for any condition
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
+use arcstr::ArcStr;
 use grafeo_common::types::{LogicalType, Value};
 
 use super::{Operator, OperatorError, OperatorResult};
@@ -40,10 +42,41 @@ pub enum HashKey {
     Bool(bool),
     /// Integer key.
     Int64(i64),
-    /// String key (using the string content for hashing).
-    String(String),
+    /// String key (cheap clone via ArcStr refcount).
+    String(ArcStr),
+    /// Byte content key.
+    Bytes(Vec<u8>),
     /// Composite key for multi-column joins.
     Composite(Vec<HashKey>),
+}
+
+impl Ord for HashKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (HashKey::Null, HashKey::Null) => Ordering::Equal,
+            (HashKey::Null, _) => Ordering::Less,
+            (_, HashKey::Null) => Ordering::Greater,
+            (HashKey::Bool(a), HashKey::Bool(b)) => a.cmp(b),
+            (HashKey::Bool(_), _) => Ordering::Less,
+            (_, HashKey::Bool(_)) => Ordering::Greater,
+            (HashKey::Int64(a), HashKey::Int64(b)) => a.cmp(b),
+            (HashKey::Int64(_), _) => Ordering::Less,
+            (_, HashKey::Int64(_)) => Ordering::Greater,
+            (HashKey::String(a), HashKey::String(b)) => a.cmp(b),
+            (HashKey::String(_), _) => Ordering::Less,
+            (_, HashKey::String(_)) => Ordering::Greater,
+            (HashKey::Bytes(a), HashKey::Bytes(b)) => a.cmp(b),
+            (HashKey::Bytes(_), _) => Ordering::Less,
+            (_, HashKey::Bytes(_)) => Ordering::Greater,
+            (HashKey::Composite(a), HashKey::Composite(b)) => a.cmp(b),
+        }
+    }
+}
+
+impl PartialOrd for HashKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl HashKey {
@@ -57,11 +90,8 @@ impl HashKey {
                 // Convert float to bits for consistent hashing
                 HashKey::Int64(f.to_bits() as i64)
             }
-            Value::String(s) => HashKey::String(s.to_string()),
-            Value::Bytes(b) => {
-                // Use byte content for hashing
-                HashKey::String(format!("{b:?}"))
-            }
+            Value::String(s) => HashKey::String(s.clone()),
+            Value::Bytes(b) => HashKey::Bytes(b.to_vec()),
             Value::Timestamp(t) => HashKey::Int64(t.as_micros()),
             Value::Date(d) => HashKey::Int64(d.as_days() as i64),
             Value::Time(t) => HashKey::Int64(t.as_nanos() as i64),
@@ -79,12 +109,12 @@ impl HashKey {
                     .iter()
                     .map(|(k, v)| {
                         HashKey::Composite(vec![
-                            HashKey::String(k.to_string()),
+                            HashKey::String(ArcStr::from(k.as_str())),
                             HashKey::from_value(v),
                         ])
                     })
                     .collect();
-                keys.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+                keys.sort();
                 HashKey::Composite(keys)
             }
             Value::Vector(v) => {

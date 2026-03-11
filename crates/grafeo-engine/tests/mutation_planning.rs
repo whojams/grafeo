@@ -15,9 +15,7 @@ use grafeo_engine::GrafeoDB;
 // Fixtures
 // ============================================================================
 
-/// Social network: Alix(30,NYC), Gus(25,NYC), Harm(35,London)
-/// Alix-KNOWS->Gus, Alix-KNOWS->Harm, Gus-KNOWS->Harm
-/// Alix-WORKS_AT->TechCorp, Gus-WORKS_AT->TechCorp
+/// Creates 3 Person + 1 Company nodes, 3 KNOWS + 2 WORKS_AT edges.
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
@@ -595,6 +593,656 @@ fn test_optional_match_null_when_missing() {
 }
 
 // ============================================================================
+// OPTIONAL MATCH WHERE pushdown: right-side predicates become join conditions
+// ============================================================================
+
+#[test]
+fn test_optional_match_where_right_side_preserves_left() {
+    // WHERE on right-side variable should not filter out left rows.
+    // Harm has no WORKS_AT edge, so the OPTIONAL MATCH right side is empty.
+    // The WHERE m.name = 'TechCorp' must NOT eliminate Harm's row.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             WHERE c.name = 'TechCorp' \
+             RETURN a.name, c.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // All 3 persons should appear: Alix+TechCorp, Gus+TechCorp, Harm+null
+    assert_eq!(
+        result.rows.len(),
+        3,
+        "All persons should be preserved; WHERE on right side should not filter left rows"
+    );
+
+    // Alix -> TechCorp
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
+    // Gus -> TechCorp
+    assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+    assert_eq!(result.rows[1][1], Value::String("TechCorp".into()));
+    // Harm -> null (no WORKS_AT edge, preserved by left join)
+    assert_eq!(result.rows[2][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[2][1], Value::Null);
+}
+
+#[test]
+fn test_optional_match_where_left_side_filters_correctly() {
+    // WHERE on left-side variable should filter left rows normally.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             WHERE a.city = 'NYC' \
+             RETURN a.name, c.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // Only NYC persons: Alix+TechCorp, Gus+TechCorp (Harm is in London, filtered out)
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+}
+
+#[test]
+fn test_optional_match_where_mixed_predicates() {
+    // WHERE with both left-side and right-side predicates.
+    // Left predicate (a.city = 'NYC') filters left rows.
+    // Right predicate (c.name = 'TechCorp') becomes a join condition.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             WHERE a.city = 'NYC' AND c.name = 'TechCorp' \
+             RETURN a.name, c.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // Only NYC persons: Alix+TechCorp, Gus+TechCorp
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+    assert_eq!(result.rows[1][1], Value::String("TechCorp".into()));
+}
+
+#[test]
+fn test_optional_match_where_right_property_no_match() {
+    // WHERE right-side predicate that no right-side row satisfies.
+    // All left rows should still appear with NULL right side.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             WHERE c.name = 'NonExistent' \
+             RETURN a.name, c.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // All 3 persons should still appear, all with NULL company
+    assert_eq!(
+        result.rows.len(),
+        3,
+        "All persons preserved with NULL when no right match passes the filter"
+    );
+    for row in &result.rows {
+        assert_eq!(row[1], Value::Null);
+    }
+}
+
+#[test]
+fn test_optional_match_where_cross_side_predicate() {
+    // WHERE predicate referencing both left and right side variables.
+    // m.age > n.age: find friends older than the person.
+    // Since the right side also has `n` (from the pattern), this is classified
+    // as a right-side predicate and pushed into the right filter.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) \
+             WHERE b.age > a.age \
+             RETURN a.name, b.name \
+             ORDER BY a.name, b.name",
+        )
+        .unwrap();
+
+    // Alix(30) knows Gus(25) and Harm(35). Only Harm is older -> Alix,Harm
+    // Gus(25) knows Harm(35). Harm is older -> Gus,Harm
+    // Harm(35) knows nobody (no outgoing KNOWS edges) -> Harm,null
+    assert!(
+        result.rows.len() >= 3,
+        "Expected at least 3 rows: Alix+Harm, Gus+Harm, Harm+null, got {}",
+        result.rows.len()
+    );
+
+    // Verify Harm appears with null (preserved by left join)
+    let harm_rows: Vec<_> = result
+        .rows
+        .iter()
+        .filter(|r| r[0] == Value::String("Harm".into()))
+        .collect();
+    assert!(
+        !harm_rows.is_empty(),
+        "Harm should appear (no outgoing KNOWS edges, left join preserves)"
+    );
+    assert_eq!(
+        harm_rows[0][1],
+        Value::Null,
+        "Harm has no outgoing KNOWS edges, right side should be NULL"
+    );
+}
+
+#[test]
+fn test_optional_match_gql_where_pushdown() {
+    // Same test but using GQL syntax.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             WHERE c.name = 'TechCorp' \
+             RETURN a.name, c.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.rows.len(),
+        3,
+        "GQL: all persons preserved with right-side WHERE pushdown"
+    );
+    assert_eq!(result.rows[2][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[2][1], Value::Null);
+}
+
+#[test]
+fn test_chained_optional_matches() {
+    // Two independent OPTIONAL MATCHHes.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Harm'}) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) \
+             RETURN a.name, c.name, b.name",
+        )
+        .unwrap();
+
+    // Harm has no WORKS_AT and no outgoing KNOWS edges
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[0][1], Value::Null);
+    assert_eq!(result.rows[0][2], Value::Null);
+}
+
+#[test]
+fn test_optional_match_is_null_check() {
+    // Verify IS NULL works with OPTIONAL MATCH NULL values.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:MANAGES]->(c) \
+             RETURN a.name, c IS NULL AS no_manages \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // Nobody has a MANAGES edge, so all rows should have c IS NULL = true
+    assert_eq!(result.rows.len(), 3);
+    for row in &result.rows {
+        assert_eq!(row[1], Value::Bool(true));
+    }
+}
+
+// ============================================================================
+// OPTIONAL MATCH Phase 4: Chained OPTIONAL MATCH
+// ============================================================================
+
+#[test]
+fn test_chained_independent_optional_matches_mixed() {
+    // Two independent OPTIONAL MATCHHes where one matches and one does not.
+    // Alix has WORKS_AT->TechCorp but no MANAGES edges.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Alix'}) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             OPTIONAL MATCH (a)-[:MANAGES]->(m) \
+             RETURN a.name, c.name, m",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[0][2], Value::Null);
+}
+
+#[test]
+fn test_chained_dependent_optional_matches() {
+    // Dependent optionals: second OPTIONAL depends on result of first.
+    // OPTIONAL MATCH (a)-[:KNOWS]->(b), then OPTIONAL MATCH (b)-[:WORKS_AT]->(c).
+    // Harm has no outgoing KNOWS, so b is NULL and c must also be NULL.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Harm'}) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) \
+             OPTIONAL MATCH (b)-[:WORKS_AT]->(c:Company) \
+             RETURN a.name, b.name, c.name",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[0][1], Value::Null);
+    assert_eq!(result.rows[0][2], Value::Null);
+}
+
+#[test]
+fn test_chained_dependent_optional_partial_match() {
+    // Alix-KNOWS->Gus and Alix-KNOWS->Harm.
+    // Gus has WORKS_AT->TechCorp, Harm does not.
+    // So second OPTIONAL should match for Gus but NULL for Harm.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Alix'}) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) \
+             OPTIONAL MATCH (b)-[:WORKS_AT]->(c:Company) \
+             RETURN a.name, b.name, c.name \
+             ORDER BY b.name",
+        )
+        .unwrap();
+
+    // Alix knows Gus (who works at TechCorp) and Harm (who doesn't)
+    assert_eq!(result.rows.len(), 2);
+
+    // Gus -> TechCorp
+    assert_eq!(result.rows[0][1], Value::String("Gus".into()));
+    assert_eq!(result.rows[0][2], Value::String("TechCorp".into()));
+
+    // Harm -> null (no WORKS_AT edge)
+    assert_eq!(result.rows[1][1], Value::String("Harm".into()));
+    assert_eq!(result.rows[1][2], Value::Null);
+}
+
+#[test]
+fn test_optional_match_with_node_label_filter() {
+    // OPTIONAL MATCH with label on optional side node.
+    // Create a Developer label for Gus only.
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher(
+            "CREATE (a:Person {name: 'Alix'}), \
+             (b:Person:Developer {name: 'Gus'}), \
+             (c:Person {name: 'Harm'}), \
+             (a)-[:KNOWS]->(b), \
+             (a)-[:KNOWS]->(c)",
+        )
+        .unwrap();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Alix'}) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(m:Developer) \
+             RETURN a.name, m.name",
+        )
+        .unwrap();
+
+    // Only Gus is a Developer, so one row with Gus
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][1], Value::String("Gus".into()));
+}
+
+#[test]
+fn test_optional_match_with_vle() {
+    // OPTIONAL MATCH with variable-length path.
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher(
+            "CREATE (a:Person {name: 'Alix'}), \
+             (b:Person {name: 'Gus'}), \
+             (c:Person {name: 'Harm'}), \
+             (d:Person {name: 'Jules'}), \
+             (a)-[:KNOWS]->(b), \
+             (b)-[:KNOWS]->(c)",
+        )
+        .unwrap();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Alix'}) \
+             OPTIONAL MATCH (a)-[:KNOWS*1..2]->(m:Person) \
+             RETURN a.name, m.name \
+             ORDER BY m.name",
+        )
+        .unwrap();
+
+    // Alix reaches Gus (1 hop) and Harm (2 hops). Jules is unreachable.
+    assert!(
+        result.rows.len() >= 2,
+        "Should find at least Gus and Harm via VLE, got {}",
+        result.rows.len()
+    );
+
+    let names: Vec<_> = result
+        .rows
+        .iter()
+        .filter_map(|r| match &r[1] {
+            Value::String(s) => Some(s.as_str().to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert!(names.contains(&"Gus".to_owned()));
+    assert!(names.contains(&"Harm".to_owned()));
+}
+
+#[test]
+fn test_optional_match_with_vle_no_path() {
+    // OPTIONAL MATCH with VLE where no path exists: should produce NULL.
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher(
+            "CREATE (a:Person {name: 'Alix'}), \
+             (b:Person {name: 'Gus'})",
+        )
+        .unwrap();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person {name: 'Alix'}) \
+             OPTIONAL MATCH (a)-[:KNOWS*1..3]->(m:Person) \
+             RETURN a.name, m.name",
+        )
+        .unwrap();
+
+    // No KNOWS edges, so m is NULL but Alix is preserved
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::Null);
+}
+
+#[test]
+fn test_chained_independent_optional_gql() {
+    // Same as Cypher chained test but in GQL syntax.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             OPTIONAL MATCH (a)-[:MANAGES]->(m) \
+             RETURN a.name, c.name, m",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[0][2], Value::Null);
+}
+
+// ============================================================================
+// OPTIONAL MATCH Phase 5: NULL Semantics
+// ============================================================================
+
+#[test]
+fn test_optional_match_is_not_null() {
+    // IS NOT NULL should correctly identify non-NULL optional values.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             RETURN a.name, c IS NOT NULL AS has_job \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    // Alix has WORKS_AT -> true
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::Bool(true));
+    // Gus has WORKS_AT -> true
+    assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+    assert_eq!(result.rows[1][1], Value::Bool(true));
+    // Harm has no WORKS_AT -> false
+    assert_eq!(result.rows[2][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[2][1], Value::Bool(false));
+}
+
+#[test]
+fn test_optional_match_coalesce() {
+    // COALESCE should return the first non-NULL argument.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             RETURN a.name, COALESCE(c.name, 'unemployed') AS employer \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[1][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[2][1], Value::String("unemployed".into()));
+}
+
+#[test]
+fn test_optional_match_case_when() {
+    // CASE WHEN with NULL from OPTIONAL MATCH.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             RETURN a.name, \
+                    CASE WHEN c IS NOT NULL THEN c.name ELSE 'none' END AS employer \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[1][1], Value::String("TechCorp".into()));
+    assert_eq!(result.rows[2][1], Value::String("none".into()));
+}
+
+#[test]
+fn test_optional_match_count_star_vs_count_expr() {
+    // COUNT(*) should count all rows (including NULLs from OPTIONAL MATCH).
+    // COUNT(c.name) should skip NULLs (property access on NULL node produces NULL).
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             RETURN COUNT(*) AS total, COUNT(c.name) AS with_job",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    // COUNT(*) = 3 (all persons)
+    assert_eq!(result.rows[0][0], Value::Int64(3));
+    // COUNT(c.name) = 2 (only Alix and Gus have WORKS_AT with c.name = 'TechCorp')
+    assert_eq!(result.rows[0][1], Value::Int64(2));
+}
+
+#[test]
+fn test_optional_match_collect_skips_nulls() {
+    // COLLECT should omit NULL values from the result list.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             RETURN COLLECT(c.name) AS employers",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    match &result.rows[0][0] {
+        Value::List(list) => {
+            // Should only contain TechCorp entries (no NULLs)
+            assert_eq!(
+                list.len(),
+                2,
+                "COLLECT should have 2 items (no NULLs), got {:?}",
+                list
+            );
+            for item in list.iter() {
+                assert_ne!(*item, Value::Null, "COLLECT should not contain NULL values");
+            }
+        }
+        other => panic!("Expected List from COLLECT, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_optional_match_sum_skips_nulls() {
+    // SUM should skip NULL values from OPTIONAL MATCH.
+    let db = create_social_network();
+    let session = db.session();
+
+    // Add headcount property to TechCorp
+    session
+        .execute_cypher("MATCH (c:Company {name: 'TechCorp'}) SET c.headcount = 100")
+        .unwrap();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) \
+             RETURN SUM(c.headcount) AS total_headcount",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    // Alix and Gus both see headcount=100, Harm sees NULL (skipped)
+    // SUM = 100 + 100 = 200
+    assert_eq!(result.rows[0][0], Value::Int64(200));
+}
+
+#[test]
+fn test_optional_match_count_per_group() {
+    // COUNT with GROUP BY from OPTIONAL MATCH.
+    let db = create_social_network();
+    let session = db.session();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) \
+             RETURN a.name AS person, COUNT(b.name) AS friend_count \
+             ORDER BY person",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    // Alix knows Gus and Harm -> 2
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::Int64(2));
+    // Gus knows Harm -> 1
+    assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+    assert_eq!(result.rows[1][1], Value::Int64(1));
+    // Harm knows nobody -> 0
+    assert_eq!(result.rows[2][0], Value::String("Harm".into()));
+    assert_eq!(result.rows[2][1], Value::Int64(0));
+}
+
+#[test]
+fn test_optional_match_boolean_null_comparison() {
+    // Comparing NULL to a value should produce NULL (falsy), not true or false.
+    // This means WHERE m.age > 30 should not match when m is NULL.
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher(
+            "CREATE (a:Person {name: 'Alix', active: true}), \
+             (b:Person {name: 'Gus'}), \
+             (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(m:Person) \
+             WHERE m.active = true \
+             RETURN a.name, m.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // Alix has no outgoing KNOWS to someone with active=true (Gus has no active prop).
+    // Gus has no outgoing KNOWS at all.
+    // Both should be preserved by the left join.
+    assert_eq!(result.rows.len(), 2, "Both persons preserved by left join");
+    for row in &result.rows {
+        assert_eq!(
+            row[1],
+            Value::Null,
+            "No match for active=true, right side should be NULL"
+        );
+    }
+}
+
+// ============================================================================
 // CALL PROCEDURE: covers plan_call_procedure, plan_static_result
 // ============================================================================
 
@@ -632,4 +1280,444 @@ fn test_call_procedure_with_yield() {
     assert!(!result.rows.is_empty());
     // Each row should have node_id and score
     assert!(result.columns.len() >= 2);
+}
+
+// ============================================================================
+// REMOVE property: covers gql.rs REMOVE clause (lines 516-533)
+// ============================================================================
+
+#[test]
+fn test_gql_remove_property() {
+    let db = create_social_network();
+    let session = db.session();
+
+    session
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n.temp = 'delete_me'")
+        .unwrap();
+
+    let before = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.temp")
+        .unwrap();
+    assert_eq!(before.rows[0][0], Value::String("delete_me".into()));
+
+    session
+        .execute("MATCH (n:Person {name: 'Alix'}) REMOVE n.temp")
+        .unwrap();
+
+    let after = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.temp")
+        .unwrap();
+    assert_eq!(after.rows[0][0], Value::Null);
+}
+
+// ============================================================================
+// SET map assignment: covers gql.rs lines 368-377
+// ============================================================================
+
+#[test]
+fn test_gql_set_map_merge() {
+    let db = create_social_network();
+    let session = db.session();
+
+    session
+        .execute(
+            "MATCH (n:Person {name: 'Alix'}) SET n += {email: 'alix@example.com', active: true}",
+        )
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.email, n.active, n.name")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("alix@example.com".into()));
+    assert_eq!(result.rows[0][1], Value::Bool(true));
+    assert_eq!(result.rows[0][2], Value::String("Alix".into()));
+}
+
+// ============================================================================
+// Multiple labels on SET: covers gql.rs label_operations loop (lines 378-384)
+// ============================================================================
+
+#[test]
+fn test_gql_set_multiple_labels() {
+    let db = create_social_network();
+    let session = db.session();
+
+    session
+        .execute("MATCH (n:Person {name: 'Gus'}) SET n:Employee:Developer")
+        .unwrap();
+
+    let emp = session.execute("MATCH (n:Employee) RETURN n.name").unwrap();
+    let dev = session
+        .execute("MATCH (n:Developer) RETURN n.name")
+        .unwrap();
+
+    assert_eq!(emp.rows.len(), 1);
+    assert_eq!(dev.rows.len(), 1);
+    assert_eq!(emp.rows[0][0], Value::String("Gus".into()));
+}
+
+// ============================================================================
+// MERGE with chained input: covers merge.rs input branch (lines 173-206)
+// ============================================================================
+
+#[test]
+fn test_gql_merge_with_match_input() {
+    let db = create_social_network();
+    let session = db.session();
+
+    session
+        .execute(
+            "MATCH (n:Person {name: 'Alix'}) \
+             MERGE (n)-[:FOLLOWS]->(t:Trend {name: 'Rust'})",
+        )
+        .unwrap();
+
+    let result = session.execute("MATCH (t:Trend) RETURN t.name").unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Rust".into()));
+}
+
+// ============================================================================
+// MERGE in ordered_clauses: covers gql.rs line 386-388
+// ============================================================================
+
+#[test]
+fn test_gql_merge_in_ordered_clauses() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("MERGE (n:Config {key: 'theme'}) ON CREATE SET n.value = 'dark'")
+        .unwrap();
+
+    session
+        .execute("MERGE (n:Config {key: 'theme'}) ON MATCH SET n.value = 'light'")
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (n:Config) RETURN n.key, n.value")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][1], Value::String("light".into()));
+}
+
+// ============================================================================
+// MATCH + CREATE edge in ordered_clauses: covers gql.rs lines 347-349
+// ============================================================================
+
+#[test]
+fn test_gql_match_create_edge_ordered() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session.execute("INSERT (:City {name: 'Prague'})").unwrap();
+    session
+        .execute("INSERT (:Country {name: 'Czechia'})")
+        .unwrap();
+
+    session
+        .execute(
+            "MATCH (c:City {name: 'Prague'}), (co:Country {name: 'Czechia'}) \
+             CREATE (c)-[:IN]->(co)",
+        )
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (c:City)-[:IN]->(co:Country) RETURN c.name, co.name")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Prague".into()));
+    assert_eq!(result.rows[0][1], Value::String("Czechia".into()));
+}
+
+// ============================================================================
+// MATCH + DETACH DELETE in ordered_clauses: covers gql.rs lines 350-356
+// ============================================================================
+
+#[test]
+fn test_gql_match_detach_delete_ordered() {
+    let db = create_social_network();
+    let session = db.session();
+
+    let before = db.node_count();
+
+    session
+        .execute("MATCH (n:Company {name: 'TechCorp'}) DETACH DELETE n")
+        .unwrap();
+
+    assert_eq!(db.node_count(), before - 1);
+}
+
+// ============================================================================
+// FOR clause in ordered_clauses: covers gql.rs lines 337-346
+// ============================================================================
+
+#[test]
+fn test_gql_for_in_ordered_clauses() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    let result = session
+        .execute("FOR x IN [100, 200, 300] WITH ORDINALITY idx RETURN x, idx ORDER BY x")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    assert_eq!(result.rows[0][0], Value::Int64(100));
+    assert_eq!(result.rows[0][1], Value::Int64(1));
+    assert_eq!(result.rows[2][0], Value::Int64(300));
+    assert_eq!(result.rows[2][1], Value::Int64(3));
+}
+
+// ============================================================================
+// CREATE + DELETE ordered: covers gql.rs ordered Create/Delete paths
+// ============================================================================
+
+#[test]
+fn test_gql_ordered_create_delete() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("INSERT (:Temp {name: 'ephemeral'})")
+        .unwrap();
+    assert_eq!(db.node_count(), 1);
+
+    session.execute("MATCH (n:Temp) DETACH DELETE n").unwrap();
+    assert_eq!(db.node_count(), 0);
+}
+
+// ============================================================================
+// create_node_with_props convenience: covers traits.rs default implementations
+// ============================================================================
+
+#[test]
+fn test_traits_create_with_props_convenience() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    let node = session.create_node_with_props(
+        &["Widget"],
+        [
+            ("color", Value::String("blue".into())),
+            ("weight", Value::Int64(42)),
+        ],
+    );
+
+    let result = session
+        .execute("MATCH (w:Widget) RETURN w.color, w.weight")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("blue".into()));
+    assert_eq!(result.rows[0][1], Value::Int64(42));
+
+    let other = session.create_node_with_props(&["Box"], [("size", Value::Int64(10))]);
+    session.create_edge(node, other, "FITS_IN");
+
+    let edge_result = session
+        .execute("MATCH (w:Widget)-[:FITS_IN]->(b:Box) RETURN w.color, b.size")
+        .unwrap();
+
+    assert_eq!(edge_result.rows.len(), 1);
+}
+
+// ============================================================================
+// Cypher: MERGE relationship, DELETE without DETACH, UNWIND standalone,
+// SET map replace/merge, FOREACH, multi-pattern MATCH
+// ============================================================================
+
+#[cfg(feature = "cypher")]
+mod cypher_mutations {
+    use super::*;
+
+    #[test]
+    fn test_merge_relationship_creates() {
+        let db = create_social_network();
+        let session = db.session();
+        let edges_before = db.edge_count();
+
+        session
+            .execute_cypher(
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Harm'}) \
+                 MERGE (a)-[:LIKES]->(b)",
+            )
+            .unwrap();
+
+        assert_eq!(db.edge_count(), edges_before + 1);
+    }
+
+    #[test]
+    fn test_merge_relationship_matches() {
+        let db = create_social_network();
+        let session = db.session();
+        let edges_before = db.edge_count();
+
+        session
+            .execute_cypher(
+                "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+                 MERGE (a)-[:KNOWS]->(b)",
+            )
+            .unwrap();
+
+        assert_eq!(db.edge_count(), edges_before);
+    }
+
+    #[test]
+    fn test_merge_relationship_on_create() {
+        let db = create_social_network();
+        let session = db.session();
+
+        session
+            .execute_cypher(
+                "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Alix'}) \
+                 MERGE (a)-[r:MENTORS]->(b) ON CREATE SET r.since = 2025",
+            )
+            .unwrap();
+
+        let result = session
+            .execute_cypher(
+                "MATCH (a:Person {name: 'Gus'})-[r:MENTORS]->(b:Person {name: 'Alix'}) \
+                 RETURN r.since",
+            )
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Int64(2025));
+    }
+
+    #[test]
+    fn test_delete_without_detach_connected_node() {
+        let db = create_social_network();
+        let session = db.session();
+
+        let result = session.execute_cypher("MATCH (n:Person {name: 'Alix'}) DELETE n");
+        assert!(
+            result.is_err(),
+            "DELETE without DETACH on connected node should fail"
+        );
+    }
+
+    #[test]
+    fn test_unwind_standalone_create() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+
+        session
+            .execute_cypher(
+                "UNWIND [{name: 'Alix', age: 30}, {name: 'Gus', age: 25}] AS props \
+                 CREATE (n:Person) SET n.name = props.name, n.age = props.age",
+            )
+            .unwrap();
+
+        let result = session
+            .execute("MATCH (n:Person) RETURN n.name ORDER BY n.name")
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+    }
+
+    #[test]
+    fn test_set_map_replace() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+
+        session
+            .execute("INSERT (:Item {name: 'Widget', price: 10, color: 'red'})")
+            .unwrap();
+
+        session
+            .execute_cypher("MATCH (n:Item) SET n = {name: 'Gadget', price: 20}")
+            .unwrap();
+
+        let result = session
+            .execute("MATCH (n:Item) RETURN n.name, n.price, n.color")
+            .unwrap();
+
+        assert_eq!(result.rows[0][0], Value::String("Gadget".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(20));
+        assert_eq!(result.rows[0][2], Value::Null);
+    }
+
+    #[test]
+    fn test_set_map_merge() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+
+        session
+            .execute("INSERT (:Item {name: 'Widget', price: 10})")
+            .unwrap();
+
+        session
+            .execute_cypher("MATCH (n:Item) SET n += {color: 'blue', price: 15}")
+            .unwrap();
+
+        let result = session
+            .execute("MATCH (n:Item) RETURN n.name, n.price, n.color")
+            .unwrap();
+
+        assert_eq!(result.rows[0][0], Value::String("Widget".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(15));
+        assert_eq!(result.rows[0][2], Value::String("blue".into()));
+    }
+
+    #[test]
+    fn test_foreach_set_property() {
+        let db = create_social_network();
+        let session = db.session();
+
+        session
+            .execute_cypher(
+                "MATCH (n:Person) \
+                 FOREACH (val IN [1] | SET n.tagged = true)",
+            )
+            .unwrap();
+
+        let result = session
+            .execute("MATCH (n:Person) WHERE n.tagged = true RETURN n.name")
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn test_multi_pattern_shared_vars() {
+        let db = create_social_network();
+        let session = db.session();
+
+        let result = session
+            .execute_cypher(
+                "MATCH (n:Person)-[:KNOWS]->(m:Person), (n)-[:WORKS_AT]->(c:Company) \
+                 RETURN DISTINCT n.name, c.name \
+                 ORDER BY n.name",
+            )
+            .unwrap();
+
+        assert!(!result.rows.is_empty());
+        for row in &result.rows {
+            assert_eq!(row[1], Value::String("TechCorp".into()));
+        }
+    }
+
+    #[test]
+    fn test_multi_pattern_no_shared_vars() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+
+        session.execute("INSERT (:A {val: 1})").unwrap();
+        session.execute("INSERT (:B {val: 2})").unwrap();
+
+        let result = session
+            .execute_cypher("MATCH (a:A), (b:B) RETURN a.val, b.val")
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Int64(1));
+        assert_eq!(result.rows[0][1], Value::Int64(2));
+    }
 }

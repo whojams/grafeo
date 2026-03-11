@@ -23,15 +23,7 @@ use grafeo_engine::GrafeoDB;
 // Test Fixtures
 // ============================================================================
 
-/// Creates a test database with a social network graph.
-///
-/// Structure:
-/// - Alix (Person, age: 30) -KNOWS-> Gus (Person, age: 25)
-/// - Alix -KNOWS-> Harm (Person, age: 35)
-/// - Gus -KNOWS-> Harm
-/// - Alix -WORKS_AT-> TechCorp (Company, founded: 2010)
-/// - Gus -WORKS_AT-> TechCorp
-/// - Harm -WORKS_AT-> Startup (Company, founded: 2020)
+/// Creates 3 Person + 2 Company nodes, 3 KNOWS + 3 WORKS_AT edges.
 fn create_social_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
@@ -449,10 +441,11 @@ mod gql_joins {
             .execute("MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, b.name, c.name")
             .unwrap();
 
-        // Alix knows Gus, Gus knows Harm
-        assert!(
-            result.row_count() >= 1,
-            "Should find at least one 2-hop path"
+        // Only 2-hop KNOWS path: Alix->Gus->Harm
+        assert_eq!(
+            result.row_count(),
+            1,
+            "Should find exactly one 2-hop path: Alix->Gus->Harm"
         );
     }
 
@@ -465,9 +458,11 @@ mod gql_joins {
             .execute("MATCH (a:Person)-[:KNOWS]->(b:Person), (a)-[:WORKS_AT]->(c:Company) RETURN a.name, b.name, c.name")
             .unwrap();
 
-        assert!(
-            result.row_count() >= 3,
-            "Should find at least 3 combined patterns"
+        // (Alix,Gus,TechCorp), (Alix,Harm,TechCorp), (Gus,Harm,TechCorp)
+        assert_eq!(
+            result.row_count(),
+            3,
+            "Should find exactly 3 combined patterns"
         );
     }
 
@@ -650,14 +645,17 @@ mod cypher_tests {
             .execute_cypher("MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, b.name, c.name")
             .unwrap();
 
-        assert!(
-            result.row_count() >= 1,
-            "Should find at least one 2-hop path"
+        // Only 2-hop KNOWS path: Alix->Gus->Harm
+        assert_eq!(
+            result.row_count(),
+            1,
+            "Should find exactly one 2-hop path: Alix->Gus->Harm"
         );
     }
 
     // === EXISTS Subquery Tests ===
 
+    // Cypher EXISTS (GQL variant: test_exists_subquery_in_where in expression_and_projection.rs)
     #[test]
     fn test_cypher_exists_subquery_basic() {
         // Alix-[:KNOWS]->Gus, Alix-[:KNOWS]->Harm, Gus-[:KNOWS]->Harm
@@ -812,12 +810,11 @@ mod gremlin_tests {
         let db = create_social_network();
         let session = db.session();
 
-        // Test that we can at least parse basic Gremlin syntax
+        // Verify Gremlin parses and executes successfully
         let result = session.execute_gremlin("g.V()");
-        // The translator should work even if execution fails
         assert!(
-            result.is_ok() || result.is_err(),
-            "Gremlin should be parsed"
+            result.is_ok(),
+            "Gremlin g.V() should parse and execute: {result:?}"
         );
     }
 
@@ -920,7 +917,12 @@ mod gremlin_tests {
             .execute_gremlin("g.V().hasLabel('Person').out('KNOWS').out('KNOWS')")
             .unwrap();
 
-        assert!(result.row_count() >= 1, "Should find friends of friends");
+        // Only path: Person.out(KNOWS).out(KNOWS) = Alix->Gus->Harm
+        assert_eq!(
+            result.row_count(),
+            1,
+            "Should find exactly one friend-of-friend: Harm via Gus"
+        );
     }
 }
 
@@ -941,12 +943,11 @@ mod graphql_tests {
         let db = create_social_network();
         let session = db.session();
 
-        // Test that we can at least parse basic GraphQL syntax
+        // Verify GraphQL parses and executes successfully
         let result = session.execute_graphql("query { person { id } }");
-        // The translator should work
         assert!(
-            result.is_ok() || result.is_err(),
-            "GraphQL should be processed"
+            result.is_ok(),
+            "GraphQL query should parse and execute: {result:?}"
         );
     }
 
@@ -991,7 +992,12 @@ mod graphql_tests {
             .execute_graphql("query { person { name knows { name } } }")
             .unwrap();
 
-        assert!(result.row_count() >= 1, "Should return nested results");
+        // 3 Person nodes, each with nested knows traversal
+        assert_eq!(
+            result.row_count(),
+            3,
+            "Should return one row per Person node"
+        );
     }
 }
 

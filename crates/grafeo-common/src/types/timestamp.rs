@@ -351,4 +351,26 @@ mod tests {
         assert_eq!(Timestamp::EPOCH.as_micros(), 0);
         assert_eq!(Timestamp::EPOCH.as_secs(), 0);
     }
+
+    #[test]
+    fn test_add_duration_days_and_nanos() {
+        use crate::types::Duration;
+        let ts = Timestamp::from_secs(1_700_000_000); // 2023-11-14T22:13:20Z
+        let dur = Duration::from_days(1);
+        let result = ts.add_duration(&dur);
+        // Adding 1 day = 86400 seconds = 86_400_000_000 microseconds
+        assert_eq!(result.as_micros() - ts.as_micros(), 86_400_000_000);
+    }
+
+    #[test]
+    fn test_add_duration_months() {
+        use crate::types::Duration;
+        let ts = Timestamp::from_secs(1_700_000_000); // 2023-11-14
+        let dur = Duration::from_months(2);
+        let result = ts.add_duration(&dur);
+        let result_date = result.to_date();
+        // Nov + 2 months = January (next year)
+        assert_eq!(result_date.month(), 1);
+        assert_eq!(result_date.year(), 2024);
+    }
 }

@@ -37,6 +37,8 @@ pub enum Statement {
     ShowIndexes,
     /// SHOW CONSTRAINTS: lists all constraints.
     ShowConstraints,
+    /// SHOW CURRENT GRAPH TYPE: shows the graph type bound to the current graph.
+    ShowCurrentGraphType,
 }
 
 /// A complete Cypher query.

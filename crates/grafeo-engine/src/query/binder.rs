@@ -661,7 +661,7 @@ impl Binder {
                 }
                 Ok(())
             }
-            LogicalOperator::LoadCsv(load) => {
+            LogicalOperator::LoadData(load) => {
                 // The row variable is bound as Any (Map or List depending on WITH HEADERS)
                 self.context.add_variable(
                     load.variable.clone(),

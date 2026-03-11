@@ -317,3 +317,238 @@ fn test_factorized_aggregation_speedup_demonstration() {
         println!("Speedup: {:.2}x", speedup);
     }
 }
+
+/// Creates a 4-level chain graph for 3-hop testing.
+///
+/// Structure (all edges are :STEP):
+///
+///   Layer 0 (Root): R0, R1
+///   Layer 1 (Hop1): H1_0, H1_1, H1_2
+///   Layer 2 (Hop2): H2_0, H2_1, H2_2, H2_3
+///   Layer 3 (Hop3): H3_0, H3_1
+///
+///   R0  -> H1_0, H1_1       (fan-out 2)
+///   R1  -> H1_2              (fan-out 1)
+///   H1_0 -> H2_0, H2_1      (fan-out 2)
+///   H1_1 -> H2_2             (fan-out 1)
+///   H1_2 -> H2_3             (fan-out 1)
+///   H2_0 -> H3_0             (fan-out 1)
+///   H2_1 -> H3_0, H3_1      (fan-out 2)
+///   H2_2 -> H3_1             (fan-out 1)
+///   H2_3 -> (none)           (fan-out 0)
+///
+/// 3-hop paths (R -> H1 -> H2 -> H3):
+///   R0 -> H1_0 -> H2_0 -> H3_0              = 1
+///   R0 -> H1_0 -> H2_1 -> H3_0              = 1
+///   R0 -> H1_0 -> H2_1 -> H3_1              = 1
+///   R0 -> H1_1 -> H2_2 -> H3_1              = 1
+///   R1 -> H1_2 -> H2_3 -> (none)            = 0
+///   Total: 4
+fn create_chain_graph(db: &GrafeoDB) {
+    let session = db.session();
+
+    // Layer 0: roots
+    let r0 = session.create_node_with_props(&["Root"], [("name", Value::String("R0".into()))]);
+    let r1 = session.create_node_with_props(&["Root"], [("name", Value::String("R1".into()))]);
+
+    // Layer 1
+    let h1_0 = session.create_node_with_props(&["Hop1"], [("name", Value::String("H1_0".into()))]);
+    let h1_1 = session.create_node_with_props(&["Hop1"], [("name", Value::String("H1_1".into()))]);
+    let h1_2 = session.create_node_with_props(&["Hop1"], [("name", Value::String("H1_2".into()))]);
+
+    // Layer 2
+    let h2_0 = session.create_node_with_props(&["Hop2"], [("name", Value::String("H2_0".into()))]);
+    let h2_1 = session.create_node_with_props(&["Hop2"], [("name", Value::String("H2_1".into()))]);
+    let h2_2 = session.create_node_with_props(&["Hop2"], [("name", Value::String("H2_2".into()))]);
+    let h2_3 = session.create_node_with_props(&["Hop2"], [("name", Value::String("H2_3".into()))]);
+
+    // Layer 3
+    let h3_0 = session.create_node_with_props(&["Hop3"], [("name", Value::String("H3_0".into()))]);
+    let h3_1 = session.create_node_with_props(&["Hop3"], [("name", Value::String("H3_1".into()))]);
+
+    // Layer 0 -> Layer 1 edges
+    session.create_edge(r0, h1_0, "STEP");
+    session.create_edge(r0, h1_1, "STEP");
+    session.create_edge(r1, h1_2, "STEP");
+
+    // Layer 1 -> Layer 2 edges
+    session.create_edge(h1_0, h2_0, "STEP");
+    session.create_edge(h1_0, h2_1, "STEP");
+    session.create_edge(h1_1, h2_2, "STEP");
+    session.create_edge(h1_2, h2_3, "STEP");
+
+    // Layer 2 -> Layer 3 edges
+    session.create_edge(h2_0, h3_0, "STEP");
+    session.create_edge(h2_1, h3_0, "STEP");
+    session.create_edge(h2_1, h3_1, "STEP");
+    session.create_edge(h2_2, h3_1, "STEP");
+    // H2_3 has no outgoing edges (dead end)
+}
+
+#[test]
+fn test_three_hop_factorized_count() {
+    let db = GrafeoDB::new_in_memory();
+    create_chain_graph(&db);
+
+    let session = db.session();
+
+    // 3-hop query: root -> hop1 -> hop2 -> hop3
+    let result = session
+        .execute("MATCH (a:Root)-[:STEP]->(b)-[:STEP]->(c)-[:STEP]->(d) RETURN count(d) AS cnt")
+        .unwrap();
+
+    assert_eq!(result.row_count(), 1, "Aggregation should return one row");
+    let count = result.iter().next().unwrap()[0].as_int64().unwrap();
+    assert_eq!(count, 4, "Should find exactly 4 three-hop paths");
+}
+
+#[test]
+fn test_three_hop_factorized_vs_flat() {
+    // Verify that factorized and flat execution agree on a 3-hop query.
+    let db_factorized = GrafeoDB::new_in_memory();
+    let db_flat = GrafeoDB::with_config(Config::default().without_factorized_execution()).unwrap();
+
+    create_chain_graph(&db_factorized);
+    create_chain_graph(&db_flat);
+
+    let query = "MATCH (a:Root)-[:STEP]->(b)-[:STEP]->(c)-[:STEP]->(d) RETURN count(d) AS cnt";
+
+    let factorized_count = db_factorized
+        .session()
+        .execute(query)
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()[0]
+        .as_int64()
+        .unwrap();
+
+    let flat_count = db_flat
+        .session()
+        .execute(query)
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()[0]
+        .as_int64()
+        .unwrap();
+
+    println!("Factorized 3-hop count: {}", factorized_count);
+    println!("Flat 3-hop count:       {}", flat_count);
+
+    assert_eq!(factorized_count, 4, "Factorized should find 4 paths");
+    assert_eq!(flat_count, 4, "Flat should find 4 paths");
+    assert_eq!(
+        factorized_count, flat_count,
+        "Factorized and flat must agree on 3-hop count"
+    );
+}
+
+#[test]
+fn test_asymmetric_fanout_two_hop() {
+    // One root has high fan-out (many neighbors), another has zero.
+    // Verifies that factorized execution handles the asymmetry correctly.
+    //
+    // Structure:
+    //   Star -> S1, S2, S3, S4, S5   (fan-out 5)
+    //   Leaf (no outgoing edges)      (fan-out 0)
+    //
+    //   S1 -> T1, T2                  (fan-out 2)
+    //   S2 -> T3                      (fan-out 1)
+    //   S3 -> T4, T5, T6             (fan-out 3)
+    //   S4 -> (none)                  (fan-out 0)
+    //   S5 -> T7                      (fan-out 1)
+    //
+    // 2-hop paths from Star:
+    //   Star -> S1 -> T1              = 1
+    //   Star -> S1 -> T2              = 1
+    //   Star -> S2 -> T3              = 1
+    //   Star -> S3 -> T4              = 1
+    //   Star -> S3 -> T5              = 1
+    //   Star -> S3 -> T6             = 1
+    //   Star -> S4 -> (none)          = 0
+    //   Star -> S5 -> T7              = 1
+    //   Total from Star: 7
+    //
+    // 2-hop paths from Leaf: 0 (no outgoing edges at all)
+    // Grand total: 7
+
+    let db_factorized = GrafeoDB::new_in_memory();
+    let db_flat = GrafeoDB::with_config(Config::default().without_factorized_execution()).unwrap();
+
+    for db in [&db_factorized, &db_flat] {
+        let session = db.session();
+
+        // Two root-level nodes: one hub, one isolated
+        let star =
+            session.create_node_with_props(&["Hub"], [("name", Value::String("Star".into()))]);
+        let _leaf =
+            session.create_node_with_props(&["Hub"], [("name", Value::String("Leaf".into()))]);
+
+        // First-hop satellites of Star
+        let s1 = session.create_node_with_props(&["Sat"], [("name", Value::String("S1".into()))]);
+        let s2 = session.create_node_with_props(&["Sat"], [("name", Value::String("S2".into()))]);
+        let s3 = session.create_node_with_props(&["Sat"], [("name", Value::String("S3".into()))]);
+        let s4 = session.create_node_with_props(&["Sat"], [("name", Value::String("S4".into()))]);
+        let s5 = session.create_node_with_props(&["Sat"], [("name", Value::String("S5".into()))]);
+
+        session.create_edge(star, s1, "ARM");
+        session.create_edge(star, s2, "ARM");
+        session.create_edge(star, s3, "ARM");
+        session.create_edge(star, s4, "ARM");
+        session.create_edge(star, s5, "ARM");
+
+        // Second-hop targets
+        let t1 = session.create_node_with_props(&["Tip"], [("name", Value::String("T1".into()))]);
+        let t2 = session.create_node_with_props(&["Tip"], [("name", Value::String("T2".into()))]);
+        let t3 = session.create_node_with_props(&["Tip"], [("name", Value::String("T3".into()))]);
+        let t4 = session.create_node_with_props(&["Tip"], [("name", Value::String("T4".into()))]);
+        let t5 = session.create_node_with_props(&["Tip"], [("name", Value::String("T5".into()))]);
+        let t6 = session.create_node_with_props(&["Tip"], [("name", Value::String("T6".into()))]);
+        let t7 = session.create_node_with_props(&["Tip"], [("name", Value::String("T7".into()))]);
+
+        session.create_edge(s1, t1, "ARM");
+        session.create_edge(s1, t2, "ARM");
+        session.create_edge(s2, t3, "ARM");
+        session.create_edge(s3, t4, "ARM");
+        session.create_edge(s3, t5, "ARM");
+        session.create_edge(s3, t6, "ARM");
+        // s4 has no outgoing edges
+        session.create_edge(s5, t7, "ARM");
+    }
+
+    let query = "MATCH (a:Hub)-[:ARM]->(b)-[:ARM]->(c) RETURN count(c) AS cnt";
+
+    let factorized_count = db_factorized
+        .session()
+        .execute(query)
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()[0]
+        .as_int64()
+        .unwrap();
+
+    let flat_count = db_flat
+        .session()
+        .execute(query)
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()[0]
+        .as_int64()
+        .unwrap();
+
+    println!("Asymmetric fan-out, factorized: {}", factorized_count);
+    println!("Asymmetric fan-out, flat:       {}", flat_count);
+
+    assert_eq!(
+        factorized_count, 7,
+        "Factorized should find 7 two-hop paths (all from Star, none from Leaf)"
+    );
+    assert_eq!(flat_count, 7, "Flat should find 7 two-hop paths");
+    assert_eq!(
+        factorized_count, flat_count,
+        "Factorized and flat must agree on asymmetric fan-out"
+    );
+}

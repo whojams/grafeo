@@ -150,15 +150,18 @@ impl QueryProcessor {
         }
     }
 
-    /// Creates a query processor backed by any GraphStoreMut implementation.
-    #[must_use]
+    /// Creates a query processor backed by any `GraphStoreMut` implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal arena allocation fails (out of memory).
     pub fn for_graph_store_with_transaction(
         store: Arc<dyn GraphStoreMut>,
         transaction_manager: Arc<TransactionManager>,
-    ) -> Self {
+    ) -> Result<Self> {
         let optimizer = Optimizer::from_graph_store(&*store);
-        Self {
-            lpg_store: Arc::new(LpgStore::new().expect("arena allocation for dummy LpgStore")), // dummy, not used
+        Ok(Self {
+            lpg_store: Arc::new(LpgStore::new()?),
             graph_store: store,
             transaction_manager,
             catalog: Arc::new(Catalog::new()),
@@ -166,7 +169,7 @@ impl QueryProcessor {
             transaction_context: None,
             #[cfg(feature = "rdf")]
             rdf_store: None,
-        }
+        })
     }
 
     /// Creates a new query processor with both LPG and RDF stores.
@@ -466,6 +469,7 @@ pub(crate) fn annotate_pushdown_hints(
     op: &mut LogicalOperator,
     store: &dyn grafeo_core::graph::GraphStore,
 ) {
+    #[allow(clippy::wildcard_imports)]
     use crate::query::plan::*;
 
     match op {
@@ -523,6 +527,7 @@ fn infer_pushdown(
     scan: &crate::query::plan::NodeScanOp,
     store: &dyn grafeo_core::graph::GraphStore,
 ) -> Option<crate::query::plan::PushdownHint> {
+    #[allow(clippy::wildcard_imports)]
     use crate::query::plan::*;
 
     match predicate {
@@ -608,6 +613,7 @@ pub fn substitute_params(plan: &mut LogicalPlan, params: &QueryParams) -> Result
 
 /// Recursively substitutes parameters in an operator.
 fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Result<()> {
+    #[allow(clippy::wildcard_imports)]
     use crate::query::plan::*;
 
     match op {
@@ -833,8 +839,8 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
         LogicalOperator::CreatePropertyGraph(_) => {}
         // Procedure calls: arguments could contain parameters but we handle at execution time
         LogicalOperator::CallProcedure(_) => {}
-        // LoadCsv: file path is a literal, no parameter substitution needed
-        LogicalOperator::LoadCsv(_) => {}
+        // LoadData: file path is a literal, no parameter substitution needed
+        LogicalOperator::LoadData(_) => {}
     }
     Ok(())
 }

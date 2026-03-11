@@ -2,6 +2,7 @@
 //!
 //! Parses Cypher queries into an AST.
 
+#[allow(clippy::wildcard_imports)]
 use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
 use grafeo_common::utils::error::{QueryError, QueryErrorKind, Result};
@@ -93,7 +94,15 @@ impl<'a> Parser<'a> {
             self.skip_semicolons();
             return Ok(stmt);
         }
-        // SHOW INDEXES / SHOW CONSTRAINTS
+        // ALTER CURRENT GRAPH TYPE
+        if self.current.kind == TokenKind::Identifier
+            && self.current.text.eq_ignore_ascii_case("ALTER")
+            && let Some(stmt) = self.try_parse_alter_current_graph_type()?
+        {
+            self.skip_semicolons();
+            return Ok(stmt);
+        }
+        // SHOW INDEXES / SHOW CONSTRAINTS / SHOW CURRENT GRAPH TYPE
         if self.current.kind == TokenKind::Identifier
             && self.current.text.eq_ignore_ascii_case("SHOW")
             && let Some(stmt) = self.try_parse_show()?
@@ -2149,7 +2158,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// SHOW INDEXES / SHOW CONSTRAINTS
+    /// SHOW INDEXES / SHOW CONSTRAINTS / SHOW CURRENT GRAPH TYPE
     fn try_parse_show(&mut self) -> Result<Option<Statement>> {
         let saved_lexer = self.lexer.clone();
         let saved_cur = self.current.clone();
@@ -2161,12 +2170,316 @@ impl<'a> Parser<'a> {
         } else if self.is_contextual("CONSTRAINTS") || self.is_contextual("CONSTRAINT") {
             self.advance();
             Ok(Some(Statement::ShowConstraints))
+        } else if self.is_contextual("CURRENT") {
+            // SHOW CURRENT GRAPH TYPE
+            self.advance(); // consume CURRENT
+            self.expect_contextual("GRAPH")?;
+            self.expect_contextual("TYPE")?;
+            Ok(Some(Statement::ShowCurrentGraphType))
         } else {
             // Not a SHOW command, rewind
             self.lexer = saved_lexer;
             self.current = saved_cur;
             Ok(None)
         }
+    }
+
+    /// ALTER CURRENT GRAPH TYPE SET/ADD/DROP { ... }
+    ///
+    /// Neo4j uses `ALTER CURRENT GRAPH TYPE` instead of GQL's `ALTER GRAPH TYPE <name>`.
+    /// Maps to `AlterGraphTypeStatement` with the sentinel name `__current__`.
+    ///
+    /// - `SET { ... }` replaces the entire graph type (or_replace CREATE).
+    /// - `ADD { ... }` adds node/edge types via AlterGraphType alterations.
+    /// - `DROP { ... }` removes node/edge types via AlterGraphType alterations.
+    fn try_parse_alter_current_graph_type(&mut self) -> Result<Option<Statement>> {
+        let saved_lexer = self.lexer.clone();
+        let saved_cur = self.current.clone();
+        self.advance(); // consume ALTER
+
+        // Check for CURRENT GRAPH TYPE sequence
+        if !self.is_contextual("CURRENT") {
+            self.lexer = saved_lexer;
+            self.current = saved_cur;
+            return Ok(None);
+        }
+        self.advance(); // consume CURRENT
+
+        if !self.is_contextual("GRAPH") {
+            self.lexer = saved_lexer;
+            self.current = saved_cur;
+            return Ok(None);
+        }
+        self.advance(); // consume GRAPH
+
+        self.expect_contextual("TYPE")?;
+
+        use crate::query::gql::ast as gql;
+
+        // Determine the operation: SET, ADD, or DROP
+        if self.current.kind == TokenKind::Set {
+            self.advance(); // consume SET
+            let (node_types, edge_types) = self.parse_inline_graph_type_body()?;
+            // SET replaces the entire graph type: map to CreateGraphType with or_replace=true
+            Ok(Some(Statement::Schema(
+                gql::SchemaStatement::CreateGraphType(gql::CreateGraphTypeStatement {
+                    name: "__current__".to_string(),
+                    node_types: node_types.iter().map(|t| t.name().to_string()).collect(),
+                    edge_types: edge_types.iter().map(|t| t.name().to_string()).collect(),
+                    inline_types: node_types.into_iter().chain(edge_types).collect(),
+                    like_graph: None,
+                    open: false,
+                    if_not_exists: false,
+                    or_replace: true,
+                    span: None,
+                }),
+            )))
+        } else if self.is_contextual("ADD") {
+            self.advance(); // consume ADD
+            let (node_types, edge_types) = self.parse_inline_graph_type_body()?;
+            let mut alterations = Vec::new();
+            for nt in &node_types {
+                alterations.push(gql::GraphTypeAlteration::AddNodeType(nt.name().to_string()));
+            }
+            for et in &edge_types {
+                alterations.push(gql::GraphTypeAlteration::AddEdgeType(et.name().to_string()));
+            }
+            Ok(Some(Statement::Schema(
+                gql::SchemaStatement::AlterGraphType(gql::AlterGraphTypeStatement {
+                    name: "__current__".to_string(),
+                    alterations,
+                    span: None,
+                }),
+            )))
+        } else if self.current.kind == TokenKind::Identifier
+            && self.current.text.eq_ignore_ascii_case("DROP")
+        {
+            self.advance(); // consume DROP
+            let (node_types, edge_types) = self.parse_inline_graph_type_body()?;
+            let mut alterations = Vec::new();
+            for nt in &node_types {
+                alterations.push(gql::GraphTypeAlteration::DropNodeType(
+                    nt.name().to_string(),
+                ));
+            }
+            for et in &edge_types {
+                alterations.push(gql::GraphTypeAlteration::DropEdgeType(
+                    et.name().to_string(),
+                ));
+            }
+            Ok(Some(Statement::Schema(
+                gql::SchemaStatement::AlterGraphType(gql::AlterGraphTypeStatement {
+                    name: "__current__".to_string(),
+                    alterations,
+                    span: None,
+                }),
+            )))
+        } else {
+            Err(self.error("Expected SET, ADD, or DROP after ALTER CURRENT GRAPH TYPE"))
+        }
+    }
+
+    /// Parses the Neo4j inline graph type body: `{ type_elements, ... }`.
+    ///
+    /// Each element is one of:
+    /// - `(:Label { prop TYPE [NOT NULL], ... })` for a node type
+    /// - `(:Src)-[:Type { prop TYPE, ... }]->(:Dst)` for an edge type with endpoints
+    /// - `(:Label)` for a node type without properties
+    ///
+    /// Property types support both `prop TYPE` (GQL) and `prop :: TYPE` (Neo4j) syntax.
+    fn parse_inline_graph_type_body(
+        &mut self,
+    ) -> Result<(
+        Vec<crate::query::gql::ast::InlineElementType>,
+        Vec<crate::query::gql::ast::InlineElementType>,
+    )> {
+        use crate::query::gql::ast::InlineElementType;
+
+        self.expect(TokenKind::LBrace)?;
+
+        let mut node_types = Vec::new();
+        let mut edge_types = Vec::new();
+
+        while self.current.kind != TokenKind::RBrace && self.current.kind != TokenKind::Eof {
+            // Each element starts with a node pattern: (...)
+            let element = self.parse_inline_type_element()?;
+            match element {
+                InlineElementType::Node { .. } => node_types.push(element),
+                InlineElementType::Edge { .. } => edge_types.push(element),
+            }
+
+            // Optional comma between elements
+            if self.current.kind == TokenKind::Comma {
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::RBrace)?;
+        Ok((node_types, edge_types))
+    }
+
+    /// Parses a single inline type element.
+    ///
+    /// Starting from `(`, determines whether it is a node type or an edge type
+    /// by looking for a following `-[` pattern.
+    fn parse_inline_type_element(&mut self) -> Result<crate::query::gql::ast::InlineElementType> {
+        use crate::query::gql::ast::InlineElementType;
+
+        self.expect(TokenKind::LParen)?;
+
+        // Parse the node label: :Label
+        self.expect(TokenKind::Colon)?;
+        let label = self.expect_identifier()?;
+
+        // Parse optional properties: { prop TYPE [NOT NULL], ... }
+        let properties = if self.current.kind == TokenKind::LBrace {
+            self.parse_inline_property_defs()?
+        } else {
+            Vec::new()
+        };
+
+        self.expect(TokenKind::RParen)?;
+
+        // Check if this is an edge pattern: (...)-[:TYPE]->(...) or (...)<-[:TYPE]-(...)
+        if self.current.kind == TokenKind::Minus
+            || self.current.kind == TokenKind::Arrow
+            || self.current.kind == TokenKind::LeftArrow
+            || self.current.kind == TokenKind::DoubleDash
+        {
+            // This node is the source of an edge type
+            let source_label = label;
+            let source_props = properties;
+
+            // Parse the edge direction and type
+            self.parse_inline_edge_type(source_label, source_props)
+        } else {
+            // Stand-alone node type
+            Ok(InlineElementType::Node {
+                name: label,
+                properties,
+                key_labels: Vec::new(),
+            })
+        }
+    }
+
+    /// Parses an inline edge type pattern after the source node has been parsed.
+    ///
+    /// Handles: `(...)-[:TYPE { props }]->(:Dst)` and `(...)<-[:TYPE { props }]-(:Dst)`
+    fn parse_inline_edge_type(
+        &mut self,
+        source_label: String,
+        _source_props: Vec<crate::query::gql::ast::PropertyDefinition>,
+    ) -> Result<crate::query::gql::ast::InlineElementType> {
+        use crate::query::gql::ast::InlineElementType;
+
+        // Determine direction and consume leading arrow part
+        let (is_outgoing, _is_undirected) = match self.current.kind {
+            TokenKind::Minus => {
+                // - followed by [ => outgoing: -[:TYPE]-> or undirected: -[:TYPE]-
+                self.advance(); // consume -
+                (true, false)
+            }
+            TokenKind::LeftArrow => {
+                // <- is incoming: <-[:TYPE]-
+                self.advance(); // consume <-
+                (false, false)
+            }
+            TokenKind::DoubleDash => {
+                // -- undirected (edge without brackets)
+                self.advance();
+                (true, true)
+            }
+            _ => return Err(self.error("Expected edge pattern (-, <-, or --)")),
+        };
+
+        // Parse edge type: [:TYPE { props }]
+        self.expect(TokenKind::LBracket)?;
+        self.expect(TokenKind::Colon)?;
+        let edge_label = self.expect_identifier()?;
+
+        let edge_props = if self.current.kind == TokenKind::LBrace {
+            self.parse_inline_property_defs()?
+        } else {
+            Vec::new()
+        };
+
+        self.expect(TokenKind::RBracket)?;
+
+        // Consume trailing arrow
+        if self.current.kind == TokenKind::Arrow {
+            self.advance(); // consume ->
+        } else if self.current.kind == TokenKind::Minus {
+            self.advance(); // consume - (undirected or incoming closing)
+        }
+
+        // Parse target node: (:Label)
+        self.expect(TokenKind::LParen)?;
+        self.expect(TokenKind::Colon)?;
+        let target_label = self.expect_identifier()?;
+        self.expect(TokenKind::RParen)?;
+
+        let (src_types, tgt_types) = if is_outgoing {
+            (vec![source_label], vec![target_label])
+        } else {
+            (vec![target_label], vec![source_label])
+        };
+
+        Ok(InlineElementType::Edge {
+            name: edge_label,
+            properties: edge_props,
+            key_labels: Vec::new(),
+            source_node_types: src_types,
+            target_node_types: tgt_types,
+        })
+    }
+
+    /// Parses inline property definitions: `{ prop TYPE [NOT NULL], ... }`
+    ///
+    /// Supports both GQL-style (`prop TYPE`) and Neo4j-style (`prop :: TYPE`).
+    fn parse_inline_property_defs(
+        &mut self,
+    ) -> Result<Vec<crate::query::gql::ast::PropertyDefinition>> {
+        use crate::query::gql::ast::PropertyDefinition;
+
+        self.expect(TokenKind::LBrace)?;
+
+        let mut props = Vec::new();
+
+        while self.current.kind != TokenKind::RBrace && self.current.kind != TokenKind::Eof {
+            let prop_name = self.expect_identifier()?;
+
+            // Support both `prop TYPE` and `prop :: TYPE` syntax
+            if self.current.kind == TokenKind::Colon && self.peek_kind() == TokenKind::Colon {
+                self.advance(); // consume first :
+                self.advance(); // consume second :
+            }
+
+            let data_type = self.expect_identifier()?;
+
+            // Optional NOT NULL
+            let nullable = if self.current.kind == TokenKind::Not {
+                self.advance();
+                self.expect(TokenKind::Null)?;
+                false
+            } else {
+                true
+            };
+
+            props.push(PropertyDefinition {
+                name: prop_name,
+                data_type,
+                nullable,
+                default_value: None,
+            });
+
+            // Optional comma
+            if self.current.kind == TokenKind::Comma {
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::RBrace)?;
+        Ok(props)
     }
 
     fn error(&self, message: &str) -> grafeo_common::utils::error::Error {
@@ -3399,5 +3712,283 @@ mod tests {
         } else {
             panic!("Expected Query");
         }
+    }
+
+    // ================================================================
+    // SHOW CURRENT GRAPH TYPE
+    // ================================================================
+
+    #[test]
+    fn test_parse_show_current_graph_type() {
+        let stmt = parse_ok("SHOW CURRENT GRAPH TYPE");
+        assert!(matches!(stmt, Statement::ShowCurrentGraphType));
+    }
+
+    #[test]
+    fn test_parse_show_current_graph_type_lowercase() {
+        let stmt = parse_ok("show current graph type");
+        assert!(matches!(stmt, Statement::ShowCurrentGraphType));
+    }
+
+    #[test]
+    fn test_parse_show_current_graph_type_mixed_case() {
+        let stmt = parse_ok("Show Current Graph Type");
+        assert!(matches!(stmt, Statement::ShowCurrentGraphType));
+    }
+
+    // ================================================================
+    // ALTER CURRENT GRAPH TYPE SET
+    // ================================================================
+
+    #[test]
+    fn test_parse_alter_current_graph_type_set_node() {
+        use crate::query::gql::ast::{InlineElementType, SchemaStatement};
+
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE SET { (:Person { name STRING NOT NULL }) }");
+        if let Statement::Schema(SchemaStatement::CreateGraphType(create)) = stmt {
+            assert_eq!(create.name, "__current__");
+            assert!(create.or_replace);
+            assert_eq!(create.inline_types.len(), 1);
+            assert!(matches!(
+                &create.inline_types[0],
+                InlineElementType::Node { name, properties, .. }
+                    if name == "Person" && properties.len() == 1
+                       && properties[0].name == "name"
+                       && properties[0].data_type == "STRING"
+                       && !properties[0].nullable
+            ));
+        } else {
+            panic!("Expected Schema(CreateGraphType), got {stmt:?}");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_set_node_neo4j_type_syntax() {
+        use crate::query::gql::ast::{InlineElementType, SchemaStatement};
+
+        // Neo4j uses :: for type annotations
+        let stmt =
+            parse_ok("ALTER CURRENT GRAPH TYPE SET { (:Person { name :: STRING NOT NULL }) }");
+        if let Statement::Schema(SchemaStatement::CreateGraphType(create)) = stmt {
+            assert_eq!(create.inline_types.len(), 1);
+            assert!(matches!(
+                &create.inline_types[0],
+                InlineElementType::Node { name, properties, .. }
+                    if name == "Person"
+                       && properties[0].data_type == "STRING"
+                       && !properties[0].nullable
+            ));
+        } else {
+            panic!("Expected Schema(CreateGraphType), got {stmt:?}");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_set_edge() {
+        use crate::query::gql::ast::{InlineElementType, SchemaStatement};
+
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE SET { (:Person)-[:KNOWS]->(:Person) }");
+        if let Statement::Schema(SchemaStatement::CreateGraphType(create)) = stmt {
+            assert_eq!(create.name, "__current__");
+            assert!(create.or_replace);
+            // Should have one edge type (no separate node types extracted from patterns)
+            assert_eq!(create.inline_types.len(), 1);
+            assert!(matches!(
+                &create.inline_types[0],
+                InlineElementType::Edge {
+                    name,
+                    source_node_types,
+                    target_node_types,
+                    ..
+                } if name == "KNOWS"
+                     && source_node_types == &["Person"]
+                     && target_node_types == &["Person"]
+            ));
+        } else {
+            panic!("Expected Schema(CreateGraphType), got {stmt:?}");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_set_mixed() {
+        use crate::query::gql::ast::{InlineElementType, SchemaStatement};
+
+        let stmt = parse_ok(
+            "ALTER CURRENT GRAPH TYPE SET { (:Person { name STRING }), (:Person)-[:KNOWS]->(:Person) }",
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(create)) = stmt {
+            assert_eq!(create.name, "__current__");
+            assert_eq!(create.inline_types.len(), 2);
+            // First is a node type
+            assert!(
+                matches!(&create.inline_types[0], InlineElementType::Node { name, .. } if name == "Person")
+            );
+            // Second is an edge type
+            assert!(
+                matches!(&create.inline_types[1], InlineElementType::Edge { name, .. } if name == "KNOWS")
+            );
+        } else {
+            panic!("Expected Schema(CreateGraphType), got {stmt:?}");
+        }
+    }
+
+    // ================================================================
+    // ALTER CURRENT GRAPH TYPE ADD
+    // ================================================================
+
+    #[test]
+    fn test_parse_alter_current_graph_type_add() {
+        use crate::query::gql::ast::{GraphTypeAlteration, SchemaStatement};
+
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE ADD { (:Movie { title STRING }) }");
+        if let Statement::Schema(SchemaStatement::AlterGraphType(alter)) = stmt {
+            assert_eq!(alter.name, "__current__");
+            assert_eq!(alter.alterations.len(), 1);
+            assert!(matches!(
+                &alter.alterations[0],
+                GraphTypeAlteration::AddNodeType(name) if name == "Movie"
+            ));
+        } else {
+            panic!("Expected Schema(AlterGraphType), got {stmt:?}");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_add_edge() {
+        use crate::query::gql::ast::{GraphTypeAlteration, SchemaStatement};
+
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE ADD { (:Person)-[:ACTED_IN]->(:Movie) }");
+        if let Statement::Schema(SchemaStatement::AlterGraphType(alter)) = stmt {
+            assert_eq!(alter.name, "__current__");
+            assert_eq!(alter.alterations.len(), 1);
+            assert!(matches!(
+                &alter.alterations[0],
+                GraphTypeAlteration::AddEdgeType(name) if name == "ACTED_IN"
+            ));
+        } else {
+            panic!("Expected Schema(AlterGraphType), got {stmt:?}");
+        }
+    }
+
+    // ================================================================
+    // ALTER CURRENT GRAPH TYPE DROP
+    // ================================================================
+
+    #[test]
+    fn test_parse_alter_current_graph_type_drop() {
+        use crate::query::gql::ast::{GraphTypeAlteration, SchemaStatement};
+
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE DROP { (:Movie) }");
+        if let Statement::Schema(SchemaStatement::AlterGraphType(alter)) = stmt {
+            assert_eq!(alter.name, "__current__");
+            assert_eq!(alter.alterations.len(), 1);
+            assert!(matches!(
+                &alter.alterations[0],
+                GraphTypeAlteration::DropNodeType(name) if name == "Movie"
+            ));
+        } else {
+            panic!("Expected Schema(AlterGraphType), got {stmt:?}");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_drop_edge() {
+        use crate::query::gql::ast::{GraphTypeAlteration, SchemaStatement};
+
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE DROP { (:Person)-[:ACTED_IN]->(:Movie) }");
+        if let Statement::Schema(SchemaStatement::AlterGraphType(alter)) = stmt {
+            assert_eq!(alter.name, "__current__");
+            assert_eq!(alter.alterations.len(), 1);
+            assert!(matches!(
+                &alter.alterations[0],
+                GraphTypeAlteration::DropEdgeType(name) if name == "ACTED_IN"
+            ));
+        } else {
+            panic!("Expected Schema(AlterGraphType), got {stmt:?}");
+        }
+    }
+
+    // ================================================================
+    // Edge cases and error handling
+    // ================================================================
+
+    #[test]
+    fn test_parse_alter_current_graph_type_set_empty_body() {
+        let stmt = parse_ok("ALTER CURRENT GRAPH TYPE SET { }");
+        if let Statement::Schema(crate::query::gql::ast::SchemaStatement::CreateGraphType(create)) =
+            stmt
+        {
+            assert_eq!(create.name, "__current__");
+            assert!(create.or_replace);
+            assert!(create.inline_types.is_empty());
+        } else {
+            panic!("Expected Schema(CreateGraphType) with empty body");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_multiple_properties() {
+        use crate::query::gql::ast::{InlineElementType, SchemaStatement};
+
+        let stmt = parse_ok(
+            "ALTER CURRENT GRAPH TYPE SET { (:Person { name STRING NOT NULL, age INTEGER }) }",
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(create)) = stmt {
+            assert_eq!(create.inline_types.len(), 1);
+            if let InlineElementType::Node { properties, .. } = &create.inline_types[0] {
+                assert_eq!(properties.len(), 2);
+                assert_eq!(properties[0].name, "name");
+                assert!(!properties[0].nullable);
+                assert_eq!(properties[1].name, "age");
+                assert!(properties[1].nullable);
+            } else {
+                panic!("Expected node type");
+            }
+        } else {
+            panic!("Expected Schema(CreateGraphType)");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_edge_with_properties() {
+        use crate::query::gql::ast::{InlineElementType, SchemaStatement};
+
+        let stmt = parse_ok(
+            "ALTER CURRENT GRAPH TYPE SET { (:Person)-[:KNOWS { since INTEGER }]->(:Person) }",
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(create)) = stmt {
+            assert_eq!(create.inline_types.len(), 1);
+            if let InlineElementType::Edge {
+                name, properties, ..
+            } = &create.inline_types[0]
+            {
+                assert_eq!(name, "KNOWS");
+                assert_eq!(properties.len(), 1);
+                assert_eq!(properties[0].name, "since");
+                assert_eq!(properties[0].data_type, "INTEGER");
+            } else {
+                panic!("Expected edge type");
+            }
+        } else {
+            panic!("Expected Schema(CreateGraphType)");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_missing_operation() {
+        let mut parser = Parser::new("ALTER CURRENT GRAPH TYPE INVALID {}");
+        assert!(parser.parse().is_err());
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_case_insensitive() {
+        let stmt = parse_ok("alter current graph type set { (:Label) }");
+        assert!(matches!(stmt, Statement::Schema(_)));
+    }
+
+    #[test]
+    fn test_parse_alter_current_graph_type_with_semicolon() {
+        let stmt = parse_ok("SHOW CURRENT GRAPH TYPE;");
+        assert!(matches!(stmt, Statement::ShowCurrentGraphType));
     }
 }

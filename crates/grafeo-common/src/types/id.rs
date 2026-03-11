@@ -226,6 +226,14 @@ impl EpochId {
     /// The initial epoch (epoch 0).
     pub const INITIAL: Self = Self(0);
 
+    /// Sentinel epoch for uncommitted transactional versions.
+    ///
+    /// Versions created inside an active (not yet committed) transaction use
+    /// this value as their `created_epoch`. Because `PENDING > any_real_epoch`,
+    /// `is_visible_at(real_epoch)` returns false, preventing dirty reads.
+    /// On commit, the session finalizes these to the actual commit epoch.
+    pub const PENDING: Self = Self(u64::MAX);
+
     /// Creates a new EpochId from a raw u64 value.
     #[inline]
     #[must_use]

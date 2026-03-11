@@ -535,3 +535,51 @@ fn test_filter_cross_type_numeric_comparison() {
         "score > 0 (cross-type) should match 9 nodes (all except score=0.0)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Distance ordering verification (T3-06)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_vector_search_results_ordered_by_distance() {
+    let db = setup_db();
+
+    let results = db
+        .vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 6, None, None)
+        .expect("unfiltered search");
+
+    assert!(results.len() >= 2, "should return multiple results");
+
+    // Verify results are ordered by increasing distance
+    for window in results.windows(2) {
+        let (_, dist_a) = window[0];
+        let (_, dist_b) = window[1];
+        assert!(
+            dist_a <= dist_b,
+            "results should be ordered by distance: {dist_a} <= {dist_b}"
+        );
+    }
+}
+
+#[test]
+fn test_filtered_vector_search_results_ordered_by_distance() {
+    let db = setup_db();
+
+    let filters: HashMap<String, Value> = [("user_id".to_string(), Value::Int64(1))]
+        .into_iter()
+        .collect();
+
+    let results = db
+        .vector_search("Doc", "emb", &[0.5, 0.5, 0.0], 5, None, Some(&filters))
+        .expect("filtered search");
+
+    assert!(!results.is_empty());
+    for window in results.windows(2) {
+        let (_, dist_a) = window[0];
+        let (_, dist_b) = window[1];
+        assert!(
+            dist_a <= dist_b,
+            "filtered results should be ordered by distance: {dist_a} <= {dist_b}"
+        );
+    }
+}

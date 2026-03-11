@@ -75,6 +75,51 @@ impl super::GrafeoDB {
         }
     }
 
+    /// Returns a hierarchical memory usage breakdown.
+    ///
+    /// Walks all internal structures (store, indexes, MVCC chains, caches,
+    /// string pools, buffer manager) and returns estimated heap bytes for each.
+    /// Safe to call concurrently with queries.
+    #[must_use]
+    pub fn memory_usage(&self) -> crate::memory_usage::MemoryUsage {
+        use crate::memory_usage::{BufferManagerMemory, CacheMemory, MemoryUsage};
+        use grafeo_common::memory::MemoryRegion;
+
+        let (store, indexes, mvcc, string_pool) = self.store.memory_breakdown();
+
+        let (parsed_bytes, optimized_bytes, cached_plan_count) =
+            self.query_cache.heap_memory_bytes();
+        let mut caches = CacheMemory {
+            parsed_plan_cache_bytes: parsed_bytes,
+            optimized_plan_cache_bytes: optimized_bytes,
+            cached_plan_count,
+            ..Default::default()
+        };
+        caches.compute_total();
+
+        let bm_stats = self.buffer_manager.stats();
+        let buffer_manager = BufferManagerMemory {
+            budget_bytes: bm_stats.budget,
+            allocated_bytes: bm_stats.total_allocated,
+            graph_storage_bytes: bm_stats.region_usage(MemoryRegion::GraphStorage),
+            index_buffers_bytes: bm_stats.region_usage(MemoryRegion::IndexBuffers),
+            execution_buffers_bytes: bm_stats.region_usage(MemoryRegion::ExecutionBuffers),
+            spill_staging_bytes: bm_stats.region_usage(MemoryRegion::SpillStaging),
+        };
+
+        let mut usage = MemoryUsage {
+            store,
+            indexes,
+            mvcc,
+            caches,
+            string_pool,
+            buffer_manager,
+            ..Default::default()
+        };
+        usage.compute_total();
+        usage
+    }
+
     /// Returns detailed database statistics.
     ///
     /// Includes counts, memory usage, and index information.

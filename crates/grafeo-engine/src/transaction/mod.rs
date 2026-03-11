@@ -95,6 +95,9 @@ pub use manager::{
 };
 pub use mvcc::{VersionChain, VersionInfo};
 pub use prepared::{CommitInfo, PreparedCommit};
+pub use write_tracker::TransactionWriteTracker;
+
+mod write_tracker;
 
 #[cfg(feature = "parallel")]
 pub use parallel::{BatchRequest, BatchResult, ExecutionStatus, ParallelExecutor};

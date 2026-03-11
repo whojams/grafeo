@@ -1059,4 +1059,19 @@ mod tests {
         assert!(bc_b >= bc_a);
         assert!(bc_c >= bc_d);
     }
+
+    #[test]
+    fn test_degree_centrality_with_self_loop() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        store.create_edge(n0, n0, "SELF"); // self-loop
+        store.create_edge(n0, n1, "EDGE");
+
+        let result = degree_centrality(&store);
+        // Self-loop counts as both out and in for n0
+        assert_eq!(*result.out_degree.get(&n0).unwrap(), 2); // self + n1
+        assert_eq!(*result.in_degree.get(&n0).unwrap(), 1); // self
+        assert_eq!(*result.in_degree.get(&n1).unwrap(), 1); // from n0
+    }
 }

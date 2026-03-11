@@ -352,6 +352,21 @@ mod hybrid {
             .expect("hybrid search");
 
         assert!(!results.is_empty(), "hybrid search should return results");
+
+        // "Rust graph database engine" should rank highest: matches both
+        // text ("Rust graph") and vector (closest to [1,0,0])
+        let top_node = results[0].0;
+        let top_props = db.get_node(top_node).expect("top node exists");
+        let content = top_props
+            .properties
+            .get(&grafeo_common::types::PropertyKey::new("content"))
+            .expect("has content");
+        if let Value::String(s) = content {
+            assert!(
+                s.contains("Rust") || s.contains("graph"),
+                "top result should match query terms, got: {s}"
+            );
+        }
     }
 
     #[test]
@@ -388,5 +403,97 @@ mod hybrid {
         // Even with no text matches, vector search may return results
         // Just verify it doesn't error
         let _ = results;
+    }
+}
+
+// ============================================================================
+// Concurrent index access (T3-05)
+// ============================================================================
+
+#[cfg(feature = "vector-index")]
+mod concurrent_vector {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn vec3(x: f32, y: f32, z: f32) -> Value {
+        Value::Vector(vec![x, y, z].into())
+    }
+
+    #[test]
+    fn test_concurrent_vector_read_during_write() {
+        let db = std::sync::Arc::new(GrafeoDB::new_in_memory());
+
+        // Seed initial data
+        let n1 = db.create_node(&["Doc"]);
+        db.set_node_property(n1, "emb", vec3(1.0, 0.0, 0.0));
+        db.create_vector_index("Doc", "emb", Some(3), Some("cosine"), None, None)
+            .unwrap();
+
+        let db_read = std::sync::Arc::clone(&db);
+        let db_write = std::sync::Arc::clone(&db);
+
+        // Writer thread: add more nodes
+        let writer = std::thread::spawn(move || {
+            for i in 0..10 {
+                let n = db_write.create_node(&["Doc"]);
+                let x = (i as f32) / 10.0;
+                db_write.set_node_property(n, "emb", vec3(x, 1.0 - x, 0.0));
+            }
+        });
+
+        // Reader thread: search concurrently
+        let reader = std::thread::spawn(move || {
+            for _ in 0..10 {
+                let results = db_read.vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 5, None, None);
+                // Should not panic or error
+                assert!(results.is_ok(), "concurrent read should not error");
+            }
+        });
+
+        writer.join().expect("writer thread should not panic");
+        reader.join().expect("reader thread should not panic");
+    }
+}
+
+#[cfg(feature = "text-index")]
+mod concurrent_text {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn test_concurrent_text_read_during_write() {
+        let db = std::sync::Arc::new(GrafeoDB::new_in_memory());
+
+        let n1 = db.create_node(&["Doc"]);
+        db.set_node_property(
+            n1,
+            "content",
+            Value::String("initial document about graphs".into()),
+        );
+        db.create_text_index("Doc", "content").unwrap();
+
+        let db_read = std::sync::Arc::clone(&db);
+        let db_write = std::sync::Arc::clone(&db);
+
+        let writer = std::thread::spawn(move || {
+            for i in 0..10 {
+                let n = db_write.create_node(&["Doc"]);
+                db_write.set_node_property(
+                    n,
+                    "content",
+                    Value::String(format!("document number {i} about databases").into()),
+                );
+            }
+        });
+
+        let reader = std::thread::spawn(move || {
+            for _ in 0..10 {
+                let results = db_read.text_search("Doc", "content", "database", 5);
+                assert!(results.is_ok(), "concurrent text read should not error");
+            }
+        });
+
+        writer.join().expect("writer should not panic");
+        reader.join().expect("reader should not panic");
     }
 }

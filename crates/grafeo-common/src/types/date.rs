@@ -334,4 +334,42 @@ mod tests {
         assert_eq!(d.year(), -1);
         assert_eq!(d.to_string(), "-0001-01-01");
     }
+
+    #[test]
+    fn test_add_duration_months_clamps_day() {
+        use crate::types::Duration;
+        // Jan 31 + 1 month should clamp to Feb 28 (non-leap year)
+        let d = Date::from_ymd(2025, 1, 31).unwrap();
+        let dur = Duration::from_months(1);
+        let result = d.add_duration(&dur);
+        assert_eq!(result.to_string(), "2025-02-28");
+    }
+
+    #[test]
+    fn test_add_duration_months_clamps_leap_year() {
+        use crate::types::Duration;
+        // Jan 31 + 1 month in a leap year should clamp to Feb 29
+        let d = Date::from_ymd(2024, 1, 31).unwrap();
+        let dur = Duration::from_months(1);
+        let result = d.add_duration(&dur);
+        assert_eq!(result.to_string(), "2024-02-29");
+    }
+
+    #[test]
+    fn test_add_duration_days() {
+        use crate::types::Duration;
+        let d = Date::from_ymd(2025, 3, 1).unwrap();
+        let dur = Duration::from_days(10);
+        let result = d.add_duration(&dur);
+        assert_eq!(result.to_string(), "2025-03-11");
+    }
+
+    #[test]
+    fn test_sub_duration() {
+        use crate::types::Duration;
+        let d = Date::from_ymd(2025, 3, 15).unwrap();
+        let dur = Duration::from_months(2);
+        let result = d.sub_duration(&dur);
+        assert_eq!(result.to_string(), "2025-01-15");
+    }
 }

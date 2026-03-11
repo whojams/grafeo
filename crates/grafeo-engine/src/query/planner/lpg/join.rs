@@ -1,7 +1,10 @@
 //! Join, union, and distinct planning.
 
-use super::*;
-use crate::query::planner::common;
+use super::{
+    ApplyOp, ApplyOperator, DistinctOp, Error, ExceptOp, HashJoinOperator, IntersectOp, JoinOp,
+    JoinType, LeapfrogJoinOperator, LogicalExpression, MultiWayJoinOp, Operator, OtherwiseOp,
+    PhysicalJoinType, Result, UnionOp, common,
+};
 
 impl super::Planner {
     /// Plans a JOIN operator.
@@ -249,14 +252,20 @@ impl super::Planner {
             return Ok((Box::new(op), columns));
         }
 
+        // Expand wildcard: WITH * imports all outer-scope variables
+        let shared_vars = if apply.shared_variables.len() == 1 && apply.shared_variables[0] == "*" {
+            outer_columns.clone()
+        } else {
+            apply.shared_variables.clone()
+        };
+
         // Correlated Apply: create shared ParameterState
         let param_state = std::sync::Arc::new(
-            grafeo_core::execution::operators::ParameterState::new(apply.shared_variables.clone()),
+            grafeo_core::execution::operators::ParameterState::new(shared_vars.clone()),
         );
 
         // Find column indices for the shared variables in outer columns
-        let param_col_indices: Vec<usize> = apply
-            .shared_variables
+        let param_col_indices: Vec<usize> = shared_vars
             .iter()
             .map(|var| outer_columns.iter().position(|c| c == var).unwrap_or(0))
             .collect();

@@ -119,3 +119,56 @@ fn test_add_label_committed_stays() {
         "VIP label should persist after commit"
     );
 }
+
+// ============================================================================
+// Label undo via transaction rollback: covers property_ops.rs LabelAdded/LabelRemoved
+// ============================================================================
+
+#[test]
+fn test_label_add_undo_on_transaction_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+
+    session
+        .execute("INSERT (:Animal {species: 'Cat'})")
+        .unwrap();
+
+    session.begin_transaction().unwrap();
+    session.execute("MATCH (n:Animal) SET n:Pet").unwrap();
+
+    let during = session.execute("MATCH (n:Pet) RETURN n.species").unwrap();
+    assert_eq!(during.rows.len(), 1);
+
+    session.rollback().unwrap();
+
+    let after = session.execute("MATCH (n:Pet) RETURN n.species").unwrap();
+    assert!(
+        after.rows.is_empty(),
+        "Label should be removed after rollback"
+    );
+}
+
+#[test]
+fn test_label_remove_undo_on_transaction_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+
+    session
+        .execute("INSERT (:Animal:Pet {species: 'Dog'})")
+        .unwrap();
+
+    session.begin_transaction().unwrap();
+    session.execute("MATCH (n:Animal) REMOVE n:Pet").unwrap();
+
+    let during = session.execute("MATCH (n:Pet) RETURN n.species").unwrap();
+    assert!(during.rows.is_empty());
+
+    session.rollback().unwrap();
+
+    let after = session.execute("MATCH (n:Pet) RETURN n.species").unwrap();
+    assert_eq!(
+        after.rows.len(),
+        1,
+        "Label should be restored after rollback"
+    );
+}

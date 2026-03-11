@@ -345,9 +345,18 @@ fn main() {
             lang,
             timing,
             max_width,
-        } => commands::query::run(
-            &path, query, file, stdin, &param, lang, cli.format, cli.quiet, timing, max_width,
-        ),
+        } => commands::query::run(commands::query::QueryRunOptions {
+            path: &path,
+            query,
+            file,
+            stdin,
+            params: &param,
+            lang,
+            format: cli.format,
+            quiet: cli.quiet,
+            timing,
+            max_width,
+        }),
         Commands::Init { path, mode } => commands::init::run(&path, mode, cli.format, cli.quiet),
         Commands::Shell { path, lang, timing } => {
             repl::run(&path, lang, cli.format, cli.quiet, timing)

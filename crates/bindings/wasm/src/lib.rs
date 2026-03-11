@@ -20,8 +20,8 @@ use std::collections::HashMap;
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
-use grafeo_bindings_common::json::json_params_to_map;
-use grafeo_common::types::Value;
+use grafeo_bindings_common::json::{json_params_to_map, json_to_value};
+use grafeo_common::types::{PropertyKey, Value};
 use grafeo_engine::GrafeoDB;
 
 /// A Grafeo graph database instance running in WebAssembly.
@@ -457,6 +457,165 @@ impl Database {
         Ok(obj.into())
     }
 
+    /// Batch-imports LPG (Labeled Property Graph) data from a structured object.
+    ///
+    /// Nodes are created first, then edges. Edge `source`/`target` fields are
+    /// zero-based indexes into the `nodes` array, so you can reference newly
+    /// created nodes without knowing their database IDs.
+    ///
+    /// Returns `{ nodes: number, edges: number }` with the counts of created
+    /// entities.
+    ///
+    /// ```js
+    /// const result = db.importLpg({
+    ///   nodes: [
+    ///     { labels: ["Person"], properties: { name: "Alix", age: 30 } },
+    ///     { labels: ["Person"], properties: { name: "Gus", age: 25 } },
+    ///   ],
+    ///   edges: [
+    ///     { source: 0, target: 1, type: "KNOWS", properties: { since: 2020 } }
+    ///   ]
+    /// });
+    /// // { nodes: 2, edges: 1 }
+    /// ```
+    #[wasm_bindgen(js_name = "importLpg")]
+    pub fn import_lpg(&self, data: JsValue) -> Result<JsValue, JsError> {
+        let import: LpgImport = serde_wasm_bindgen::from_value(data)
+            .map_err(|e| JsError::new(&format!("Invalid LPG data: {e}")))?;
+
+        // Phase 1: create all nodes, collecting their IDs
+        let mut node_ids = Vec::with_capacity(import.nodes.len());
+        for node in &import.nodes {
+            let labels: Vec<&str> = node.labels.iter().map(String::as_str).collect();
+            let props: Vec<(PropertyKey, Value)> = node
+                .properties
+                .as_ref()
+                .map(|p| {
+                    p.iter()
+                        .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let id = self.inner.create_node_with_props(&labels, props);
+            node_ids.push(id);
+        }
+
+        // Phase 2: create edges using index-relative source/target
+        let mut edge_count: u32 = 0;
+        for (i, edge) in import.edges.iter().enumerate() {
+            let src = *node_ids.get(edge.source).ok_or_else(|| {
+                JsError::new(&format!(
+                    "edges[{i}].source index {} out of bounds (0..{})",
+                    edge.source,
+                    node_ids.len()
+                ))
+            })?;
+            let dst = *node_ids.get(edge.target).ok_or_else(|| {
+                JsError::new(&format!(
+                    "edges[{i}].target index {} out of bounds (0..{})",
+                    edge.target,
+                    node_ids.len()
+                ))
+            })?;
+            let props: Vec<(PropertyKey, Value)> = edge
+                .properties
+                .as_ref()
+                .map(|p| {
+                    p.iter()
+                        .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.inner
+                .create_edge_with_props(src, dst, &edge.edge_type, props);
+            edge_count += 1;
+        }
+
+        let result = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &result,
+            &JsValue::from_str("nodes"),
+            &JsValue::from_f64(f64::from(node_ids.len() as u32)),
+        );
+        let _ = js_sys::Reflect::set(
+            &result,
+            &JsValue::from_str("edges"),
+            &JsValue::from_f64(f64::from(edge_count)),
+        );
+        Ok(result.into())
+    }
+
+    /// Batch-imports RDF triples from a structured object.
+    ///
+    /// Each triple has a `subject`, `predicate`, and `object`. Subjects and
+    /// predicates are IRI strings (or blank nodes prefixed with `_:`). The
+    /// object can be a plain string (treated as IRI) or a structured literal:
+    ///
+    /// ```js
+    /// const result = db.importRdf({
+    ///   triples: [
+    ///     {
+    ///       subject: "http://example.org/Alix",
+    ///       predicate: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+    ///       object: "http://example.org/Person"
+    ///     },
+    ///     {
+    ///       subject: "http://example.org/Alix",
+    ///       predicate: "http://example.org/name",
+    ///       object: { value: "Alix" }
+    ///     },
+    ///     {
+    ///       subject: "http://example.org/Alix",
+    ///       predicate: "http://example.org/age",
+    ///       object: { value: "30", datatype: "http://www.w3.org/2001/XMLSchema#integer" }
+    ///     }
+    ///   ]
+    /// });
+    /// // { triples: 3 }
+    /// ```
+    ///
+    /// Requires the `rdf` feature flag.
+    #[cfg(feature = "rdf")]
+    #[wasm_bindgen(js_name = "importRdf")]
+    pub fn import_rdf(&self, data: JsValue) -> Result<JsValue, JsError> {
+        use grafeo_core::graph::rdf::Term;
+
+        let import: RdfImport = serde_wasm_bindgen::from_value(data)
+            .map_err(|e| JsError::new(&format!("Invalid RDF data: {e}")))?;
+
+        let triples = import.triples.into_iter().map(|t| {
+            let subject = string_to_rdf_term(&t.subject);
+            let predicate = string_to_rdf_term(&t.predicate);
+            let object = match t.object {
+                RdfObjectSpec::Iri(ref s) => string_to_rdf_term(s),
+                RdfObjectSpec::Literal {
+                    ref value,
+                    ref datatype,
+                    ref language,
+                } => {
+                    if let Some(lang) = language {
+                        Term::lang_literal(value.as_str(), lang.as_str())
+                    } else if let Some(dt) = datatype {
+                        Term::typed_literal(value.as_str(), dt.as_str())
+                    } else {
+                        Term::literal(value.as_str())
+                    }
+                }
+            };
+            grafeo_core::graph::rdf::Triple::new(subject, predicate, object)
+        });
+
+        let inserted = self.inner.batch_insert_rdf(triples);
+
+        let result = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &result,
+            &JsValue::from_str("triples"),
+            &JsValue::from_f64(inserted as f64),
+        );
+        Ok(result.into())
+    }
+
     /// Returns the Grafeo version.
     pub fn version() -> String {
         env!("CARGO_PKG_VERSION").to_string()
@@ -505,5 +664,641 @@ impl Database {
         let json_val: serde_json::Value =
             serde_wasm_bindgen::from_value(js_val).map_err(|e| JsError::new(&e.to_string()))?;
         json_params_to_map(Some(&json_val)).map_err(|e| JsError::new(&e))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batch import data types (serde, not exported to JS)
+// ---------------------------------------------------------------------------
+
+/// LPG batch import payload.
+#[derive(serde::Deserialize)]
+struct LpgImport {
+    nodes: Vec<LpgNodeSpec>,
+    #[serde(default)]
+    edges: Vec<LpgEdgeSpec>,
+}
+
+/// A single node in an LPG import.
+#[derive(serde::Deserialize)]
+struct LpgNodeSpec {
+    labels: Vec<String>,
+    #[serde(default)]
+    properties: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// A single edge in an LPG import. `source` and `target` are zero-based
+/// indexes into the `nodes` array.
+#[derive(serde::Deserialize)]
+struct LpgEdgeSpec {
+    source: usize,
+    target: usize,
+    #[serde(rename = "type")]
+    edge_type: String,
+    #[serde(default)]
+    properties: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// RDF batch import payload.
+#[cfg(feature = "rdf")]
+#[derive(serde::Deserialize)]
+struct RdfImport {
+    triples: Vec<RdfTripleSpec>,
+}
+
+/// A single RDF triple in an import.
+#[cfg(feature = "rdf")]
+#[derive(serde::Deserialize)]
+struct RdfTripleSpec {
+    subject: String,
+    predicate: String,
+    object: RdfObjectSpec,
+}
+
+/// The object position of an RDF triple: either a plain IRI string or a
+/// structured literal with optional datatype/language.
+#[cfg(feature = "rdf")]
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum RdfObjectSpec {
+    /// Plain string: treated as IRI, or blank node if prefixed with `_:`.
+    Iri(String),
+    /// Structured literal with optional datatype or language tag.
+    Literal {
+        value: String,
+        #[serde(default)]
+        datatype: Option<String>,
+        #[serde(default)]
+        language: Option<String>,
+    },
+}
+
+/// Converts a string to an RDF [`Term`]: blank node if prefixed with `_:`,
+/// IRI otherwise.
+#[cfg(feature = "rdf")]
+fn string_to_rdf_term(s: &str) -> grafeo_core::graph::rdf::Term {
+    if let Some(id) = s.strip_prefix("_:") {
+        grafeo_core::graph::rdf::Term::blank(id)
+    } else {
+        grafeo_core::graph::rdf::Term::iri(s)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests (native, no wasm32 requirement)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    // === LPG deserialization tests ===
+
+    #[test]
+    fn lpg_import_nodes_only() {
+        let input = json!({
+            "nodes": [
+                { "labels": ["Person"], "properties": { "name": "Alix", "age": 30 } },
+                { "labels": ["Person"], "properties": { "name": "Gus" } }
+            ]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert_eq!(import.nodes.len(), 2);
+        assert!(import.edges.is_empty(), "edges should default to empty");
+    }
+
+    #[test]
+    fn lpg_import_nodes_and_edges() {
+        let input = json!({
+            "nodes": [
+                { "labels": ["Person"], "properties": { "name": "Alix" } },
+                { "labels": ["Person"], "properties": { "name": "Gus" } }
+            ],
+            "edges": [
+                { "source": 0, "target": 1, "type": "KNOWS", "properties": { "since": 2020 } }
+            ]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert_eq!(import.nodes.len(), 2);
+        assert_eq!(import.edges.len(), 1);
+        assert_eq!(import.edges[0].source, 0);
+        assert_eq!(import.edges[0].target, 1);
+        assert_eq!(import.edges[0].edge_type, "KNOWS");
+    }
+
+    #[test]
+    fn lpg_import_empty() {
+        let input = json!({ "nodes": [] });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert!(import.nodes.is_empty());
+        assert!(import.edges.is_empty());
+    }
+
+    #[test]
+    fn lpg_import_node_without_properties() {
+        let input = json!({
+            "nodes": [{ "labels": ["Tag"] }]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert!(import.nodes[0].properties.is_none());
+    }
+
+    #[test]
+    fn lpg_import_multiple_labels() {
+        let input = json!({
+            "nodes": [{ "labels": ["Person", "Employee", "Developer"] }]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            import.nodes[0].labels,
+            vec!["Person", "Employee", "Developer"]
+        );
+    }
+
+    #[test]
+    fn lpg_import_mixed_property_types() {
+        let input = json!({
+            "nodes": [{
+                "labels": ["Thing"],
+                "properties": {
+                    "name": "test",
+                    "count": 42,
+                    "ratio": 1.23,
+                    "active": true,
+                    "tags": ["a", "b"],
+                    "meta": null
+                }
+            }]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        let props = import.nodes[0].properties.as_ref().unwrap();
+        assert_eq!(props.len(), 6);
+        assert_eq!(props["name"], json!("test"));
+        assert_eq!(props["count"], json!(42));
+        assert_eq!(props["ratio"], json!(1.23));
+        assert_eq!(props["active"], json!(true));
+        assert_eq!(props["tags"], json!(["a", "b"]));
+        assert!(props["meta"].is_null());
+    }
+
+    #[test]
+    fn lpg_import_self_loop_edge() {
+        let input = json!({
+            "nodes": [{ "labels": ["Node"] }],
+            "edges": [{ "source": 0, "target": 0, "type": "SELF" }]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert_eq!(import.edges[0].source, 0);
+        assert_eq!(import.edges[0].target, 0);
+    }
+
+    #[test]
+    fn lpg_import_edge_without_properties() {
+        let input = json!({
+            "nodes": [{ "labels": ["A"] }, { "labels": ["B"] }],
+            "edges": [{ "source": 0, "target": 1, "type": "LINKED" }]
+        });
+        let import: LpgImport = serde_json::from_value(input).unwrap();
+        assert!(import.edges[0].properties.is_none());
+    }
+
+    #[test]
+    fn lpg_import_missing_nodes_field_errors() {
+        let input = json!({ "edges": [] });
+        let result: Result<LpgImport, _> = serde_json::from_value(input);
+        assert!(result.is_err(), "missing 'nodes' field should fail");
+    }
+
+    #[test]
+    fn lpg_import_missing_edge_type_errors() {
+        let input = json!({
+            "nodes": [{ "labels": ["A"] }],
+            "edges": [{ "source": 0, "target": 0 }]
+        });
+        let result: Result<LpgImport, _> = serde_json::from_value(input);
+        assert!(result.is_err(), "edge without 'type' should fail");
+    }
+
+    // === Engine-level LPG batch tests ===
+
+    #[test]
+    fn import_lpg_creates_nodes_and_edges() {
+        let db = GrafeoDB::new_in_memory();
+        let input: LpgImport = serde_json::from_value(json!({
+            "nodes": [
+                { "labels": ["Person"], "properties": { "name": "Alix", "age": 30 } },
+                { "labels": ["Person"], "properties": { "name": "Gus", "age": 25 } },
+                { "labels": ["City"], "properties": { "name": "Amsterdam" } }
+            ],
+            "edges": [
+                { "source": 0, "target": 1, "type": "KNOWS" },
+                { "source": 0, "target": 2, "type": "LIVES_IN" }
+            ]
+        }))
+        .unwrap();
+
+        let mut node_ids = Vec::with_capacity(input.nodes.len());
+        for node in &input.nodes {
+            let labels: Vec<&str> = node.labels.iter().map(String::as_str).collect();
+            let props: Vec<(PropertyKey, Value)> = node
+                .properties
+                .as_ref()
+                .map(|p| {
+                    p.iter()
+                        .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let id = db.create_node_with_props(&labels, props);
+            node_ids.push(id);
+        }
+
+        for edge in &input.edges {
+            let src = node_ids[edge.source];
+            let dst = node_ids[edge.target];
+            db.create_edge_with_props(
+                src,
+                dst,
+                &edge.edge_type,
+                std::iter::empty::<(PropertyKey, Value)>(),
+            );
+        }
+
+        assert_eq!(db.node_count(), 3);
+        assert_eq!(db.edge_count(), 2);
+
+        // Verify data via query
+        let session = db.session();
+        let result = session
+            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn import_lpg_empty_dataset() {
+        let db = GrafeoDB::new_in_memory();
+        let input: LpgImport = serde_json::from_value(json!({ "nodes": [] })).unwrap();
+        assert!(input.nodes.is_empty());
+        assert!(input.edges.is_empty());
+        assert_eq!(db.node_count(), 0);
+    }
+
+    #[test]
+    fn import_lpg_nodes_without_properties() {
+        let db = GrafeoDB::new_in_memory();
+        let node_spec: LpgNodeSpec = serde_json::from_value(json!({ "labels": ["Tag"] })).unwrap();
+        let labels: Vec<&str> = node_spec.labels.iter().map(String::as_str).collect();
+        db.create_node(&labels);
+        assert_eq!(db.node_count(), 1);
+    }
+
+    #[test]
+    fn import_lpg_self_loop() {
+        let db = GrafeoDB::new_in_memory();
+        let id = db.create_node(&["Node"]);
+        db.create_edge(id, id, "SELF_REF");
+        assert_eq!(db.edge_count(), 1);
+
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n)-[e:SELF_REF]->(n) RETURN n")
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn import_lpg_multiple_edges_between_same_nodes() {
+        let db = GrafeoDB::new_in_memory();
+        let alix = db.create_node_with_props(
+            &["Person"],
+            vec![(PropertyKey::new("name"), Value::from("Alix"))],
+        );
+        let gus = db.create_node_with_props(
+            &["Person"],
+            vec![(PropertyKey::new("name"), Value::from("Gus"))],
+        );
+        db.create_edge(alix, gus, "KNOWS");
+        db.create_edge(alix, gus, "WORKS_WITH");
+        db.create_edge(gus, alix, "KNOWS");
+
+        assert_eq!(db.edge_count(), 3);
+    }
+
+    #[test]
+    fn import_lpg_large_batch() {
+        let db = GrafeoDB::new_in_memory();
+        let mut nodes = Vec::new();
+        for i in 0..500 {
+            nodes.push(json!({
+                "labels": ["Item"],
+                "properties": { "index": i }
+            }));
+        }
+        let input: LpgImport = serde_json::from_value(json!({ "nodes": nodes })).unwrap();
+
+        for node in &input.nodes {
+            let labels: Vec<&str> = node.labels.iter().map(String::as_str).collect();
+            let props: Vec<(PropertyKey, Value)> = node
+                .properties
+                .as_ref()
+                .map(|p| {
+                    p.iter()
+                        .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            db.create_node_with_props(&labels, props);
+        }
+
+        assert_eq!(db.node_count(), 500);
+    }
+
+    #[test]
+    fn import_lpg_edge_with_properties() {
+        let db = GrafeoDB::new_in_memory();
+        let a = db.create_node(&["A"]);
+        let b = db.create_node(&["B"]);
+        db.create_edge_with_props(
+            a,
+            b,
+            "REL",
+            vec![
+                (PropertyKey::new("weight"), Value::Float64(0.75)),
+                (PropertyKey::new("label"), Value::from("strong")),
+            ],
+        );
+
+        let session = db.session();
+        let result = session
+            .execute("MATCH ()-[e:REL]->() RETURN e.weight, e.label")
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    // === RDF deserialization tests ===
+
+    #[cfg(feature = "rdf")]
+    mod rdf_tests {
+        use serde_json::json;
+
+        use super::super::*;
+
+        #[test]
+        fn rdf_import_iri_objects() {
+            let input = json!({
+                "triples": [
+                    {
+                        "subject": "http://example.org/Alix",
+                        "predicate": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+                        "object": "http://example.org/Person"
+                    }
+                ]
+            });
+            let import: RdfImport = serde_json::from_value(input).unwrap();
+            assert_eq!(import.triples.len(), 1);
+            assert!(matches!(import.triples[0].object, RdfObjectSpec::Iri(_)));
+        }
+
+        #[test]
+        fn rdf_import_plain_literal() {
+            let input = json!({
+                "triples": [{
+                    "subject": "http://example.org/Alix",
+                    "predicate": "http://example.org/name",
+                    "object": { "value": "Alix" }
+                }]
+            });
+            let import: RdfImport = serde_json::from_value(input).unwrap();
+            match &import.triples[0].object {
+                RdfObjectSpec::Literal {
+                    value,
+                    datatype,
+                    language,
+                } => {
+                    assert_eq!(value, "Alix");
+                    assert!(datatype.is_none());
+                    assert!(language.is_none());
+                }
+                RdfObjectSpec::Iri(_) => panic!("expected literal"),
+            }
+        }
+
+        #[test]
+        fn rdf_import_typed_literal() {
+            let input = json!({
+                "triples": [{
+                    "subject": "http://example.org/Alix",
+                    "predicate": "http://example.org/age",
+                    "object": {
+                        "value": "30",
+                        "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+                    }
+                }]
+            });
+            let import: RdfImport = serde_json::from_value(input).unwrap();
+            match &import.triples[0].object {
+                RdfObjectSpec::Literal {
+                    value, datatype, ..
+                } => {
+                    assert_eq!(value, "30");
+                    assert_eq!(
+                        datatype.as_deref(),
+                        Some("http://www.w3.org/2001/XMLSchema#integer")
+                    );
+                }
+                RdfObjectSpec::Iri(_) => panic!("expected typed literal"),
+            }
+        }
+
+        #[test]
+        fn rdf_import_language_literal() {
+            let input = json!({
+                "triples": [{
+                    "subject": "http://example.org/Alix",
+                    "predicate": "http://example.org/greeting",
+                    "object": { "value": "hallo", "language": "nl" }
+                }]
+            });
+            let import: RdfImport = serde_json::from_value(input).unwrap();
+            match &import.triples[0].object {
+                RdfObjectSpec::Literal { language, .. } => {
+                    assert_eq!(language.as_deref(), Some("nl"));
+                }
+                RdfObjectSpec::Iri(_) => panic!("expected lang literal"),
+            }
+        }
+
+        #[test]
+        fn rdf_import_blank_node_subject() {
+            let input = json!({
+                "triples": [{
+                    "subject": "_:b1",
+                    "predicate": "http://example.org/name",
+                    "object": { "value": "anonymous" }
+                }]
+            });
+            let import: RdfImport = serde_json::from_value(input).unwrap();
+            assert_eq!(import.triples[0].subject, "_:b1");
+        }
+
+        #[test]
+        fn rdf_import_empty_triples() {
+            let input = json!({ "triples": [] });
+            let import: RdfImport = serde_json::from_value(input).unwrap();
+            assert!(import.triples.is_empty());
+        }
+
+        #[test]
+        fn rdf_import_missing_triples_field_errors() {
+            let input = json!({});
+            let result: Result<RdfImport, _> = serde_json::from_value(input);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn string_to_rdf_term_iri() {
+            let term = string_to_rdf_term("http://example.org/Alix");
+            assert!(term.is_iri());
+        }
+
+        #[test]
+        fn string_to_rdf_term_blank_node() {
+            let term = string_to_rdf_term("_:b42");
+            assert!(term.is_blank_node());
+        }
+
+        // === Engine-level RDF batch tests ===
+
+        #[test]
+        fn batch_insert_rdf_basic() {
+            use grafeo_core::graph::rdf::{Term, Triple};
+
+            let db = GrafeoDB::new_in_memory();
+            let triples = vec![
+                Triple::new(
+                    Term::iri("http://example.org/Alix"),
+                    Term::iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+                    Term::iri("http://example.org/Person"),
+                ),
+                Triple::new(
+                    Term::iri("http://example.org/Alix"),
+                    Term::iri("http://example.org/name"),
+                    Term::literal("Alix"),
+                ),
+            ];
+
+            let inserted = db.batch_insert_rdf(triples);
+            assert_eq!(inserted, 2);
+        }
+
+        #[test]
+        fn batch_insert_rdf_deduplicates() {
+            use grafeo_core::graph::rdf::{Term, Triple};
+
+            let db = GrafeoDB::new_in_memory();
+            let triple = Triple::new(
+                Term::iri("http://example.org/Alix"),
+                Term::iri("http://example.org/name"),
+                Term::literal("Alix"),
+            );
+
+            let first = db.batch_insert_rdf(vec![triple.clone()]);
+            assert_eq!(first, 1);
+
+            let second = db.batch_insert_rdf(vec![triple]);
+            assert_eq!(second, 0, "duplicate triple should be skipped");
+        }
+
+        #[test]
+        fn batch_insert_rdf_empty() {
+            let db = GrafeoDB::new_in_memory();
+            let inserted = db.batch_insert_rdf(Vec::new());
+            assert_eq!(inserted, 0);
+        }
+
+        #[test]
+        fn batch_insert_rdf_blank_nodes() {
+            use grafeo_core::graph::rdf::{Term, Triple};
+
+            let db = GrafeoDB::new_in_memory();
+            let triples = vec![
+                Triple::new(
+                    Term::blank("b1"),
+                    Term::iri("http://example.org/name"),
+                    Term::literal("Anonymous"),
+                ),
+                Triple::new(
+                    Term::blank("b1"),
+                    Term::iri("http://example.org/knows"),
+                    Term::blank("b2"),
+                ),
+            ];
+
+            let inserted = db.batch_insert_rdf(triples);
+            assert_eq!(inserted, 2);
+        }
+
+        #[test]
+        fn batch_insert_rdf_typed_and_lang_literals() {
+            use grafeo_core::graph::rdf::{Term, Triple};
+
+            let db = GrafeoDB::new_in_memory();
+            let triples = vec![
+                Triple::new(
+                    Term::iri("http://example.org/Alix"),
+                    Term::iri("http://example.org/age"),
+                    Term::typed_literal("30", "http://www.w3.org/2001/XMLSchema#integer"),
+                ),
+                Triple::new(
+                    Term::iri("http://example.org/Alix"),
+                    Term::iri("http://example.org/greeting"),
+                    Term::lang_literal("hallo", "nl"),
+                ),
+            ];
+
+            let inserted = db.batch_insert_rdf(triples);
+            assert_eq!(inserted, 2);
+        }
+
+        #[test]
+        fn batch_insert_rdf_large_batch() {
+            use grafeo_core::graph::rdf::{Term, Triple};
+
+            let db = GrafeoDB::new_in_memory();
+            let triples: Vec<Triple> = (0..1000)
+                .map(|i| {
+                    Triple::new(
+                        Term::iri(format!("http://example.org/node/{i}")),
+                        Term::iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+                        Term::iri("http://example.org/Item"),
+                    )
+                })
+                .collect();
+
+            let inserted = db.batch_insert_rdf(triples);
+            assert_eq!(inserted, 1000);
+        }
+
+        #[test]
+        fn batch_insert_rdf_mixed_duplicates_in_same_batch() {
+            use grafeo_core::graph::rdf::{Term, Triple};
+
+            let db = GrafeoDB::new_in_memory();
+            let triple = Triple::new(
+                Term::iri("http://example.org/a"),
+                Term::iri("http://example.org/b"),
+                Term::iri("http://example.org/c"),
+            );
+
+            // Same triple 3 times in one batch
+            let inserted = db.batch_insert_rdf(vec![triple.clone(), triple.clone(), triple]);
+            assert_eq!(
+                inserted, 1,
+                "duplicates within same batch should be deduped"
+            );
+        }
     }
 }

@@ -10,6 +10,7 @@
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
+/// Creates 2 Person nodes (Alix birthday 1990-06-15, Gus birthday 2000-01-01).
 fn create_test_db() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();

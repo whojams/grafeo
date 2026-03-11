@@ -935,10 +935,12 @@ mod tests {
         let store = create_weighted_graph();
         let result = dijkstra(&store, NodeId::new(0), Some("weight"));
 
-        assert!(result.distances.contains_key(&NodeId::new(0)));
+        // From the graph: 0->1 cost 2, 0->1->2 cost 5, 0->3 cost 4, 0->3->1 cost 5
         assert_eq!(result.distance_to(NodeId::new(0)), Some(0.0));
-        assert!(result.distances.contains_key(&NodeId::new(1)));
-        assert!(result.distances.contains_key(&NodeId::new(2)));
+        assert_eq!(result.distance_to(NodeId::new(1)), Some(2.0));
+        assert_eq!(result.distance_to(NodeId::new(2)), Some(5.0));
+        assert_eq!(result.distance_to(NodeId::new(3)), Some(4.0));
+        assert_eq!(result.distance_to(NodeId::new(4)), Some(6.0)); // 0->1->2->4 = 2+3+1
     }
 
     #[test]
@@ -984,6 +986,86 @@ mod tests {
         assert!(!result.has_negative_cycle);
         assert!(result.distances.contains_key(&NodeId::new(0)));
         assert_eq!(*result.distances.get(&NodeId::new(0)).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_bellman_ford_negative_weights() {
+        // Graph with a negative edge weight (no cycle):
+        //   0 --10--> 1 --(-5)--> 2
+        //
+        // Shortest: 0 -> 1 -> 2 = 10 + (-5) = 5
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        let n2 = store.create_node(&["Node"]);
+
+        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(10.0))]);
+        store.create_edge_with_props(n1, n2, "EDGE", [("weight", Value::Float64(-5.0))]);
+
+        let result = bellman_ford(&store, n0, Some("weight"));
+
+        assert!(!result.has_negative_cycle);
+        assert_eq!(*result.distances.get(&n0).unwrap(), 0.0);
+        assert_eq!(*result.distances.get(&n1).unwrap(), 10.0);
+        assert_eq!(*result.distances.get(&n2).unwrap(), 5.0);
+
+        // Path reconstruction
+        let path = result.path_to(n2).unwrap();
+        assert_eq!(path, vec![n0, n1, n2]);
+    }
+
+    #[test]
+    fn test_bellman_ford_negative_weight_shortcut() {
+        // Graph where negative edge creates a shorter path:
+        //   0 --6--> 1 --2--> 3
+        //   |                 ^
+        //   +--3--> 2 --(-4)--+
+        //
+        // Direct: 0->1->3 = 8
+        // Via negative: 0->2->3 = 3+(-4) = -1  (shorter!)
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        let n2 = store.create_node(&["Node"]);
+        let n3 = store.create_node(&["Node"]);
+
+        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(6.0))]);
+        store.create_edge_with_props(n1, n3, "EDGE", [("weight", Value::Float64(2.0))]);
+        store.create_edge_with_props(n0, n2, "EDGE", [("weight", Value::Float64(3.0))]);
+        store.create_edge_with_props(n2, n3, "EDGE", [("weight", Value::Float64(-4.0))]);
+
+        let result = bellman_ford(&store, n0, Some("weight"));
+
+        assert!(!result.has_negative_cycle);
+        assert_eq!(*result.distances.get(&n3).unwrap(), -1.0);
+
+        let path = result.path_to(n3).unwrap();
+        assert_eq!(path, vec![n0, n2, n3]);
+    }
+
+    #[test]
+    fn test_bellman_ford_negative_cycle_detection() {
+        // Graph with a negative cycle:
+        //   0 --1--> 1 --1--> 2
+        //            ^        |
+        //            +--(-3)--+
+        //
+        // Cycle: 1 -> 2 -> 1 with total weight 1 + (-3) = -2 (negative!)
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        let n2 = store.create_node(&["Node"]);
+
+        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(1.0))]);
+        store.create_edge_with_props(n1, n2, "EDGE", [("weight", Value::Float64(1.0))]);
+        store.create_edge_with_props(n2, n1, "EDGE", [("weight", Value::Float64(-3.0))]);
+
+        let result = bellman_ford(&store, n0, Some("weight"));
+
+        assert!(
+            result.has_negative_cycle,
+            "Should detect negative cycle: 1->2->1 with total weight -2"
+        );
     }
 
     #[test]

@@ -618,7 +618,9 @@ fn test_create_node_with_id() {
     let store = LpgStore::new().unwrap();
 
     let specific_id = NodeId::new(100);
-    store.create_node_with_id(specific_id, &["Person", "Employee"]);
+    store
+        .create_node_with_id(specific_id, &["Person", "Employee"])
+        .unwrap();
 
     let node = store.get_node(specific_id).unwrap();
     assert!(node.has_label("Person"));
@@ -637,7 +639,7 @@ fn test_create_edge_with_id() {
     let b = store.create_node(&["B"]);
 
     let specific_id = EdgeId::new(500);
-    store.create_edge_with_id(specific_id, a, b, "REL");
+    store.create_edge_with_id(specific_id, a, b, "REL").unwrap();
 
     let edge = store.get_edge(specific_id).unwrap();
     assert_eq!(edge.src, a);
@@ -687,8 +689,8 @@ fn test_multiple_labels() {
 }
 
 #[test]
-fn test_default_impl() {
-    let store: LpgStore = Default::default();
+fn test_new_store_is_empty() {
+    let store = LpgStore::new().unwrap();
     assert_eq!(store.node_count(), 0);
     assert_eq!(store.edge_count(), 0);
 }
@@ -801,15 +803,26 @@ fn test_discard_uncommitted_versions() {
     let epoch = store.new_epoch();
     let transaction_id = TransactionId::new(42);
 
-    // Create node with specific tx
+    // Create node with specific tx (uses PENDING epoch, invisible to get_node)
     let node_id = store.create_node_versioned(&["Person"], epoch, transaction_id);
-    assert!(store.get_node(node_id).is_some());
+    // Verify the node exists via versioned lookup (own tx can see its PENDING writes)
+    assert!(
+        store
+            .get_node_versioned(node_id, epoch, transaction_id)
+            .is_some(),
+        "Node should be visible to its own transaction"
+    );
 
     // Discard uncommitted versions for this tx
     store.discard_uncommitted_versions(transaction_id);
 
     // Node should be gone (version chain was removed)
-    assert!(store.get_node(node_id).is_none());
+    assert!(
+        store
+            .get_node_versioned(node_id, epoch, transaction_id)
+            .is_none(),
+        "Node should be gone after discard"
+    );
 }
 
 // === Property Index Tests ===

@@ -210,7 +210,7 @@ impl<Id: EntityId> PropertyStorage<Id> {
             .collect()
     }
 
-    /// Returns the total memory usage of all columns.
+    /// Returns the total memory usage of all columns (compressed size estimate).
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         let columns = self.columns.read();
@@ -218,6 +218,18 @@ impl<Id: EntityId> PropertyStorage<Id> {
             .values()
             .map(|col| col.compression_stats().compressed_size)
             .sum()
+    }
+
+    /// Returns estimated heap memory for all columns including hash map overhead.
+    #[must_use]
+    pub fn heap_memory_bytes(&self) -> usize {
+        let columns = self.columns.read();
+        // Outer hash map capacity
+        let map_overhead = columns.capacity()
+            * (std::mem::size_of::<PropertyKey>() + std::mem::size_of::<PropertyColumn<Id>>() + 1);
+        // Sum of all column heap memory
+        let column_bytes: usize = columns.values().map(|col| col.heap_memory_bytes()).sum();
+        map_overhead + column_bytes
     }
 
     /// Gets a property value for an entity.
@@ -738,6 +750,21 @@ impl<Id: EntityId> PropertyColumn<Id> {
             value_count: self.len(),
             codec,
         }
+    }
+
+    /// Returns estimated heap memory for this column.
+    ///
+    /// Includes the hot buffer hash map capacity, zone map, and any
+    /// compressed data.
+    #[must_use]
+    pub fn heap_memory_bytes(&self) -> usize {
+        // Hot buffer: FxHashMap<Id, Value> capacity
+        let hot_bytes =
+            self.values.capacity() * (std::mem::size_of::<Id>() + std::mem::size_of::<Value>() + 1);
+        // Compressed data
+        let compressed_bytes = self.compressed.as_ref().map_or(0, |c| c.memory_usage());
+        // ZoneMapEntry is inline (no heap), so just hot + compressed
+        hot_bytes + compressed_bytes
     }
 
     /// Returns whether the column has compressed data.

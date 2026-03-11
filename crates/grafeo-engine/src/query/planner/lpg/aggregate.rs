@@ -1,6 +1,12 @@
 //! Aggregate and factorized aggregate planning.
 
-use super::*;
+use super::{
+    AggregateOp, Arc, Direction, Error, ExpandDirection, ExpandStep, ExpressionPredicate,
+    FactorizedAggregate, FactorizedAggregateOperator, FilterExpression, FilterOperator, GraphStore,
+    HashAggregateOperator, HashMap, LazyFactorizedChainOperator, LogicalAggregateFunction,
+    LogicalExpression, LogicalType, Operator, PhysicalAggregateExpr, ProjectExpr, ProjectOperator,
+    Result, SimpleAggregateOperator, convert_aggregate_function, expression_to_string,
+};
 
 impl super::Planner {
     /// Plans an AGGREGATE operator.
@@ -125,12 +131,15 @@ impl super::Planner {
                 output_types.push(LogicalType::Any);
             }
 
-            input_op = Box::new(ProjectOperator::with_store(
-                input_op,
-                projections,
-                output_types,
-                Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            ));
+            input_op = Box::new(
+                ProjectOperator::with_store(
+                    input_op,
+                    projections,
+                    output_types,
+                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+            );
         }
 
         // Convert group-by expressions to column indices
@@ -189,7 +198,7 @@ impl super::Planner {
                 LogicalAggregateFunction::Count | LogicalAggregateFunction::CountNonNull => {
                     LogicalType::Int64
                 }
-                LogicalAggregateFunction::Sum => LogicalType::Int64,
+                LogicalAggregateFunction::Sum => LogicalType::Any,
                 LogicalAggregateFunction::Avg => LogicalType::Float64,
                 LogicalAggregateFunction::Min | LogicalAggregateFunction::Max => {
                     // MIN/MAX preserve input type; use Int64 as default for numeric comparisons
@@ -266,7 +275,8 @@ impl super::Planner {
                 filter_expr,
                 having_var_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            );
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             operator = Box::new(FilterOperator::new(operator, Box::new(predicate)));
         }
 
@@ -417,6 +427,14 @@ impl super::Planner {
                     .unwrap_or_else(|| format!("{:?}(...)", agg_expr.function).to_lowercase())
             })
             .collect();
+
+        // Register output columns as scalar (aggregate results are materialized
+        // scalar values, not entity references). Without this, a post-Return
+        // projection would treat them as node IDs and attempt NodeResolve, which
+        // corrupts the result on 3+ hop queries.
+        for col in &output_columns {
+            self.scalar_columns.borrow_mut().insert(col.clone());
+        }
 
         // Create the factorized aggregate operator
         let factorized_agg_op = FactorizedAggregateOperator::new(lazy_op, factorized_aggs);

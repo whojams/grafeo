@@ -257,24 +257,10 @@ impl TransactionManager {
             )
         };
 
-        // Check for write-write conflicts with other committed transactions
-        for (other_tx, other_info) in txns.iter() {
-            if *other_tx == transaction_id {
-                continue;
-            }
-            if other_info.state == TransactionState::Committed {
-                // Check if any of our writes conflict with their writes
-                for entity in &our_write_set {
-                    if other_info.write_set.contains(entity) {
-                        return Err(Error::Transaction(TransactionError::WriteConflict(
-                            format!("Write-write conflict on entity {:?}", entity),
-                        )));
-                    }
-                }
-            }
-        }
-
-        // Also check against recently committed transactions
+        // Check for write-write conflicts with transactions that committed
+        // after our snapshot (i.e., concurrent writers to the same entities).
+        // Transactions committed before our start_epoch are part of our visible
+        // snapshot, so overwriting their values is not a conflict.
         for (other_tx, commit_epoch) in committed.iter() {
             if *other_tx != transaction_id && commit_epoch.as_u64() > our_start_epoch.as_u64() {
                 // Check if that transaction wrote to any of our entities

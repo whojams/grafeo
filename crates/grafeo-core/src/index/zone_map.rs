@@ -735,4 +735,194 @@ mod tests {
         assert!(entry.might_contain_equal(&Value::Null));
         assert!(!entry.might_contain_equal(&Value::Int64(5)));
     }
+
+    #[test]
+    fn test_zone_map_date_range() {
+        use grafeo_common::types::Date;
+
+        let min_date = Date::from_ymd(2024, 1, 1).unwrap();
+        let max_date = Date::from_ymd(2024, 12, 31).unwrap();
+        let entry =
+            ZoneMapEntry::with_min_max(Value::Date(min_date), Value::Date(max_date), 0, 365);
+
+        // In-range date: should be a candidate
+        let mid = Date::from_ymd(2024, 6, 15).unwrap();
+        assert!(entry.might_contain_equal(&Value::Date(mid)));
+
+        // Boundary dates: should be candidates
+        assert!(entry.might_contain_equal(&Value::Date(min_date)));
+        assert!(entry.might_contain_equal(&Value::Date(max_date)));
+
+        // Out-of-range dates: must be pruned
+        let before = Date::from_ymd(2023, 12, 31).unwrap();
+        let after = Date::from_ymd(2025, 1, 1).unwrap();
+        assert!(!entry.might_contain_equal(&Value::Date(before)));
+        assert!(!entry.might_contain_equal(&Value::Date(after)));
+
+        // Range predicates
+        let range_lo = Date::from_ymd(2024, 3, 1).unwrap();
+        let range_hi = Date::from_ymd(2024, 9, 30).unwrap();
+        assert!(entry.might_contain_range(
+            Some(&Value::Date(range_lo)),
+            Some(&Value::Date(range_hi)),
+            true,
+            true,
+        ));
+
+        // Non-overlapping range (entirely before chunk)
+        let early_lo = Date::from_ymd(2022, 1, 1).unwrap();
+        let early_hi = Date::from_ymd(2023, 6, 30).unwrap();
+        assert!(!entry.might_contain_range(
+            Some(&Value::Date(early_lo)),
+            Some(&Value::Date(early_hi)),
+            true,
+            true,
+        ));
+
+        // Non-overlapping range (entirely after chunk)
+        let late_lo = Date::from_ymd(2025, 2, 1).unwrap();
+        let late_hi = Date::from_ymd(2025, 12, 31).unwrap();
+        assert!(!entry.might_contain_range(
+            Some(&Value::Date(late_lo)),
+            Some(&Value::Date(late_hi)),
+            true,
+            true,
+        ));
+
+        // Builder round-trip
+        let mut builder = ZoneMapBuilder::without_bloom_filter();
+        let dates = [
+            Date::from_ymd(2024, 3, 10).unwrap(),
+            Date::from_ymd(2024, 7, 4).unwrap(),
+            Date::from_ymd(2024, 1, 1).unwrap(),
+            Date::from_ymd(2024, 11, 25).unwrap(),
+        ];
+        for d in &dates {
+            builder.add(&Value::Date(*d));
+        }
+        let built = builder.build();
+        assert_eq!(
+            built.min,
+            Some(Value::Date(Date::from_ymd(2024, 1, 1).unwrap()))
+        );
+        assert_eq!(
+            built.max,
+            Some(Value::Date(Date::from_ymd(2024, 11, 25).unwrap()))
+        );
+        assert_eq!(built.row_count, 4);
+    }
+
+    #[test]
+    fn test_zone_map_timestamp_range() {
+        use grafeo_common::types::Timestamp;
+
+        // 2024-01-01T00:00:00Z and 2024-12-31T23:59:59Z
+        let min_ts = Timestamp::from_secs(1_704_067_200); // 2024-01-01
+        let max_ts = Timestamp::from_secs(1_735_689_599); // 2024-12-31T23:59:59
+        let entry =
+            ZoneMapEntry::with_min_max(Value::Timestamp(min_ts), Value::Timestamp(max_ts), 0, 1000);
+
+        // Mid-range timestamp: should be a candidate
+        let mid = Timestamp::from_secs(1_719_792_000); // ~2024-07-01
+        assert!(entry.might_contain_equal(&Value::Timestamp(mid)));
+
+        // Boundaries
+        assert!(entry.might_contain_equal(&Value::Timestamp(min_ts)));
+        assert!(entry.might_contain_equal(&Value::Timestamp(max_ts)));
+
+        // Out-of-range timestamps
+        let before = Timestamp::from_secs(1_704_067_199); // 1 second before min
+        let after = Timestamp::from_secs(1_735_689_600); // 1 second after max
+        assert!(!entry.might_contain_equal(&Value::Timestamp(before)));
+        assert!(!entry.might_contain_equal(&Value::Timestamp(after)));
+
+        // Less-than predicate
+        assert!(entry.might_contain_less_than(&Value::Timestamp(max_ts), true));
+        assert!(!entry.might_contain_less_than(&Value::Timestamp(before), false));
+
+        // Greater-than predicate
+        assert!(entry.might_contain_greater_than(&Value::Timestamp(min_ts), true));
+        assert!(!entry.might_contain_greater_than(&Value::Timestamp(after), false));
+
+        // Builder round-trip
+        let mut builder = ZoneMapBuilder::without_bloom_filter();
+        builder.add(&Value::Timestamp(Timestamp::from_secs(1_710_000_000)));
+        builder.add(&Value::Timestamp(Timestamp::from_secs(1_720_000_000)));
+        builder.add(&Value::Timestamp(Timestamp::from_secs(1_705_000_000)));
+        builder.add(&Value::Null);
+        let built = builder.build();
+        assert_eq!(
+            built.min,
+            Some(Value::Timestamp(Timestamp::from_secs(1_705_000_000)))
+        );
+        assert_eq!(
+            built.max,
+            Some(Value::Timestamp(Timestamp::from_secs(1_720_000_000)))
+        );
+        assert_eq!(built.null_count, 1);
+        assert_eq!(built.row_count, 4);
+    }
+
+    #[test]
+    fn test_zone_map_float64_range() {
+        let entry = ZoneMapEntry::with_min_max(Value::Float64(1.5), Value::Float64(99.9), 0, 500);
+
+        // In-range value
+        assert!(entry.might_contain_equal(&Value::Float64(50.0)));
+
+        // Boundaries
+        assert!(entry.might_contain_equal(&Value::Float64(1.5)));
+        assert!(entry.might_contain_equal(&Value::Float64(99.9)));
+
+        // Out-of-range values
+        assert!(!entry.might_contain_equal(&Value::Float64(1.0)));
+        assert!(!entry.might_contain_equal(&Value::Float64(100.0)));
+
+        // Range predicates
+        assert!(entry.might_contain_range(
+            Some(&Value::Float64(10.0)),
+            Some(&Value::Float64(90.0)),
+            true,
+            true,
+        ));
+
+        // Non-overlapping range (below)
+        assert!(!entry.might_contain_range(
+            Some(&Value::Float64(-100.0)),
+            Some(&Value::Float64(1.0)),
+            true,
+            true,
+        ));
+
+        // Non-overlapping range (above)
+        assert!(!entry.might_contain_range(
+            Some(&Value::Float64(100.0)),
+            Some(&Value::Float64(200.0)),
+            true,
+            true,
+        ));
+
+        // Less-than and greater-than predicates
+        assert!(entry.might_contain_less_than(&Value::Float64(50.0), false));
+        assert!(!entry.might_contain_less_than(&Value::Float64(1.0), false));
+        assert!(entry.might_contain_less_than(&Value::Float64(1.5), true));
+        assert!(!entry.might_contain_less_than(&Value::Float64(1.5), false));
+
+        assert!(entry.might_contain_greater_than(&Value::Float64(50.0), false));
+        assert!(!entry.might_contain_greater_than(&Value::Float64(100.0), false));
+        assert!(entry.might_contain_greater_than(&Value::Float64(99.9), true));
+        assert!(!entry.might_contain_greater_than(&Value::Float64(99.9), false));
+
+        // Builder round-trip
+        let mut builder = ZoneMapBuilder::without_bloom_filter();
+        let values = [3.15, 2.72, 1.414, 1.618, 42.0];
+        for v in &values {
+            builder.add(&Value::Float64(*v));
+        }
+        let built = builder.build();
+        assert_eq!(built.min, Some(Value::Float64(1.414)));
+        assert_eq!(built.max, Some(Value::Float64(42.0)));
+        assert_eq!(built.row_count, 5);
+        assert_eq!(built.null_count, 0);
+    }
 }

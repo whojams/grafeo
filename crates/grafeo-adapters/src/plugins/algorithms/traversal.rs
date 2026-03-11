@@ -792,4 +792,33 @@ mod tests {
         });
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_bfs_with_self_loop() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        store.create_edge(n0, n0, "SELF"); // self-loop
+        store.create_edge(n0, n1, "EDGE");
+
+        let visited = bfs(&store, n0);
+        // Self-loop should not cause infinite traversal or duplicates
+        assert_eq!(visited.len(), 2);
+        assert_eq!(visited[0], n0);
+        assert!(visited.contains(&n1));
+    }
+
+    #[test]
+    fn test_dfs_with_self_loop() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        store.create_edge(n0, n0, "SELF"); // self-loop
+        store.create_edge(n0, n1, "EDGE");
+
+        let finished = dfs(&store, n0);
+        assert_eq!(finished.len(), 2);
+        assert!(finished.contains(&n0));
+        assert!(finished.contains(&n1));
+    }
 }

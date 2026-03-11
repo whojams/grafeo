@@ -216,6 +216,23 @@ impl InvertedIndex {
     pub fn term_count(&self) -> usize {
         self.postings.len()
     }
+
+    /// Returns estimated heap memory in bytes.
+    #[must_use]
+    pub fn heap_memory_bytes(&self) -> usize {
+        // Postings map: term strings + PostingList vecs
+        let postings_overhead = self.postings.capacity()
+            * (std::mem::size_of::<String>() + std::mem::size_of::<PostingList>() + 1);
+        let postings_data: usize = self
+            .postings
+            .iter()
+            .map(|(term, pl)| term.len() + pl.postings.capacity() * std::mem::size_of::<Posting>())
+            .sum();
+        // Doc lengths map
+        let doc_lengths_bytes = self.doc_lengths.capacity()
+            * (std::mem::size_of::<NodeId>() + std::mem::size_of::<u32>() + 1);
+        postings_overhead + postings_data + doc_lengths_bytes
+    }
 }
 
 #[cfg(test)]

@@ -236,6 +236,32 @@ tx.commit()
 4. **Use auto-commit for single operations**: Simpler and equally safe
 5. **Don't hold transactions open during user interaction**: Risk of blocking GC
 
+### Session Drop Safety
+
+If a session is dropped (goes out of scope) while a transaction is active, the transaction is automatically rolled back. This prevents data corruption from forgotten commits:
+
+```python
+def do_work(db):
+    tx = db.begin_transaction()
+    tx.execute("CREATE (n:Temp {data: 'test'})")
+    # Oops, forgot to commit!
+    # When tx goes out of scope, the transaction is rolled back automatically
+
+do_work(db)
+# No Temp nodes exist, the uncommitted data was discarded
+```
+
+In Rust, the same behavior applies when a `Session` is dropped:
+
+```rust
+{
+    let session = db.session();
+    session.begin_transaction()?;
+    session.execute("INSERT (:Temp {data: 'test'})")?;
+    // session dropped here, transaction auto-rolled back
+}
+```
+
 ## API Reference
 
 ### Python

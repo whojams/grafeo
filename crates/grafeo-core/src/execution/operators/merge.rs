@@ -5,7 +5,7 @@
 //! 2. If found, return existing element (optionally apply ON MATCH SET)
 //! 3. If not found, create the element (optionally apply ON CREATE SET)
 
-use super::{Operator, OperatorResult};
+use super::{ConstraintValidator, Operator, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
 use crate::graph::GraphStoreMut;
 use grafeo_common::types::{
@@ -51,6 +51,8 @@ pub struct MergeOperator {
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for undo log tracking.
     transaction_id: Option<TransactionId>,
+    /// Optional constraint validator for schema enforcement.
+    validator: Option<Arc<dyn ConstraintValidator>>,
 }
 
 impl MergeOperator {
@@ -67,6 +69,7 @@ impl MergeOperator {
             executed: false,
             viewing_epoch: None,
             transaction_id: None,
+            validator: None,
         }
     }
 
@@ -84,6 +87,12 @@ impl MergeOperator {
     ) -> Self {
         self.viewing_epoch = Some(epoch);
         self.transaction_id = transaction_id;
+        self
+    }
+
+    /// Sets the constraint validator for schema enforcement.
+    pub fn with_validator(mut self, validator: Arc<dyn ConstraintValidator>) -> Self {
+        self.validator = Some(validator);
         self
     }
 
@@ -122,7 +131,25 @@ impl MergeOperator {
     }
 
     /// Creates a new node with the specified labels and properties.
-    fn create_node(&self) -> NodeId {
+    fn create_node(&self) -> Result<NodeId, super::OperatorError> {
+        // Validate constraints before creating the node
+        if let Some(ref validator) = self.validator {
+            validator.validate_node_labels_allowed(&self.config.labels)?;
+
+            let all_props: Vec<(String, Value)> = self
+                .config
+                .match_properties
+                .iter()
+                .chain(self.config.on_create_properties.iter())
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (name, value) in &all_props {
+                validator.validate_node_property(&self.config.labels, name, value)?;
+                validator.check_unique_node_property(&self.config.labels, name, value)?;
+            }
+            validator.validate_node_complete(&self.config.labels, &all_props)?;
+        }
+
         let mut all_props: Vec<(PropertyKey, Value)> = self
             .config
             .match_properties
@@ -139,14 +166,14 @@ impl MergeOperator {
         }
 
         let labels: Vec<&str> = self.config.labels.iter().map(String::as_str).collect();
-        self.store.create_node_with_props(&labels, &all_props)
+        Ok(self.store.create_node_with_props(&labels, &all_props))
     }
 
     /// Finds or creates a matching node, applying ON MATCH/ON CREATE as appropriate.
-    fn merge_node(&self) -> NodeId {
+    fn merge_node(&self) -> Result<NodeId, super::OperatorError> {
         if let Some(existing_id) = self.find_matching_node() {
             self.apply_on_match(existing_id);
-            existing_id
+            Ok(existing_id)
         } else {
             self.create_node()
         }
@@ -173,7 +200,7 @@ impl Operator for MergeOperator {
         if let Some(ref mut input) = self.input {
             if let Some(chunk) = input.next()? {
                 // Merge the node (once, same node for all input rows)
-                let node_id = self.merge_node();
+                let node_id = self.merge_node()?;
 
                 let mut builder =
                     DataChunkBuilder::with_capacity(&self.config.output_schema, chunk.row_count());
@@ -211,7 +238,7 @@ impl Operator for MergeOperator {
         }
         self.executed = true;
 
-        let node_id = self.merge_node();
+        let node_id = self.merge_node()?;
 
         let mut builder = DataChunkBuilder::new(&self.config.output_schema);
         if let Some(dst) = builder.column_mut(self.config.output_column) {
@@ -271,6 +298,8 @@ pub struct MergeRelationshipOperator {
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for undo log tracking.
     transaction_id: Option<TransactionId>,
+    /// Optional constraint validator for schema enforcement.
+    validator: Option<Arc<dyn ConstraintValidator>>,
 }
 
 impl MergeRelationshipOperator {
@@ -286,6 +315,7 @@ impl MergeRelationshipOperator {
             config,
             viewing_epoch: None,
             transaction_id: None,
+            validator: None,
         }
     }
 
@@ -297,6 +327,12 @@ impl MergeRelationshipOperator {
     ) -> Self {
         self.viewing_epoch = Some(epoch);
         self.transaction_id = transaction_id;
+        self
+    }
+
+    /// Sets the constraint validator for schema enforcement.
+    pub fn with_validator(mut self, validator: Arc<dyn ConstraintValidator>) -> Self {
+        self.validator = Some(validator);
         self
     }
 
@@ -329,7 +365,24 @@ impl MergeRelationshipOperator {
     }
 
     /// Creates a new edge with the match properties and on_create properties.
-    fn create_edge(&self, src: NodeId, dst: NodeId) -> EdgeId {
+    fn create_edge(&self, src: NodeId, dst: NodeId) -> Result<EdgeId, super::OperatorError> {
+        // Validate constraints before creating the edge
+        if let Some(ref validator) = self.validator {
+            validator.validate_edge_type_allowed(&self.config.edge_type)?;
+
+            let all_props: Vec<(String, Value)> = self
+                .config
+                .match_properties
+                .iter()
+                .chain(self.config.on_create_properties.iter())
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (name, value) in &all_props {
+                validator.validate_edge_property(&self.config.edge_type, name, value)?;
+            }
+            validator.validate_edge_complete(&self.config.edge_type, &all_props)?;
+        }
+
         let mut all_props: Vec<(PropertyKey, Value)> = self
             .config
             .match_properties
@@ -345,8 +398,9 @@ impl MergeRelationshipOperator {
             }
         }
 
-        self.store
-            .create_edge_with_props(src, dst, &self.config.edge_type, &all_props)
+        Ok(self
+            .store
+            .create_edge_with_props(src, dst, &self.config.edge_type, &all_props))
     }
 
     /// Applies ON MATCH properties to an existing edge.
@@ -392,7 +446,7 @@ impl Operator for MergeRelationshipOperator {
                     self.apply_on_match(existing);
                     existing
                 } else {
-                    self.create_edge(src_val, dst_val)
+                    self.create_edge(src_val, dst_val)?
                 };
 
                 // Copy input columns to output, then add the edge column

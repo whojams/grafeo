@@ -48,7 +48,7 @@ fn test_concurrent_read_sessions() {
                 let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();
 
                 // Should see all 3 nodes
-                if result.row_count() >= 3 {
+                if result.row_count() == 3 {
                     success_count.fetch_add(1, Ordering::Relaxed);
                 }
             })
@@ -114,9 +114,10 @@ fn test_concurrent_write_sessions() {
     for i in 0..num_threads {
         let query = format!("MATCH (n:Thread{}) RETURN n", i);
         let result = session.execute(&query).unwrap();
-        assert!(
-            result.row_count() >= 1,
-            "Node for thread {} should exist",
+        assert_eq!(
+            result.row_count(),
+            1,
+            "Node for thread {} should exist exactly once",
             i
         );
     }
@@ -189,15 +190,13 @@ fn test_session_isolation_between_threads() {
     let (before, after) = reader_handle.join().expect("Reader thread panicked");
 
     // After commit, the node should be visible
-    assert!(
-        after >= 1,
-        "Node should be visible after commit, got {} rows",
-        after
-    );
+    assert_eq!(after, 1, "Node should be visible after commit");
 
-    // Note: Before commit visibility depends on MVCC integration level
-    // Currently the store may or may not provide full isolation
-    let _ = before; // Acknowledge we're not asserting on this yet
+    // Uncommitted data uses PENDING epoch, invisible to other sessions.
+    assert_eq!(
+        before, 0,
+        "Dirty read prevented: uncommitted data is invisible to other sessions"
+    );
 }
 
 // ============================================================================
@@ -358,8 +357,9 @@ fn test_sessions_share_committed_data() {
 
     // Session 2 should see the data
     let result = session2.execute("MATCH (n:Shared) RETURN n.key").unwrap();
-    assert!(
-        result.row_count() >= 1,
+    assert_eq!(
+        result.row_count(),
+        1,
         "Session 2 should see committed data from Session 1"
     );
 }
@@ -462,10 +462,7 @@ async fn test_async_transaction_isolation() {
     writer.await.expect("Writer task panicked");
     let count = reader.await.expect("Reader task panicked");
 
-    assert!(
-        count >= 1,
-        "Should see committed data after writer completes"
-    );
+    assert_eq!(count, 1, "Should see committed data after writer completes");
 }
 
 // ============================================================================
@@ -488,7 +485,7 @@ fn test_session_after_transaction_error() {
     session.commit().unwrap();
 
     let result = session.execute("MATCH (n:AfterError) RETURN n").unwrap();
-    assert!(result.row_count() >= 1);
+    assert_eq!(result.row_count(), 1);
 }
 
 #[test]
@@ -839,5 +836,459 @@ fn test_stress_concurrent_edges_and_nodes() {
         result.row_count(),
         num_threads * 10,
         "All spoke nodes should exist"
+    );
+}
+
+// ============================================================================
+// Isolation Anomaly Tests (T1-03)
+// ============================================================================
+
+/// Documents current dirty-read behavior: uncommitted writes in one session's
+/// Dirty read prevention: uncommitted data from one transaction is invisible
+/// to other sessions. Versions use PENDING epoch until committed.
+#[test]
+fn test_dirty_read_prevented() {
+    let db = GrafeoDB::new_in_memory();
+
+    let mut writer = db.session();
+    writer.begin_transaction().unwrap();
+    writer
+        .execute("INSERT (:DirtyRead {val: 'uncommitted'})")
+        .unwrap();
+
+    // Reader (auto-commit, no explicit transaction) must NOT see uncommitted data.
+    // Uncommitted versions use PENDING epoch, invisible to epoch-based reads.
+    let reader = db.session();
+    let result = reader.execute("MATCH (n:DirtyRead) RETURN n").unwrap();
+
+    assert_eq!(
+        result.row_count(),
+        0,
+        "Dirty read prevented: uncommitted data is invisible to other sessions"
+    );
+
+    // After commit, the data becomes visible
+    writer.commit().unwrap();
+
+    let result2 = reader.execute("MATCH (n:DirtyRead) RETURN n").unwrap();
+    assert_eq!(
+        result2.row_count(),
+        1,
+        "Committed data should be visible to other sessions"
+    );
+}
+
+/// Documents that after rollback, the rolled-back data is no longer visible.
+#[test]
+fn test_rollback_hides_data_from_other_sessions() {
+    let db = GrafeoDB::new_in_memory();
+
+    let mut writer = db.session();
+    writer.begin_transaction().unwrap();
+    writer
+        .execute("INSERT (:RollbackTest {val: 'temp'})")
+        .unwrap();
+    writer.rollback().unwrap();
+
+    let reader = db.session();
+    let result = reader.execute("MATCH (n:RollbackTest) RETURN n").unwrap();
+    assert_eq!(
+        result.row_count(),
+        0,
+        "Rolled-back data should not be visible"
+    );
+}
+
+/// Non-repeatable read: reader sees different results for the same query
+/// when another session commits between reads.
+#[test]
+fn test_non_repeatable_read() {
+    let db = GrafeoDB::new_in_memory();
+
+    let session1 = db.session();
+    session1.execute("INSERT (:NRR {val: 'original'})").unwrap();
+
+    // Reader sees val='original'
+    let reader = db.session();
+    let r1 = reader.execute("MATCH (n:NRR) RETURN n.val AS val").unwrap();
+    assert_eq!(r1.rows.len(), 1);
+
+    // Writer updates
+    session1
+        .execute("MATCH (n:NRR) SET n.val = 'updated'")
+        .unwrap();
+
+    // Reader sees val='updated' (non-repeatable read)
+    let r2 = reader.execute("MATCH (n:NRR) RETURN n.val AS val").unwrap();
+    assert_eq!(r2.rows.len(), 1);
+    // Without snapshot isolation, the reader sees the updated value
+    assert_eq!(
+        r2.rows[0][0],
+        grafeo_common::types::Value::String("updated".into()),
+        "Non-repeatable read: reader sees committed update"
+    );
+}
+
+/// Phantom read: reader sees new rows that didn't exist during its first read,
+/// because another session inserted and committed between reads.
+#[test]
+fn test_phantom_read() {
+    let db = GrafeoDB::new_in_memory();
+
+    let session1 = db.session();
+    session1.execute("INSERT (:Phantom {id: 1})").unwrap();
+
+    // Reader sees 1 row
+    let reader = db.session();
+    let r1 = reader.execute("MATCH (n:Phantom) RETURN n").unwrap();
+    assert_eq!(r1.row_count(), 1);
+
+    // Writer inserts another row
+    session1.execute("INSERT (:Phantom {id: 2})").unwrap();
+
+    // Reader sees 2 rows (phantom read)
+    let r2 = reader.execute("MATCH (n:Phantom) RETURN n").unwrap();
+    assert_eq!(
+        r2.row_count(),
+        2,
+        "Phantom read: new rows from other sessions are visible"
+    );
+}
+
+/// Session drop mid-transaction: verifies that rolled-back data is not visible.
+/// (Related to T1-04: Session Drop should auto-rollback.)
+#[test]
+fn test_drop_session_mid_transaction() {
+    let db = GrafeoDB::new_in_memory();
+
+    {
+        let mut session = db.session();
+        session.begin_transaction().unwrap();
+        session
+            .execute("INSERT (:DropTest {val: 'should_vanish'})")
+            .unwrap();
+        // Session drops here without commit or rollback
+    }
+
+    let reader = db.session();
+    let result = reader.execute("MATCH (n:DropTest) RETURN n").unwrap();
+    // Drop impl auto-rollbacks the active transaction, so uncommitted data is discarded.
+    assert_eq!(
+        result.row_count(),
+        0,
+        "Drop impl should auto-rollback, discarding uncommitted data"
+    );
+}
+
+// ============================================================================
+// Write-Write Conflict Tests (T1-07)
+// ============================================================================
+
+/// Tests that two concurrent sessions modifying the same node property through
+/// `Session.execute()` both succeed (no conflict detection at query level).
+///
+/// The `TransactionManager` has write-write conflict detection (unit-tested in
+/// `transaction/manager.rs`), but the query execution path does not wire through
+/// `record_write()`. This test documents the current behavior and will serve as
+/// a regression test when conflict detection is wired end-to-end.
+#[test]
+fn test_write_write_conflict_through_execute() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("INSERT (:Account {name: 'shared', balance: 100})")
+        .unwrap();
+
+    // Session 1: begin tx, read and update
+    let mut s1 = db.session();
+    s1.begin_transaction().unwrap();
+    s1.execute("MATCH (a:Account {name: 'shared'}) SET a.balance = 200")
+        .unwrap();
+
+    // Session 2: begin tx, read and update the same node
+    let mut s2 = db.session();
+    s2.begin_transaction().unwrap();
+    s2.execute("MATCH (a:Account {name: 'shared'}) SET a.balance = 300")
+        .unwrap();
+
+    // First commit succeeds, second detects write-write conflict
+    let commit1 = s1.commit();
+    let commit2 = s2.commit();
+
+    assert!(commit1.is_ok(), "First commit should succeed: {commit1:?}");
+    assert!(
+        commit2.is_err(),
+        "Second commit should fail with write-write conflict: {commit2:?}"
+    );
+
+    // Verify final state: first writer's value persists
+    let result = session
+        .execute("MATCH (a:Account {name: 'shared'}) RETURN a.balance AS b")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], grafeo_common::types::Value::Int64(200));
+}
+
+/// Tests that a rollback in one session doesn't affect another session's committed writes.
+#[test]
+fn test_concurrent_write_one_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("INSERT (:Counter {name: 'hits', val: 0})")
+        .unwrap();
+
+    // Session 1: update and commit
+    let mut s1 = db.session();
+    s1.begin_transaction().unwrap();
+    s1.execute("MATCH (c:Counter {name: 'hits'}) SET c.val = 10")
+        .unwrap();
+    s1.commit().unwrap();
+
+    // Session 2: update and rollback
+    let mut s2 = db.session();
+    s2.begin_transaction().unwrap();
+    s2.execute("MATCH (c:Counter {name: 'hits'}) SET c.val = 999")
+        .unwrap();
+    s2.rollback().unwrap();
+
+    // Session 1's value (10) should be the final state
+    let result = session
+        .execute("MATCH (c:Counter {name: 'hits'}) RETURN c.val AS v")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        grafeo_common::types::Value::Int64(10),
+        "Rolled-back write should not affect committed value"
+    );
+}
+
+// ============================================================================
+// T2-05: Edge creation/deletion rollback
+// ============================================================================
+
+/// Create an edge inside a transaction, rollback, verify edge is absent.
+#[test]
+fn test_edge_create_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+    // Edge exists inside transaction
+    let mid = session.execute("MATCH ()-[r:KNOWS]->() RETURN r").unwrap();
+    assert_eq!(mid.row_count(), 1, "Edge should exist inside transaction");
+
+    session.rollback().unwrap();
+
+    // After rollback, edge should be gone
+    let reader = db.session();
+    let result = reader.execute("MATCH ()-[r:KNOWS]->() RETURN r").unwrap();
+    assert_eq!(
+        result.row_count(),
+        0,
+        "Edge should not exist after rollback"
+    );
+}
+
+/// Documents that DELETE edge followed by rollback does NOT restore the edge.
+///
+/// The `discard_uncommitted_versions` method correctly removes versions created
+/// DELETE edge followed by rollback restores the edge.
+///
+/// The transactional delete captures undo information (edge type, endpoints, properties)
+/// and marks the version with `deleted_by`. Rollback replays the undo log to restore.
+#[test]
+fn test_edge_delete_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+        .unwrap();
+
+    // Verify edge exists
+    let before = session.execute("MATCH ()-[r:KNOWS]->() RETURN r").unwrap();
+    assert_eq!(before.row_count(), 1);
+
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute("MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) DELETE r")
+        .unwrap();
+    session.rollback().unwrap();
+
+    let reader = db.session();
+    let result = reader.execute("MATCH ()-[r:KNOWS]->() RETURN r").unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Edge should be restored after rollback"
+    );
+}
+
+/// DELETE node followed by rollback restores the node with its labels and properties.
+#[test]
+fn test_node_delete_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("INSERT (:Temp {name: 'ephemeral'})")
+        .unwrap();
+
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute("MATCH (t:Temp {name: 'ephemeral'}) DELETE t")
+        .unwrap();
+    session.rollback().unwrap();
+
+    let reader = db.session();
+    let result = reader
+        .execute("MATCH (t:Temp) RETURN t.name AS name")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Node should be restored after rollback"
+    );
+    assert_eq!(
+        result.rows[0][0],
+        grafeo_common::types::Value::String("ephemeral".into())
+    );
+}
+
+/// DETACH DELETE followed by rollback restores the node and its edges.
+#[test]
+fn test_detach_delete_rollback() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+        .unwrap();
+
+    let mut session = db.session();
+    session.begin_transaction().unwrap();
+    session
+        .execute("MATCH (a:Person {name: 'Alix'}) DETACH DELETE a")
+        .unwrap();
+    session.rollback().unwrap();
+
+    let reader = db.session();
+    let nodes = reader
+        .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+        .unwrap();
+    assert_eq!(
+        nodes.row_count(),
+        2,
+        "Both nodes should be restored after rollback"
+    );
+    assert_eq!(
+        nodes.rows[0][0],
+        grafeo_common::types::Value::String("Alix".into())
+    );
+    assert_eq!(
+        nodes.rows[1][0],
+        grafeo_common::types::Value::String("Gus".into())
+    );
+
+    // Edge should also be restored
+    let edges = reader.execute("MATCH ()-[r:KNOWS]->() RETURN r").unwrap();
+    assert_eq!(
+        edges.row_count(),
+        1,
+        "Edge should be restored after DETACH DELETE rollback"
+    );
+}
+
+// ============================================================================
+// T2-06: Cross-session commit visibility
+// ============================================================================
+
+/// After INSERT+COMMIT in an explicit transaction, a new session sees the data.
+#[test]
+fn test_cross_session_visibility_after_explicit_commit() {
+    let db = GrafeoDB::new_in_memory();
+
+    let mut writer = db.session();
+    writer.begin_transaction().unwrap();
+    writer
+        .execute("INSERT (:Visible {key: 'committed'})")
+        .unwrap();
+    writer.commit().unwrap();
+
+    // New session should see committed data
+    let reader = db.session();
+    let result = reader
+        .execute("MATCH (v:Visible) RETURN v.key AS key")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "New session should see committed data"
+    );
+    assert_eq!(
+        result.rows[0][0],
+        grafeo_common::types::Value::String("committed".into())
+    );
+}
+
+/// Multiple mutations across transactions, verified by a fresh session.
+#[test]
+fn test_cross_session_visibility_multiple_mutations() {
+    let db = GrafeoDB::new_in_memory();
+
+    // First session: insert + set property
+    let session1 = db.session();
+    session1
+        .execute("INSERT (:Item {name: 'widget', price: 10})")
+        .unwrap();
+    session1
+        .execute("MATCH (i:Item {name: 'widget'}) SET i.price = 25")
+        .unwrap();
+
+    // Second session sees the updated value
+    let session2 = db.session();
+    let result = session2
+        .execute("MATCH (i:Item {name: 'widget'}) RETURN i.price AS price")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        grafeo_common::types::Value::Int64(25),
+        "New session should see the updated price"
+    );
+}
+
+/// Edge creation visibility: edges inserted in one session visible in another.
+#[test]
+fn test_cross_session_edge_visibility() {
+    let db = GrafeoDB::new_in_memory();
+
+    let session1 = db.session();
+    session1
+        .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+        .unwrap();
+
+    let session2 = db.session();
+    let result = session2
+        .execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a.name AS from, b.name AS to")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        grafeo_common::types::Value::String("Alix".into())
+    );
+    assert_eq!(
+        result.rows[0][1],
+        grafeo_common::types::Value::String("Gus".into())
     );
 }

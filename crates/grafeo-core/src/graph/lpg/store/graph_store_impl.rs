@@ -106,6 +106,10 @@ impl GraphStore for LpgStore {
         LpgStore::node_ids(self)
     }
 
+    fn all_node_ids(&self) -> Vec<NodeId> {
+        LpgStore::all_node_ids(self)
+    }
+
     fn nodes_by_label(&self, label: &str) -> Vec<NodeId> {
         LpgStore::nodes_by_label(self, label)
     }
@@ -120,6 +124,15 @@ impl GraphStore for LpgStore {
 
     fn edge_type(&self, id: EdgeId) -> Option<ArcStr> {
         LpgStore::edge_type(self, id)
+    }
+
+    fn edge_type_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<ArcStr> {
+        LpgStore::edge_type_versioned(self, id, epoch, transaction_id)
     }
 
     fn has_property_index(&self, property: &str) -> bool {
@@ -191,6 +204,32 @@ impl GraphStore for LpgStore {
         LpgStore::all_property_keys(self)
     }
 
+    fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        LpgStore::is_node_visible_at_epoch(self, id, epoch)
+    }
+
+    fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        LpgStore::is_node_visible_versioned(self, id, epoch, transaction_id)
+    }
+
+    fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        LpgStore::filter_visible_node_ids(self, ids, epoch)
+    }
+
+    fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        LpgStore::filter_visible_node_ids_versioned(self, ids, epoch, transaction_id)
+    }
+
     fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
         LpgStore::get_node_history(self, id)
     }
@@ -241,9 +280,13 @@ impl GraphStoreMut for LpgStore {
         &self,
         id: NodeId,
         epoch: EpochId,
-        _transaction_id: TransactionId,
+        transaction_id: TransactionId,
     ) -> bool {
-        LpgStore::delete_node_at_epoch(self, id, epoch)
+        if transaction_id == TransactionId::SYSTEM {
+            LpgStore::delete_node_at_epoch(self, id, epoch)
+        } else {
+            LpgStore::delete_node_transactional(self, id, epoch, transaction_id)
+        }
     }
 
     fn delete_node_edges(&self, node_id: NodeId) {
@@ -258,9 +301,13 @@ impl GraphStoreMut for LpgStore {
         &self,
         id: EdgeId,
         epoch: EpochId,
-        _transaction_id: TransactionId,
+        transaction_id: TransactionId,
     ) -> bool {
-        LpgStore::delete_edge_at_epoch(self, id, epoch)
+        if transaction_id == TransactionId::SYSTEM {
+            LpgStore::delete_edge_at_epoch(self, id, epoch)
+        } else {
+            LpgStore::delete_edge_transactional(self, id, epoch, transaction_id)
+        }
     }
 
     fn set_node_property(&self, id: NodeId, key: &str, value: Value) {

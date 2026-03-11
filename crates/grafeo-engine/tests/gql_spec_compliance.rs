@@ -6,6 +6,7 @@
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
+/// Creates 3 Person nodes (Alix age 30, Gus age 25, Vincent age 35) with 2 KNOWS edges.
 fn setup_db() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
@@ -102,6 +103,8 @@ fn test_list_comprehension() {
         other => panic!("Expected list, got {:?}", other),
     }
 }
+
+// Tests all()/any() in RETURN clause (WHERE variant in coverage_aggregates.rs)
 
 #[test]
 fn test_list_predicate_all() {
@@ -499,27 +502,7 @@ fn test_same_different_nodes() {
 // ISO GQL Conformance: Group 2 - NULLIF, COALESCE syntax, NULLS ordering
 // ---------------------------------------------------------------------------
 
-#[test]
-fn test_nullif_equal() {
-    let db = setup_db();
-    let session = db.session();
-    let result = session
-        .execute("MATCH (n:Person {name: 'Alix'}) RETURN NULLIF(n.age, 30) AS val")
-        .unwrap();
-    assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::Null);
-}
-
-#[test]
-fn test_nullif_not_equal() {
-    let db = setup_db();
-    let session = db.session();
-    let result = session
-        .execute("MATCH (n:Person {name: 'Alix'}) RETURN NULLIF(n.age, 99) AS val")
-        .unwrap();
-    assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::Int64(30));
-}
+// NULLIF tests are in spec_compliance.rs (nullif_returns_null_when_equal, nullif_returns_value_when_different)
 
 #[test]
 fn test_coalesce_syntax() {
@@ -1034,10 +1017,11 @@ fn test_multiset_alternation_basic() {
              RETURN a.name AS src, b.name AS dst ORDER BY src, dst",
         )
         .unwrap();
-    // Each KNOWS edge appears twice (once per alternative), so we expect duplicates
-    assert!(
-        result.rows.len() >= 2,
-        "Multiset union should return results, got {}",
+    // Each KNOWS edge appears twice (once per alternative): 2 edges × 2 = 4
+    assert_eq!(
+        result.rows.len(),
+        4,
+        "Multiset union should duplicate: 2 KNOWS edges × 2 alternatives, got {}",
         result.rows.len()
     );
 }
@@ -1053,10 +1037,11 @@ fn test_set_alternation_basic() {
              RETURN a.name AS src, b.name AS dst ORDER BY src, dst",
         )
         .unwrap();
-    // Should return both KNOWS and WORKS_AT edges
-    assert!(
-        result.rows.len() >= 2,
-        "Set union should return results, got {}",
+    // 2 KNOWS edges + 0 WORKS_AT edges (no Company nodes in fixture)
+    assert_eq!(
+        result.rows.len(),
+        2,
+        "Set union should return 2 KNOWS edges, got {}",
         result.rows.len()
     );
 }

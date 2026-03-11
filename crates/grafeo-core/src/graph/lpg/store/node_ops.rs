@@ -18,6 +18,49 @@ impl LpgStore {
         self.create_node_versioned(labels, self.current_epoch(), TransactionId::SYSTEM)
     }
 
+    /// Registers labels for a node: builds the label ID set, updates the
+    /// label index (single lock acquisition), and stores the node-to-labels
+    /// mapping.
+    pub(super) fn register_node_labels(&self, id: NodeId, labels: &[&str]) {
+        let mut node_label_set = FxHashSet::default();
+        let mut label_ids = Vec::with_capacity(labels.len());
+        for label in labels {
+            let label_id = self.get_or_create_label_id(label);
+            node_label_set.insert(label_id);
+            label_ids.push(label_id);
+        }
+
+        // Update label index with a single lock acquisition
+        let mut index = self.label_index.write();
+        for label_id in label_ids {
+            if index.len() <= label_id as usize {
+                index.resize_with(label_id as usize + 1, FxHashMap::default);
+            }
+            index[label_id as usize].insert(id, ());
+        }
+        drop(index);
+
+        self.node_labels.write().insert(id, node_label_set);
+    }
+
+    /// Builds a `Node` populated with labels and properties for the given ID.
+    fn build_node(&self, id: NodeId) -> Node {
+        let mut node = Node::new(id);
+
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+        if let Some(label_ids) = node_labels.get(&id) {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    node.labels.push(label.clone());
+                }
+            }
+        }
+
+        node.properties = self.node_properties.get_all(id).into_iter().collect();
+        node
+    }
+
     /// Creates a new node with the given labels within a transaction context.
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
@@ -32,25 +75,16 @@ impl LpgStore {
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
 
-        // Store labels in node_labels map and label_index
-        let mut node_label_set = FxHashSet::default();
-        for label in labels {
-            let label_id = self.get_or_create_label_id(label);
-            node_label_set.insert(label_id);
+        self.register_node_labels(id, labels);
 
-            // Update label index
-            let mut index = self.label_index.write();
-            while index.len() <= label_id as usize {
-                index.push(FxHashMap::default());
-            }
-            index[label_id as usize].insert(id, ());
-        }
-
-        // Store node's labels
-        self.node_labels.write().insert(id, node_label_set);
-
-        // Create version chain with initial version
-        let chain = VersionChain::with_initial(record, epoch, transaction_id);
+        // Uncommitted transactional versions use PENDING epoch so they are
+        // invisible to other sessions until the transaction commits.
+        let version_epoch = if transaction_id == TransactionId::SYSTEM {
+            epoch
+        } else {
+            EpochId::PENDING
+        };
+        let chain = VersionChain::with_initial(record, version_epoch, transaction_id);
         self.nodes.write().insert(id, chain);
         self.live_node_count.fetch_add(1, Ordering::Relaxed);
         id
@@ -71,22 +105,7 @@ impl LpgStore {
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
 
-        // Store labels in node_labels map and label_index
-        let mut node_label_set = FxHashSet::default();
-        for label in labels {
-            let label_id = self.get_or_create_label_id(label);
-            node_label_set.insert(label_id);
-
-            // Update label index
-            let mut index = self.label_index.write();
-            while index.len() <= label_id as usize {
-                index.push(FxHashMap::default());
-            }
-            index[label_id as usize].insert(id, ());
-        }
-
-        // Store node's labels
-        self.node_labels.write().insert(id, node_label_set);
+        self.register_node_labels(id, labels);
 
         // Allocate record in arena and get offset (create epoch if needed)
         let arena = self
@@ -97,8 +116,16 @@ impl LpgStore {
             .alloc_value_with_offset(record)
             .expect("arena allocation failed for node record");
 
+        // Uncommitted transactional versions use PENDING epoch so they are
+        // invisible to other sessions until the transaction commits.
+        let version_epoch = if transaction_id == TransactionId::SYSTEM {
+            epoch
+        } else {
+            EpochId::PENDING
+        };
+
         // Create HotVersionRef pointing to arena data
-        let hot_ref = HotVersionRef::new(epoch, offset, transaction_id);
+        let hot_ref = HotVersionRef::new(version_epoch, epoch, offset, transaction_id);
 
         // Create or update version index
         let mut versions = self.node_versions.write();
@@ -195,28 +222,11 @@ impl LpgStore {
         let nodes = self.nodes.read();
         let chain = nodes.get(&id)?;
         let record = chain.visible_at(epoch)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let mut node = Node::new(id);
-
-        // Get labels from node_labels map
-        let id_to_label = self.id_to_label.read();
-        let node_labels = self.node_labels.read();
-        if let Some(label_ids) = node_labels.get(&id) {
-            for &label_id in label_ids {
-                if let Some(label) = id_to_label.get(label_id as usize) {
-                    node.labels.push(label.clone());
-                }
-            }
-        }
-
-        // Get properties
-        node.properties = self.node_properties.get_all(id).into_iter().collect();
-
-        Some(node)
+        drop(nodes);
+        Some(self.build_node(id))
     }
 
     /// Gets a node by ID at a specific epoch.
@@ -227,31 +237,12 @@ impl LpgStore {
         let versions = self.node_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_at(epoch)?;
-
-        // Read the record from arena
         let record = self.read_node_record(&version_ref)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let mut node = Node::new(id);
-
-        // Get labels from node_labels map
-        let id_to_label = self.id_to_label.read();
-        let node_labels = self.node_labels.read();
-        if let Some(label_ids) = node_labels.get(&id) {
-            for &label_id in label_ids {
-                if let Some(label) = id_to_label.get(label_id as usize) {
-                    node.labels.push(label.clone());
-                }
-            }
-        }
-
-        // Get properties
-        node.properties = self.node_properties.get_all(id).into_iter().collect();
-
-        Some(node)
+        drop(versions);
+        Some(self.build_node(id))
     }
 
     /// Gets a node visible to a specific transaction.
@@ -267,28 +258,11 @@ impl LpgStore {
         let nodes = self.nodes.read();
         let chain = nodes.get(&id)?;
         let record = chain.visible_to(epoch, transaction_id)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let mut node = Node::new(id);
-
-        // Get labels from node_labels map
-        let id_to_label = self.id_to_label.read();
-        let node_labels = self.node_labels.read();
-        if let Some(label_ids) = node_labels.get(&id) {
-            for &label_id in label_ids {
-                if let Some(label) = id_to_label.get(label_id as usize) {
-                    node.labels.push(label.clone());
-                }
-            }
-        }
-
-        // Get properties
-        node.properties = self.node_properties.get_all(id).into_iter().collect();
-
-        Some(node)
+        drop(nodes);
+        Some(self.build_node(id))
     }
 
     /// Gets a node visible to a specific transaction.
@@ -305,31 +279,12 @@ impl LpgStore {
         let versions = self.node_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_to(epoch, transaction_id)?;
-
-        // Read the record from arena
         let record = self.read_node_record(&version_ref)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let mut node = Node::new(id);
-
-        // Get labels from node_labels map
-        let id_to_label = self.id_to_label.read();
-        let node_labels = self.node_labels.read();
-        if let Some(label_ids) = node_labels.get(&id) {
-            for &label_id in label_ids {
-                if let Some(label) = id_to_label.get(label_id as usize) {
-                    node.labels.push(label.clone());
-                }
-            }
-        }
-
-        // Get properties
-        node.properties = self.node_properties.get_all(id).into_iter().collect();
-
-        Some(node)
+        drop(versions);
+        Some(self.build_node(id))
     }
 
     /// Returns all versions of a node with their creation/deletion epochs, newest first.
@@ -339,35 +294,17 @@ impl LpgStore {
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
-        use grafeo_common::types::PropertyMap;
-        use smallvec::SmallVec;
-
         let nodes = self.nodes.read();
         let Some(chain) = nodes.get(&id) else {
             return Vec::new();
         };
 
-        let id_to_label = self.id_to_label.read();
-        let node_labels = self.node_labels.read();
-        let properties: PropertyMap = self.node_properties.get_all(id).into_iter().collect();
-
-        let mut labels: SmallVec<[arcstr::ArcStr; 2]> = SmallVec::new();
-        if let Some(label_ids) = node_labels.get(&id) {
-            for &label_id in label_ids {
-                if let Some(label) = id_to_label.get(label_id as usize) {
-                    labels.push(label.clone());
-                }
-            }
-        }
+        // Cache labels and properties once, clone per version entry
+        let template = self.build_node(id);
 
         chain
             .history()
-            .map(|(info, _record)| {
-                let mut node = Node::new(id);
-                node.labels.clone_from(&labels);
-                node.properties.clone_from(&properties);
-                (info.created_epoch, info.deleted_epoch, node)
-            })
+            .map(|(info, _record)| (info.created_epoch, info.deleted_epoch, template.clone()))
             .collect()
     }
 
@@ -376,36 +313,18 @@ impl LpgStore {
     #[must_use]
     #[cfg(feature = "tiered-storage")]
     pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
-        use grafeo_common::types::PropertyMap;
-        use smallvec::SmallVec;
-
         let versions = self.node_versions.read();
         let Some(index) = versions.get(&id) else {
             return Vec::new();
         };
 
-        let id_to_label = self.id_to_label.read();
-        let node_labels = self.node_labels.read();
-        let properties: PropertyMap = self.node_properties.get_all(id).into_iter().collect();
-
-        let mut labels: SmallVec<[arcstr::ArcStr; 2]> = SmallVec::new();
-        if let Some(label_ids) = node_labels.get(&id) {
-            for &label_id in label_ids {
-                if let Some(label) = id_to_label.get(label_id as usize) {
-                    labels.push(label.clone());
-                }
-            }
-        }
+        // Cache labels and properties once, clone per version entry
+        let template = self.build_node(id);
 
         index
             .version_history()
             .into_iter()
-            .map(|(created, deleted, _vref)| {
-                let mut node = Node::new(id);
-                node.labels.clone_from(&labels);
-                node.properties.clone_from(&properties);
-                (created, deleted, node)
-            })
+            .map(|(created, deleted, _vref)| (created, deleted, template.clone()))
             .collect()
     }
 
@@ -417,8 +336,8 @@ impl LpgStore {
             VersionRef::Hot(hot_ref) => {
                 let arena = self
                     .arena_allocator
-                    .arena(hot_ref.epoch)
-                    .expect("epoch must exist for hot version ref");
+                    .arena(hot_ref.arena_epoch)
+                    .expect("arena epoch must exist for hot version ref");
                 // SAFETY: The offset was returned by alloc_value_with_offset for a NodeRecord
                 let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                 Some(*record)
@@ -452,7 +371,7 @@ impl LpgStore {
             }
 
             // Mark the version chain as deleted at this epoch
-            chain.mark_deleted(epoch);
+            chain.mark_deleted(epoch, TransactionId::SYSTEM);
 
             // Remove from label index using node_labels map
             let mut index = self.label_index.write();
@@ -503,7 +422,7 @@ impl LpgStore {
             }
 
             // Mark as deleted in version index
-            index.mark_deleted(epoch);
+            index.mark_deleted(epoch, TransactionId::SYSTEM);
 
             // Remove from label index using node_labels map
             let mut label_index = self.label_index.write();
@@ -527,6 +446,174 @@ impl LpgStore {
             self.node_properties.remove_all(id);
 
             self.live_node_count.fetch_sub(1, Ordering::Relaxed);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deletes a node within a transaction, capturing undo information for rollback.
+    ///
+    /// Unlike `delete_node_at_epoch`, this method:
+    /// 1. Captures labels and properties before deletion (for undo log)
+    /// 2. Marks the version with `deleted_by` = transaction_id (for rollback)
+    /// 3. Pushes a `NodeDeleted` undo entry so rollback can restore the node
+    #[cfg(not(feature = "tiered-storage"))]
+    pub(crate) fn delete_node_transactional(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let mut nodes = self.nodes.write();
+        if let Some(chain) = nodes.get_mut(&id) {
+            if let Some(record) = chain.visible_at(epoch) {
+                if record.is_deleted() {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+
+            // Mark deleted with transaction tracking
+            chain.mark_deleted(epoch, transaction_id);
+
+            // Capture labels for undo log
+            let id_to_label = self.id_to_label.read();
+            let node_labels_map = self.node_labels.read();
+            let label_names: Vec<String> = node_labels_map
+                .get(&id)
+                .map(|label_ids| {
+                    label_ids
+                        .iter()
+                        .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            drop(id_to_label);
+            drop(node_labels_map);
+
+            // Capture properties for undo log
+            drop(nodes);
+            let properties: Vec<(PropertyKey, Value)> =
+                self.node_properties.get_all(id).into_iter().collect();
+
+            // Remove from label index (will be restored on rollback)
+            let mut index = self.label_index.write();
+            let mut node_labels_w = self.node_labels.write();
+            if let Some(label_ids) = node_labels_w.remove(&id) {
+                for label_id in label_ids {
+                    if let Some(set) = index.get_mut(label_id as usize) {
+                        set.remove(&id);
+                    }
+                }
+            }
+            drop(index);
+            drop(node_labels_w);
+
+            // Remove from text indexes
+            #[cfg(feature = "text-index")]
+            self.remove_from_all_text_indexes(id);
+
+            // Remove properties (will be restored on rollback)
+            self.node_properties.remove_all(id);
+            self.live_node_count.fetch_sub(1, Ordering::Relaxed);
+
+            // Record undo entry for rollback
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(super::PropertyUndoEntry::NodeDeleted {
+                    node_id: id,
+                    labels: label_names,
+                    properties,
+                });
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deletes a node within a transaction, capturing undo information for rollback.
+    /// (Tiered storage version)
+    #[cfg(feature = "tiered-storage")]
+    pub(crate) fn delete_node_transactional(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let mut versions = self.node_versions.write();
+        if let Some(index) = versions.get_mut(&id) {
+            if let Some(version_ref) = index.visible_at(epoch) {
+                if let Some(record) = self.read_node_record(&version_ref) {
+                    if record.is_deleted() {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+
+            // Mark deleted with transaction tracking
+            index.mark_deleted(epoch, transaction_id);
+
+            // Capture labels for undo log
+            let id_to_label = self.id_to_label.read();
+            let node_labels_map = self.node_labels.read();
+            let label_names: Vec<String> = node_labels_map
+                .get(&id)
+                .map(|label_ids| {
+                    label_ids
+                        .iter()
+                        .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            drop(id_to_label);
+            drop(node_labels_map);
+
+            // Capture properties for undo log
+            drop(versions);
+            let properties: Vec<(PropertyKey, Value)> =
+                self.node_properties.get_all(id).into_iter().collect();
+
+            // Remove from label index
+            let mut label_index = self.label_index.write();
+            let mut node_labels_w = self.node_labels.write();
+            if let Some(label_ids) = node_labels_w.remove(&id) {
+                for label_id in label_ids {
+                    if let Some(set) = label_index.get_mut(label_id as usize) {
+                        set.remove(&id);
+                    }
+                }
+            }
+            drop(label_index);
+            drop(node_labels_w);
+
+            // Remove from text indexes
+            #[cfg(feature = "text-index")]
+            self.remove_from_all_text_indexes(id);
+
+            // Remove properties
+            self.node_properties.remove_all(id);
+            self.live_node_count.fetch_sub(1, Ordering::Relaxed);
+
+            // Record undo entry for rollback
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(super::PropertyUndoEntry::NodeDeleted {
+                    node_id: id,
+                    labels: label_names,
+                    properties,
+                });
 
             true
         } else {
@@ -624,6 +711,154 @@ impl LpgStore {
         }
     }
 
+    // --- Visibility checks (no label/property loading) ---
+
+    /// Checks if a node is visible at the given epoch.
+    ///
+    /// Only checks the version chain, skips label and property loading.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        let nodes = self.nodes.read();
+        nodes
+            .get(&id)
+            .is_some_and(|chain| chain.visible_at(epoch).is_some_and(|r| !r.is_deleted()))
+    }
+
+    /// Checks if a node is visible at the given epoch.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        let versions = self.node_versions.read();
+        versions.get(&id).is_some_and(|index| {
+            index.visible_at(epoch).is_some_and(|vref| {
+                self.read_node_record(&vref)
+                    .is_some_and(|r| !r.is_deleted())
+            })
+        })
+    }
+
+    /// Checks if a node is visible to a specific transaction.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let nodes = self.nodes.read();
+        nodes.get(&id).is_some_and(|chain| {
+            chain
+                .visible_to(epoch, transaction_id)
+                .is_some_and(|r| !r.is_deleted())
+        })
+    }
+
+    /// Checks if a node is visible to a specific transaction.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let versions = self.node_versions.read();
+        versions.get(&id).is_some_and(|index| {
+            index.visible_to(epoch, transaction_id).is_some_and(|vref| {
+                self.read_node_record(&vref)
+                    .is_some_and(|r| !r.is_deleted())
+            })
+        })
+    }
+
+    /// Filters node IDs to only those visible at the given epoch.
+    ///
+    /// Holds a single lock for the entire batch instead of per-node locking.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        let nodes = self.nodes.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                nodes
+                    .get(id)
+                    .is_some_and(|chain| chain.visible_at(epoch).is_some_and(|r| !r.is_deleted()))
+            })
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible at the given epoch.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        let versions = self.node_versions.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                versions.get(id).is_some_and(|index| {
+                    index.visible_at(epoch).is_some_and(|vref| {
+                        self.read_node_record(&vref)
+                            .is_some_and(|r| !r.is_deleted())
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible to a specific transaction.
+    ///
+    /// Holds a single lock for the entire batch instead of per-node locking.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        let nodes = self.nodes.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                nodes.get(id).is_some_and(|chain| {
+                    chain
+                        .visible_to(epoch, transaction_id)
+                        .is_some_and(|r| !r.is_deleted())
+                })
+            })
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible to a specific transaction.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        let versions = self.node_versions.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                versions.get(id).is_some_and(|index| {
+                    index.visible_to(epoch, transaction_id).is_some_and(|vref| {
+                        self.read_node_record(&vref)
+                            .is_some_and(|r| !r.is_deleted())
+                    })
+                })
+            })
+            .collect()
+    }
+
     /// Returns the number of nodes (non-deleted at current epoch).
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
@@ -694,6 +929,29 @@ impl LpgStore {
                 })
             })
             .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Returns all node IDs including uncommitted/PENDING versions.
+    ///
+    /// Unlike `node_ids()` which pre-filters by current epoch, this returns
+    /// every node that has a version chain entry. Used by scan operators that
+    /// perform their own MVCC visibility filtering with transaction context.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn all_node_ids(&self) -> Vec<NodeId> {
+        let mut ids: Vec<NodeId> = self.nodes.read().keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Returns all node IDs including uncommitted/PENDING versions.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn all_node_ids(&self) -> Vec<NodeId> {
+        let mut ids: Vec<NodeId> = self.node_versions.read().keys().copied().collect();
         ids.sort_unstable();
         ids
     }

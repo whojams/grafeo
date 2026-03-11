@@ -539,6 +539,124 @@ mod tests {
         assert!(!records[0].is_commit());
         assert!(records[1].is_commit());
     }
+
+    #[test]
+    fn test_recovery_truncated_wal_mid_record() {
+        let dir = tempdir().unwrap();
+
+        // Write valid records first
+        {
+            let wal = WalManager::open(dir.path()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Person".to_string()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
+            })
+            .unwrap();
+            wal.sync().unwrap();
+        }
+
+        // Find the WAL file and append a truncated record (length prefix only, no data)
+        let wal_files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| {
+                let e = e.ok()?;
+                if e.path().extension().is_some_and(|ext| ext == "log") {
+                    Some(e.path())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(!wal_files.is_empty());
+
+        // Append a partial record: just a length prefix, then truncate
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&wal_files[0])
+            .unwrap();
+        f.write_all(&100u32.to_le_bytes()).unwrap(); // length=100 but no data follows
+
+        // Recovery should still return the committed records (best-effort)
+        let recovery = WalRecovery::new(dir.path());
+        let records = recovery.recover().unwrap();
+        assert_eq!(
+            records.len(),
+            2,
+            "committed records before truncation should be recovered"
+        );
+    }
+
+    #[test]
+    fn test_recovery_corrupted_checksum() {
+        let dir = tempdir().unwrap();
+
+        // Write valid records
+        {
+            let wal = WalManager::open(dir.path()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["First".to_string()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
+            })
+            .unwrap();
+            wal.sync().unwrap();
+        }
+
+        // Find the WAL file and corrupt a byte in the data section
+        let wal_files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| {
+                let e = e.ok()?;
+                if e.path().extension().is_some_and(|ext| ext == "log") {
+                    Some(e.path())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(!wal_files.is_empty());
+
+        let mut data = std::fs::read(&wal_files[0]).unwrap();
+        // Flip a byte in the middle of the data (after the 4-byte length prefix)
+        if data.len() > 8 {
+            data[6] ^= 0xFF;
+        }
+        std::fs::write(&wal_files[0], &data).unwrap();
+
+        // Recovery should handle corruption gracefully (not panic)
+        let recovery = WalRecovery::new(dir.path());
+        let result = recovery.recover();
+        // Should either succeed with fewer records or return an error
+        match result {
+            Ok(records) => {
+                // Best-effort: may have recovered 0 records due to corruption
+                assert!(records.len() <= 2);
+            }
+            Err(_) => {
+                // Also acceptable: corruption detection as error
+            }
+        }
+    }
+
+    #[test]
+    fn test_recovery_empty_wal_file() {
+        let dir = tempdir().unwrap();
+
+        // Create an empty WAL file
+        std::fs::write(dir.path().join("wal_00000000.log"), []).unwrap();
+
+        let recovery = WalRecovery::new(dir.path());
+        let records = recovery.recover().unwrap();
+        assert_eq!(records.len(), 0, "empty WAL should produce no records");
+    }
 }
 
 /// Crash injection tests for WAL recovery.

@@ -1023,6 +1023,8 @@ mod tests {
             Value::Null,
             Value::Bool(true),
             Value::Int64(i64::MAX),
+            Value::Int64(i64::MIN),
+            Value::Int64(0),
             Value::Float64(std::f64::consts::PI),
             Value::String("hello world".into()),
             Value::Bytes(vec![0, 1, 2, 255].into()),
@@ -1228,14 +1230,16 @@ mod tests {
     fn test_orderable_value_ordering() {
         use std::collections::BTreeSet;
 
-        // Test integer ordering
+        // Test integer ordering including i64::MIN and i64::MAX
         let mut set = BTreeSet::new();
         set.insert(OrderableValue::try_from(&Value::Int64(30)).unwrap());
         set.insert(OrderableValue::try_from(&Value::Int64(10)).unwrap());
         set.insert(OrderableValue::try_from(&Value::Int64(20)).unwrap());
+        set.insert(OrderableValue::try_from(&Value::Int64(i64::MIN)).unwrap());
+        set.insert(OrderableValue::try_from(&Value::Int64(i64::MAX)).unwrap());
 
         let values: Vec<_> = set.iter().filter_map(|v| v.as_i64()).collect();
-        assert_eq!(values, vec![10, 20, 30]);
+        assert_eq!(values, vec![i64::MIN, 10, 20, 30, i64::MAX]);
     }
 
     #[test]
@@ -1400,5 +1404,146 @@ mod tests {
         let dur_val = Value::Duration(Duration::from_months(6));
         map.insert(HashableValue::new(dur_val.clone()), 3);
         assert_eq!(map.get(&HashableValue::new(dur_val)), Some(&3));
+    }
+
+    // --- T2-15: Value::Path tests ---
+
+    #[test]
+    fn test_value_path_construction_and_equality() {
+        let path1 = Value::Path {
+            nodes: vec![Value::Int64(1), Value::Int64(2), Value::Int64(3)].into(),
+            edges: vec![Value::String("KNOWS".into()), Value::String("LIKES".into())].into(),
+        };
+        let path2 = Value::Path {
+            nodes: vec![Value::Int64(1), Value::Int64(2), Value::Int64(3)].into(),
+            edges: vec![Value::String("KNOWS".into()), Value::String("LIKES".into())].into(),
+        };
+        let path3 = Value::Path {
+            nodes: vec![Value::Int64(1), Value::Int64(2)].into(),
+            edges: vec![Value::String("KNOWS".into())].into(),
+        };
+
+        assert_eq!(path1, path2, "Identical paths should be equal");
+        assert_ne!(path1, path3, "Different paths should not be equal");
+    }
+
+    #[test]
+    fn test_value_path_type_name() {
+        let path = Value::Path {
+            nodes: vec![Value::Int64(1)].into(),
+            edges: vec![].into(),
+        };
+        assert_eq!(path.type_name(), "PATH");
+    }
+
+    #[test]
+    fn test_value_path_serialization_roundtrip() {
+        let path = Value::Path {
+            nodes: vec![
+                Value::String("node_a".into()),
+                Value::String("node_b".into()),
+            ]
+            .into(),
+            edges: vec![Value::String("CONNECTS".into())].into(),
+        };
+
+        let bytes = path.serialize().unwrap();
+        let decoded = Value::deserialize(&bytes).unwrap();
+        assert_eq!(path, decoded);
+    }
+
+    #[test]
+    fn test_value_path_hashing() {
+        use std::collections::HashMap;
+
+        let path1 = Value::Path {
+            nodes: vec![Value::Int64(1), Value::Int64(2)].into(),
+            edges: vec![Value::String("KNOWS".into())].into(),
+        };
+        let path2 = Value::Path {
+            nodes: vec![Value::Int64(1), Value::Int64(2)].into(),
+            edges: vec![Value::String("KNOWS".into())].into(),
+        };
+
+        let mut map: HashMap<HashableValue, i32> = HashMap::new();
+        map.insert(HashableValue::new(path1), 42);
+        assert_eq!(map.get(&HashableValue::new(path2)), Some(&42));
+    }
+
+    // --- T2-16: Collection nesting tests ---
+
+    #[test]
+    fn test_nested_list_serialization_roundtrip() {
+        let nested = Value::List(
+            vec![
+                Value::List(vec![Value::Int64(1), Value::Int64(2)].into()),
+                Value::List(vec![Value::Int64(3), Value::Int64(4)].into()),
+            ]
+            .into(),
+        );
+
+        let bytes = nested.serialize().unwrap();
+        let decoded = Value::deserialize(&bytes).unwrap();
+        assert_eq!(nested, decoded);
+    }
+
+    #[test]
+    fn test_map_with_entries_serialization_roundtrip() {
+        let mut entries = BTreeMap::new();
+        entries.insert(PropertyKey::new("name"), Value::String("Alix".into()));
+        entries.insert(PropertyKey::new("age"), Value::Int64(30));
+        entries.insert(PropertyKey::new("active"), Value::Bool(true));
+
+        let map = Value::Map(entries.into());
+
+        let bytes = map.serialize().unwrap();
+        let decoded = Value::deserialize(&bytes).unwrap();
+        assert_eq!(map, decoded);
+    }
+
+    #[test]
+    fn test_mixed_type_list_serialization_roundtrip() {
+        let mixed = Value::List(
+            vec![
+                Value::Int64(1),
+                Value::String("hello".into()),
+                Value::Null,
+                Value::Bool(false),
+                Value::Float64(3.125),
+            ]
+            .into(),
+        );
+
+        let bytes = mixed.serialize().unwrap();
+        let decoded = Value::deserialize(&bytes).unwrap();
+        assert_eq!(mixed, decoded);
+    }
+
+    #[test]
+    fn test_map_with_nested_list() {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            PropertyKey::new("tags"),
+            Value::List(vec![Value::String("a".into()), Value::String("b".into())].into()),
+        );
+        entries.insert(PropertyKey::new("count"), Value::Int64(2));
+
+        let map = Value::Map(entries.into());
+
+        let bytes = map.serialize().unwrap();
+        let decoded = Value::deserialize(&bytes).unwrap();
+        assert_eq!(map, decoded);
+    }
+
+    #[test]
+    fn test_list_with_nested_map() {
+        let mut inner_map = BTreeMap::new();
+        inner_map.insert(PropertyKey::new("key"), Value::String("val".into()));
+
+        let list = Value::List(vec![Value::Map(inner_map.into()), Value::Int64(42)].into());
+
+        let bytes = list.serialize().unwrap();
+        let decoded = Value::deserialize(&bytes).unwrap();
+        assert_eq!(list, decoded);
     }
 }

@@ -189,6 +189,26 @@ impl HnswIndex {
         self.nodes.read().is_empty()
     }
 
+    /// Returns estimated heap memory in bytes for the HNSW topology.
+    #[must_use]
+    pub fn heap_memory_bytes(&self) -> usize {
+        let nodes = self.nodes.read();
+        // Outer HashMap overhead
+        let map_overhead = nodes.capacity()
+            * (std::mem::size_of::<NodeId>() + std::mem::size_of::<HnswNode>() + 1);
+        // Per-node: neighbor lists at each layer
+        let mut node_bytes = 0usize;
+        for node in nodes.values() {
+            // Vec<Vec<NodeId>>: outer vec capacity
+            node_bytes += node.neighbors.capacity() * std::mem::size_of::<Vec<NodeId>>();
+            // Each layer's neighbor vec
+            for layer in &node.neighbors {
+                node_bytes += layer.capacity() * std::mem::size_of::<NodeId>();
+            }
+        }
+        map_overhead + node_bytes
+    }
+
     /// Inserts a vector with the given ID into the index.
     ///
     /// The vector is used during insertion to find neighbors and build

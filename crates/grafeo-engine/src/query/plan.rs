@@ -281,8 +281,8 @@ pub enum LogicalOperator {
     CallProcedure(CallProcedureOp),
 
     // ==================== Data Import Operators ====================
-    /// Load data from a CSV file, producing one row per CSV record.
-    LoadCsv(LoadCsvOp),
+    /// Load data from a file (CSV, JSONL, or Parquet), producing one row per record.
+    LoadData(LoadDataOp),
 }
 
 impl LogicalOperator {
@@ -347,7 +347,7 @@ impl LogicalOperator {
             | Self::Empty
             | Self::ParameterScan(_)
             | Self::CallProcedure(_)
-            | Self::LoadCsv(_) => false,
+            | Self::LoadData(_) => false,
         }
     }
 
@@ -420,7 +420,7 @@ impl LogicalOperator {
             | Self::MoveGraph(_)
             | Self::AddGraph(_)
             | Self::CreatePropertyGraph(_)
-            | Self::LoadCsv(_) => vec![],
+            | Self::LoadData(_) => vec![],
         }
     }
 
@@ -551,7 +551,7 @@ impl LogicalOperator {
                 format!("{}:{labels}", op.variable)
             }
             Self::CallProcedure(op) => op.name.join("."),
-            Self::LoadCsv(op) => format!("{} AS {}", op.path, op.variable),
+            Self::LoadData(op) => format!("{} AS {}", op.path, op.variable),
             Self::Apply(_) => String::new(),
             Self::VectorScan(op) => op.variable.clone(),
             Self::VectorJoin(op) => op.right_variable.clone(),
@@ -737,7 +737,11 @@ impl LogicalOperator {
                 }
             }
             Self::LeftJoin(op) => {
-                let _ = writeln!(out, "{indent}LeftJoin");
+                if let Some(cond) = &op.condition {
+                    let _ = writeln!(out, "{indent}LeftJoin (condition: {cond:?})");
+                } else {
+                    let _ = writeln!(out, "{indent}LeftJoin");
+                }
                 op.left.fmt_tree(out, depth + 1);
                 op.right.fmt_tree(out, depth + 1);
             }
@@ -867,11 +871,20 @@ impl LogicalOperator {
                     name = op.name.join(".")
                 );
             }
-            Self::LoadCsv(op) => {
-                let headers = if op.with_headers { " WITH HEADERS" } else { "" };
+            Self::LoadData(op) => {
+                let format_name = match op.format {
+                    LoadDataFormat::Csv => "LoadCsv",
+                    LoadDataFormat::Jsonl => "LoadJsonl",
+                    LoadDataFormat::Parquet => "LoadParquet",
+                };
+                let headers = if op.with_headers && op.format == LoadDataFormat::Csv {
+                    " WITH HEADERS"
+                } else {
+                    ""
+                };
                 let _ = writeln!(
                     out,
-                    "{indent}LoadCsv{headers} ('{path}' AS {var})",
+                    "{indent}{format_name}{headers} ('{path}' AS {var})",
                     path = op.path,
                     var = op.variable,
                 );
@@ -1927,19 +1940,25 @@ pub struct ProcedureYield {
     pub alias: Option<String>,
 }
 
-/// LOAD CSV operator: reads a CSV file and produces rows.
+/// Re-export format enum from the physical operator.
+pub use grafeo_core::execution::operators::LoadDataFormat;
+
+/// LOAD DATA operator: reads a file and produces rows.
 ///
-/// With headers, each row is bound as a `Value::Map` with column names as keys.
-/// Without headers, each row is bound as a `Value::List` of string values.
+/// With headers (CSV), each row is bound as a `Value::Map` with column names as keys.
+/// Without headers (CSV), each row is bound as a `Value::List` of string values.
+/// JSONL always produces `Value::Map`. Parquet always produces `Value::Map`.
 #[derive(Debug, Clone)]
-pub struct LoadCsvOp {
-    /// Whether the CSV file has a header row.
+pub struct LoadDataOp {
+    /// File format.
+    pub format: LoadDataFormat,
+    /// Whether the file has a header row (CSV only, ignored for JSONL/Parquet).
     pub with_headers: bool,
     /// File path (local filesystem).
     pub path: String,
     /// Variable name to bind each row to.
     pub variable: String,
-    /// Field separator character (default: comma).
+    /// Field separator character (CSV only, default: comma).
     pub field_terminator: Option<char>,
 }
 

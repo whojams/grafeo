@@ -104,6 +104,69 @@ impl Term {
     }
 }
 
+impl Term {
+    /// Parses an N-Triples encoded term string.
+    ///
+    /// Supported formats:
+    /// - `<iri>` for IRIs
+    /// - `_:id` for blank nodes
+    /// - `"value"` for simple literals
+    /// - `"value"^^<type>` for typed literals
+    /// - `"value"@lang` for language-tagged literals
+    pub fn from_ntriples(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if let Some(inner) = s.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
+            Some(Term::Iri(Iri::new(inner)))
+        } else if let Some(id) = s.strip_prefix("_:") {
+            Some(Term::BlankNode(BlankNode::new(id)))
+        } else if s.starts_with('"') {
+            // Find closing quote (handling escapes)
+            let bytes = s.as_bytes();
+            let mut pos = 1;
+            let mut value = String::new();
+            while pos < bytes.len() {
+                if bytes[pos] == b'\\' && pos + 1 < bytes.len() {
+                    match bytes[pos + 1] {
+                        b'"' => value.push('"'),
+                        b'\\' => value.push('\\'),
+                        b'n' => value.push('\n'),
+                        b'r' => value.push('\r'),
+                        b't' => value.push('\t'),
+                        other => {
+                            value.push('\\');
+                            value.push(other as char);
+                        }
+                    }
+                    pos += 2;
+                } else if bytes[pos] == b'"' {
+                    pos += 1;
+                    break;
+                } else {
+                    value.push(bytes[pos] as char);
+                    pos += 1;
+                }
+            }
+            let rest = &s[pos..];
+            if let Some(lang) = rest.strip_prefix('@') {
+                Some(Term::Literal(Literal::with_language(value, lang)))
+            } else if let Some(typed) = rest.strip_prefix("^^<").and_then(|s| s.strip_suffix('>')) {
+                Some(Term::Literal(Literal::typed(value, typed)))
+            } else {
+                Some(Term::Literal(Literal::simple(value)))
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Converts this term to its N-Triples string representation.
+    ///
+    /// Round-trips with [`from_ntriples`](Self::from_ntriples).
+    pub fn to_ntriples(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

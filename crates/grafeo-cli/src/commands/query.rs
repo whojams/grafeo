@@ -9,20 +9,34 @@ use grafeo_common::types::Value;
 use crate::output::{self, Format, format_duration_ms};
 use crate::{OutputFormat, QueryLanguage};
 
+/// Options for the single-shot query command.
+pub struct QueryRunOptions<'a> {
+    pub path: &'a Path,
+    pub query: Option<String>,
+    pub file: Option<PathBuf>,
+    pub stdin: bool,
+    pub params: &'a [String],
+    pub lang: QueryLanguage,
+    pub format: OutputFormat,
+    pub quiet: bool,
+    pub timing: bool,
+    pub max_width: Option<usize>,
+}
+
 /// Run the query command.
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    path: &Path,
-    query: Option<String>,
-    file: Option<PathBuf>,
-    stdin: bool,
-    params: &[String],
-    lang: QueryLanguage,
-    format: OutputFormat,
-    quiet: bool,
-    timing: bool,
-    max_width: Option<usize>,
-) -> Result<()> {
+pub fn run(opts: QueryRunOptions<'_>) -> Result<()> {
+    let QueryRunOptions {
+        path,
+        query,
+        file,
+        stdin,
+        params,
+        lang,
+        format,
+        quiet,
+        timing,
+        max_width,
+    } = opts;
     // Resolve the query string from one of three sources
     let query_str = if let Some(q) = query {
         q

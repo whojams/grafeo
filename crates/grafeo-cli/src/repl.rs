@@ -14,12 +14,20 @@ use crate::commands::query::format_value;
 use crate::output::{self, Format, format_duration_ms};
 use crate::{OutputFormat, QueryLanguage};
 
-/// REPL state.
+/// REPL transaction state.
 enum ReplState {
     /// No active transaction.
     Idle,
     /// Inside an explicit transaction.
     InTransaction,
+}
+
+/// Mutable display and state settings for the REPL session.
+struct ReplSettings {
+    state: ReplState,
+    format: Format,
+    show_timing: bool,
+    quiet: bool,
 }
 
 /// Run the interactive REPL.
@@ -55,12 +63,15 @@ pub fn run(
     }
 
     let mut session = db.session();
-    let mut state = ReplState::Idle;
-    let mut current_format = fmt;
-    let mut show_timing = timing;
+    let mut settings = ReplSettings {
+        state: ReplState::Idle,
+        format: fmt,
+        show_timing: timing,
+        quiet,
+    };
 
     loop {
-        let prompt = match state {
+        let prompt = match settings.state {
             ReplState::Idle => "grafeo> ",
             ReplState::InTransaction => "grafeo[tx]> ",
         };
@@ -83,15 +94,7 @@ pub fn run(
 
         // Handle meta-commands
         if trimmed.starts_with(':') {
-            match handle_meta_command(
-                trimmed,
-                &db,
-                &mut session,
-                &mut state,
-                &mut current_format,
-                &mut show_timing,
-                quiet,
-            ) {
+            match handle_meta_command(trimmed, &db, &mut session, &mut settings) {
                 MetaResult::Continue => continue,
                 MetaResult::Quit => break,
                 MetaResult::Error(msg) => {
@@ -106,8 +109,8 @@ pub fn run(
         if upper == "BEGIN" || upper == "BEGIN TRANSACTION" {
             match session.begin_transaction() {
                 Ok(()) => {
-                    state = ReplState::InTransaction;
-                    if !quiet {
+                    settings.state = ReplState::InTransaction;
+                    if !settings.quiet {
                         println!("Transaction started.");
                     }
                 }
@@ -118,8 +121,8 @@ pub fn run(
         if upper == "COMMIT" {
             match session.commit() {
                 Ok(()) => {
-                    state = ReplState::Idle;
-                    if !quiet {
+                    settings.state = ReplState::Idle;
+                    if !settings.quiet {
                         println!("Transaction committed.");
                     }
                 }
@@ -130,8 +133,8 @@ pub fn run(
         if upper == "ROLLBACK" {
             match session.rollback() {
                 Ok(()) => {
-                    state = ReplState::Idle;
-                    if !quiet {
+                    settings.state = ReplState::Idle;
+                    if !settings.quiet {
                         println!("Transaction rolled back.");
                     }
                 }
@@ -175,10 +178,10 @@ pub fn run(
                     .map(|row| row.iter().map(format_value).collect())
                     .collect();
 
-                output::print_result_table(&headers, &rows, current_format, quiet);
+                output::print_result_table(&headers, &rows, settings.format, settings.quiet);
 
-                if !quiet {
-                    let timing_str = if show_timing {
+                if !settings.quiet {
+                    let timing_str = if settings.show_timing {
                         qr.execution_time_ms
                             .map_or_else(String::new, |ms| format!(" ({})", format_duration_ms(ms)))
                     } else {
@@ -221,16 +224,19 @@ enum MetaResult {
 }
 
 /// Process a `:` meta-command.
-#[allow(clippy::too_many_arguments)]
 fn handle_meta_command(
     cmd: &str,
     db: &GrafeoDB,
     session: &mut grafeo_engine::Session,
-    state: &mut ReplState,
-    format: &mut Format,
-    show_timing: &mut bool,
-    quiet: bool,
+    settings: &mut ReplSettings,
 ) -> MetaResult {
+    let ReplSettings {
+        state,
+        format,
+        show_timing,
+        quiet,
+    } = settings;
+    let quiet = *quiet;
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     let command = parts[0].to_lowercase();
 

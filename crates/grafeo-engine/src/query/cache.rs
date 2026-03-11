@@ -37,22 +37,39 @@ use std::time::Instant;
 use crate::query::plan::LogicalPlan;
 use crate::query::processor::QueryLanguage;
 
-/// Cache key combining query text and language.
+/// Cache key combining query text, language, and active graph.
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct CacheKey {
     /// The query string (normalized).
     query: String,
     /// The query language.
     language: QueryLanguage,
+    /// Active graph name (`None` = default graph).
+    graph: Option<String>,
 }
 
 impl CacheKey {
-    /// Creates a new cache key.
+    /// Creates a new cache key for the default graph.
     #[must_use]
     pub fn new(query: impl Into<String>, language: QueryLanguage) -> Self {
         Self {
             query: normalize_query(&query.into()),
             language,
+            graph: None,
+        }
+    }
+
+    /// Creates a cache key scoped to a specific graph.
+    #[must_use]
+    pub fn with_graph(
+        query: impl Into<String>,
+        language: QueryLanguage,
+        graph: Option<String>,
+    ) -> Self {
+        Self {
+            query: normalize_query(&query.into()),
+            language,
+            graph,
         }
     }
 
@@ -177,6 +194,14 @@ impl<K: Clone + Eq + Hash, V: Clone> LruCache<K, V> {
             self.access_order.remove(pos);
         }
         self.entries.remove(key).map(|e| e.value)
+    }
+
+    /// Estimates heap memory used by this cache (map buckets + access order vec).
+    fn heap_memory_bytes(&self) -> usize {
+        let entry_size = std::mem::size_of::<K>() + std::mem::size_of::<CacheEntry<V>>() + 1;
+        let map_bytes = self.entries.capacity() * entry_size;
+        let vec_bytes = self.access_order.capacity() * std::mem::size_of::<K>();
+        map_bytes + vec_bytes
     }
 }
 
@@ -317,6 +342,17 @@ impl QueryCache {
             optimized_misses: self.optimized_misses.load(Ordering::Relaxed),
             invalidations: self.invalidations.load(Ordering::Relaxed),
         }
+    }
+
+    /// Estimates heap memory used by both caches.
+    #[must_use]
+    pub fn heap_memory_bytes(&self) -> (usize, usize, usize) {
+        let parsed = self.parsed_cache.lock();
+        let optimized = self.optimized_cache.lock();
+        let parsed_bytes = parsed.heap_memory_bytes();
+        let optimized_bytes = optimized.heap_memory_bytes();
+        let count = parsed.len() + optimized.len();
+        (parsed_bytes, optimized_bytes, count)
     }
 
     /// Resets hit/miss counters and invalidation counter.

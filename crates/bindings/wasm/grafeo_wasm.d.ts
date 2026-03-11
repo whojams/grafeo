@@ -114,6 +114,69 @@ export class Database {
     };
   };
 
+  /**
+   * Batch-imports LPG (Labeled Property Graph) data from a structured object.
+   *
+   * Nodes are created first, then edges. Edge `source`/`target` fields are
+   * zero-based indexes into the `nodes` array.
+   *
+   * @example
+   * ```js
+   * const result = db.importLpg({
+   *   nodes: [
+   *     { labels: ["Person"], properties: { name: "Alix", age: 30 } },
+   *     { labels: ["Person"], properties: { name: "Gus", age: 25 } },
+   *   ],
+   *   edges: [
+   *     { source: 0, target: 1, type: "KNOWS", properties: { since: 2020 } }
+   *   ]
+   * });
+   * // { nodes: 2, edges: 1 }
+   * ```
+   */
+  importLpg(data: {
+    nodes: Array<{
+      labels: string[];
+      properties?: Record<string, unknown>;
+    }>;
+    edges?: Array<{
+      source: number;
+      target: number;
+      type: string;
+      properties?: Record<string, unknown>;
+    }>;
+  }): { nodes: number; edges: number };
+
+  /**
+   * Batch-imports RDF triples from a structured object.
+   *
+   * Subjects and predicates are IRI strings (or blank nodes prefixed `_:`).
+   * Objects can be a plain string (IRI) or a structured literal.
+   *
+   * Requires the `rdf` feature flag.
+   *
+   * @example
+   * ```js
+   * const result = db.importRdf({
+   *   triples: [
+   *     { subject: "http://example.org/Alix", predicate: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", object: "http://example.org/Person" },
+   *     { subject: "http://example.org/Alix", predicate: "http://example.org/name", object: { value: "Alix" } },
+   *     { subject: "http://example.org/Alix", predicate: "http://example.org/age", object: { value: "30", datatype: "http://www.w3.org/2001/XMLSchema#integer" } },
+   *   ]
+   * });
+   * // { triples: 3 }
+   * ```
+   */
+  importRdf(data: {
+    triples: Array<{
+      subject: string;
+      predicate: string;
+      object:
+        | string
+        | { value: string; datatype?: string; language?: string };
+    }>;
+  }): { triples: number };
+
   /** Returns the Grafeo version. */
   static version(): string;
 

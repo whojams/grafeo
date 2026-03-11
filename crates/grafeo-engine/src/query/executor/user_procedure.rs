@@ -16,6 +16,20 @@ use crate::database::QueryResult;
 use crate::query::planner::Planner;
 use crate::transaction::TransactionManager;
 
+/// Execution context shared across sub-query operators.
+pub struct ProcedureContext {
+    /// Store for sub-query execution.
+    pub store: Arc<dyn GraphStoreMut>,
+    /// Transaction manager for sub-query coordination.
+    pub transaction_manager: Option<Arc<TransactionManager>>,
+    /// Current transaction ID.
+    pub transaction_id: Option<TransactionId>,
+    /// Viewing epoch for MVCC reads.
+    pub viewing_epoch: EpochId,
+    /// Catalog for sub-planner resolution.
+    pub catalog: Option<Arc<Catalog>>,
+}
+
 /// An operator that executes a user-defined stored procedure.
 ///
 /// On first call to `next()`, it:
@@ -53,17 +67,12 @@ pub struct UserProcedureOperator {
 
 impl UserProcedureOperator {
     /// Creates a new user procedure operator.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         body: String,
         params: HashMap<String, Value>,
         return_columns: Vec<String>,
         yield_columns: Option<Vec<String>>,
-        store: Arc<dyn GraphStoreMut>,
-        transaction_manager: Option<Arc<TransactionManager>>,
-        transaction_id: Option<TransactionId>,
-        viewing_epoch: EpochId,
-        catalog: Option<Arc<Catalog>>,
+        ctx: ProcedureContext,
     ) -> Self {
         let output_columns = if let Some(ref yields) = yield_columns {
             yields.clone()
@@ -75,11 +84,11 @@ impl UserProcedureOperator {
             params,
             return_columns,
             yield_columns,
-            store,
-            transaction_manager,
-            transaction_id,
-            viewing_epoch,
-            catalog,
+            store: ctx.store,
+            transaction_manager: ctx.transaction_manager,
+            transaction_id: ctx.transaction_id,
+            viewing_epoch: ctx.viewing_epoch,
+            catalog: ctx.catalog,
             result_rows: None,
             row_index: 0,
             output_columns,

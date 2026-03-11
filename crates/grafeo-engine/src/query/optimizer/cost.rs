@@ -3,9 +3,9 @@
 //! Provides cost estimates for logical operators to guide optimization decisions.
 
 use crate::query::plan::{
-    AggregateOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LimitOp,
-    LogicalOperator, MultiWayJoinOp, NodeScanOp, ProjectOp, ReturnOp, SkipOp, SortOp, VectorJoinOp,
-    VectorScanOp,
+    AggregateOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LeftJoinOp,
+    LimitOp, LogicalOperator, MultiWayJoinOp, NodeScanOp, ProjectOp, ReturnOp, SkipOp, SortOp,
+    VectorJoinOp, VectorScanOp,
 };
 use std::collections::HashMap;
 
@@ -228,6 +228,9 @@ impl CostModel {
             LogicalOperator::VectorScan(scan) => self.vector_scan_cost(scan, cardinality),
             LogicalOperator::VectorJoin(join) => self.vector_join_cost(join, cardinality),
             LogicalOperator::MultiWayJoin(mwj) => self.multi_way_join_cost(mwj, cardinality),
+            LogicalOperator::LeftJoin(lj) => {
+                self.left_join_cost(lj, cardinality, cardinality.sqrt(), cardinality.sqrt())
+            }
             _ => Cost::cpu(cardinality * self.cpu_tuple_cost),
         }
     }
@@ -320,6 +323,26 @@ impl CostModel {
                     .with_memory(build_cardinality * self.avg_tuple_size)
             }
         }
+    }
+
+    /// Estimates the cost of a left outer join (OPTIONAL MATCH).
+    ///
+    /// Uses the same hash join cost model as inner joins: the right side is
+    /// built into a hash table, the left side probes. Output cost includes all
+    /// left rows (some with NULL-padded right side).
+    fn left_join_cost(
+        &self,
+        _lj: &LeftJoinOp,
+        cardinality: f64,
+        left_card: f64,
+        right_card: f64,
+    ) -> Cost {
+        let build_cost = right_card * self.hash_lookup_cost;
+        let memory_cost = right_card * self.avg_tuple_size;
+        let probe_cost = left_card * self.hash_lookup_cost;
+        let output_cost = cardinality * self.cpu_tuple_cost;
+
+        Cost::cpu(build_cost + probe_cost + output_cost).with_memory(memory_cost)
     }
 
     /// Estimates the cost of a multi-way (leapfrog) join.
@@ -499,6 +522,14 @@ impl CostModel {
                     Some(left_card),
                     Some(right_card),
                 );
+                left_cost + right_cost + join_cost
+            }
+            LogicalOperator::LeftJoin(lj) => {
+                let left_cost = self.estimate_tree_inner(&lj.left, card_est);
+                let right_cost = self.estimate_tree_inner(&lj.right, card_est);
+                let left_card = card_est.estimate(&lj.left);
+                let right_card = card_est.estimate(&lj.right);
+                let join_cost = self.left_join_cost(lj, cardinality, left_card, right_card);
                 left_cost + right_cost + join_cost
             }
             LogicalOperator::Aggregate(agg) => {

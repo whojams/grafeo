@@ -1604,18 +1604,23 @@ impl SparqlTranslator {
         let subj_reflexive = self.project_reflexive(&subject, &object, subj_scan)?;
         branches.push(subj_reflexive);
 
-        // 0-hop: reflexive matches from objects of the predicate
-        let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
-        let pred2 = self.translate_property_path(inner_path)?;
-        let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
-            subject: fresh_subj,
-            predicate: pred2,
-            object: object.clone(),
-            graph: graph.clone(),
-            input: None,
-        });
-        let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
-        branches.push(obj_reflexive);
+        // 0-hop: reflexive matches from objects of the predicate.
+        // Only needed when the subject is a variable (unbound). When the subject is
+        // a fixed term (IRI/Literal), the subject reflexive branch already handles
+        // the 0-hop case, and this branch would produce spurious matches.
+        if matches!(&subject, TripleComponent::Variable(_)) {
+            let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+            let pred2 = self.translate_property_path(inner_path)?;
+            let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
+                subject: fresh_subj,
+                predicate: pred2,
+                object: object.clone(),
+                graph: graph.clone(),
+                input: None,
+            });
+            let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
+            branches.push(obj_reflexive);
+        }
 
         // 1+ hops: same as OneOrMore
         for depth in 1..=MAX_DEPTH {
@@ -1657,18 +1662,21 @@ impl SparqlTranslator {
         let subj_reflexive = self.project_reflexive(&subject, &object, subj_scan)?;
         branches.push(subj_reflexive);
 
-        // 0-hop: reflexive matches from objects of the predicate
-        let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
-        let pred2 = self.translate_property_path(inner_path)?;
-        let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
-            subject: fresh_subj,
-            predicate: pred2,
-            object: object.clone(),
-            graph: graph.clone(),
-            input: None,
-        });
-        let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
-        branches.push(obj_reflexive);
+        // 0-hop: reflexive matches from objects of the predicate.
+        // Only needed when the subject is a variable (see zero_or_more for rationale).
+        if matches!(&subject, TripleComponent::Variable(_)) {
+            let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+            let pred2 = self.translate_property_path(inner_path)?;
+            let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
+                subject: fresh_subj,
+                predicate: pred2,
+                object: object.clone(),
+                graph: graph.clone(),
+                input: None,
+            });
+            let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
+            branches.push(obj_reflexive);
+        }
 
         // 1-hop: exactly one traversal of the predicate
         let one_hop = self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, 1)?;

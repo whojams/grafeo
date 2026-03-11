@@ -104,7 +104,8 @@ fn test_committed_writes_visible_to_new_transactions() {
     let tx1 = tx_manager.begin();
     let epoch1 = tx_manager.current_epoch();
     let node_id = store.create_node_versioned(&["Committed"], epoch1, tx1);
-    tx_manager.commit(tx1).unwrap();
+    let commit_epoch = tx_manager.commit(tx1).unwrap();
+    store.finalize_version_epochs(tx1, commit_epoch);
 
     // T2 starts after commit
     let tx2 = tx_manager.begin();
@@ -565,16 +566,18 @@ fn edge_type_visible_same_tx() {
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {id: 'same_a'})").unwrap();
     session.execute("INSERT (:Person {id: 'same_b'})").unwrap();
+
     session
         .execute("MATCH (a {id: 'same_a'}), (b {id: 'same_b'}) CREATE (a)-[:WORKS_WITH]->(b)")
         .unwrap();
+
     session.commit().unwrap();
 
     let result = session
         .execute("MATCH ({id: 'same_a'})-[r]->() RETURN type(r) AS t")
         .unwrap();
     assert_eq!(result.row_count(), 1);
-    assert_eq!(result.rows[0][0], Value::String("WORKS_WITH".into()),);
+    assert_eq!(result.rows[0][0], Value::String("WORKS_WITH".into()));
 }
 
 /// Bulk: many nodes in tx, many typed edges after commit.

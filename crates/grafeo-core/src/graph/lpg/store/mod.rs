@@ -12,6 +12,7 @@
 mod edge_ops;
 mod graph_store_impl;
 mod index;
+mod memory;
 mod node_ops;
 mod property_ops;
 mod schema;
@@ -89,6 +90,28 @@ pub enum PropertyUndoEntry {
         /// The label string that was removed.
         label: String,
     },
+    /// A node was deleted (for rollback restoration).
+    NodeDeleted {
+        /// The node that was deleted.
+        node_id: NodeId,
+        /// The labels the node had before deletion.
+        labels: Vec<String>,
+        /// The properties the node had before deletion.
+        properties: Vec<(PropertyKey, Value)>,
+    },
+    /// An edge was deleted (for rollback restoration).
+    EdgeDeleted {
+        /// The edge that was deleted.
+        edge_id: EdgeId,
+        /// The source node.
+        src: NodeId,
+        /// The destination node.
+        dst: NodeId,
+        /// The edge type name.
+        edge_type: String,
+        /// The properties the edge had before deletion.
+        properties: Vec<(PropertyKey, Value)>,
+    },
 }
 
 /// Compares two values for ordering (used for range checks).
@@ -96,6 +119,8 @@ pub(super) fn compare_values_for_range(a: &Value, b: &Value) -> Option<CmpOrderi
     match (a, b) {
         (Value::Int64(a), Value::Int64(b)) => Some(a.cmp(b)),
         (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b),
+        (Value::Int64(a), Value::Float64(b)) => (*a as f64).partial_cmp(b),
+        (Value::Float64(a), Value::Int64(b)) => a.partial_cmp(&(*b as f64)),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
         (Value::Timestamp(a), Value::Timestamp(b)) => Some(a.cmp(b)),
@@ -221,10 +246,6 @@ impl Default for LpgStoreConfig {
 /// - Statistics lock is always last.
 /// - Read locks are generally safe, but avoid read-to-write upgrades.
 pub struct LpgStore {
-    /// Configuration.
-    #[allow(dead_code)]
-    pub(super) config: LpgStoreConfig,
-
     /// Node records indexed by NodeId, with version chains for MVCC.
     /// Used when `tiered-storage` feature is disabled.
     /// Lock order: 1
@@ -420,7 +441,7 @@ impl LpgStore {
             id_to_edge_type: RwLock::new(Vec::new()),
             forward_adj: ChunkedAdjacency::new(),
             backward_adj,
-            label_index: RwLock::new(Vec::new()),
+            label_index: RwLock::new(Vec::with_capacity(16)),
             node_labels: RwLock::new(FxHashMap::default()),
             property_indexes: RwLock::new(FxHashMap::default()),
             #[cfg(feature = "vector-index")]
@@ -437,7 +458,6 @@ impl LpgStore {
             needs_stats_recompute: AtomicBool::new(false),
             named_graphs: RwLock::new(FxHashMap::default()),
             property_undo_log: RwLock::new(FxHashMap::default()),
-            config,
         })
     }
 
@@ -697,11 +717,5 @@ impl LpgStore {
         if type_id < counts.len() as u32 {
             counts[type_id as usize] -= 1;
         }
-    }
-}
-
-impl Default for LpgStore {
-    fn default() -> Self {
-        Self::new().expect("failed to allocate arena for default LpgStore")
     }
 }

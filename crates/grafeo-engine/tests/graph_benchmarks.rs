@@ -11,6 +11,7 @@
 
 use std::time::{Duration, Instant};
 
+use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
 // ============================================================================
@@ -274,6 +275,23 @@ fn bench_graph_traversals() {
 
     println!("  Graph setup complete. Running traversal benchmarks...\n");
 
+    // Verify setup: node count matches expectations
+    let count_result = session.execute("MATCH (n:Person) RETURN COUNT(n)").unwrap();
+    assert_eq!(
+        count_result.rows.len(),
+        1,
+        "COUNT query should return one row"
+    );
+    let node_total = match &count_result.rows[0][0] {
+        Value::Int64(n) => *n as usize,
+        other => panic!("Expected integer count, got {:?}", other),
+    };
+    assert_eq!(
+        node_total, node_count,
+        "Should have inserted exactly {} Person nodes",
+        node_count
+    );
+
     // Benchmark: 1-hop traversal (find neighbors)
     let iterations = 1000;
     let start = Instant::now();
@@ -329,6 +347,24 @@ fn bench_graph_traversals() {
     }
     let duration = start.elapsed();
     print_result("1-hop bidirectional", iterations, duration);
+
+    // Post-benchmark correctness: verify that at least some edges exist in the graph
+    let edge_check = session
+        .execute("MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN COUNT(a)")
+        .unwrap();
+    assert_eq!(
+        edge_check.rows.len(),
+        1,
+        "Edge count query should return one row"
+    );
+    let total_edges = match &edge_check.rows[0][0] {
+        Value::Int64(n) => *n as usize,
+        other => panic!("Expected integer edge count, got {:?}", other),
+    };
+    assert!(
+        total_edges > 0,
+        "Graph should have at least one KNOWS edge after setup"
+    );
 }
 
 // ============================================================================
@@ -369,6 +405,23 @@ fn bench_filtering() {
     }
 
     println!("  Setup complete. Running filter benchmarks...\n");
+
+    // Verify setup: node count matches expectations
+    let count_result = session.execute("MATCH (u:User) RETURN COUNT(u)").unwrap();
+    assert_eq!(
+        count_result.rows.len(),
+        1,
+        "COUNT query should return one row"
+    );
+    let user_total = match &count_result.rows[0][0] {
+        Value::Int64(n) => *n as usize,
+        other => panic!("Expected integer count, got {:?}", other),
+    };
+    assert_eq!(
+        user_total, node_count,
+        "Should have inserted exactly {} User nodes",
+        node_count
+    );
 
     // Benchmark: Equality filter (high selectivity - ~20% match)
     let iterations = 100;
@@ -429,6 +482,17 @@ fn bench_filtering() {
     }
     let duration = start.elapsed();
     print_result("Compound filter (OR)", iterations, duration);
+
+    // Post-benchmark correctness: equality filter returns ~20% of nodes
+    let check = session
+        .execute("MATCH (u:User) WHERE u.category = 'A' RETURN u.id")
+        .unwrap();
+    let expected_category_a = node_count / 5; // i % 5 == 0
+    assert_eq!(
+        check.rows.len(),
+        expected_category_a,
+        "Category 'A' filter should return exactly 1/5 of nodes"
+    );
 }
 
 // ============================================================================
@@ -559,6 +623,23 @@ fn bench_point_lookups() {
 
     println!("  Setup complete. Running lookup benchmarks...\n");
 
+    // Verify setup: node count matches expectations
+    let count_result = session.execute("MATCH (r:Record) RETURN COUNT(r)").unwrap();
+    assert_eq!(
+        count_result.rows.len(),
+        1,
+        "COUNT query should return one row"
+    );
+    let record_total = match &count_result.rows[0][0] {
+        Value::Int64(n) => *n as usize,
+        other => panic!("Expected integer count, got {:?}", other),
+    };
+    assert_eq!(
+        record_total, node_count,
+        "Should have inserted exactly {} Record nodes",
+        node_count
+    );
+
     // Benchmark: Lookup by ID (sequential)
     let iterations = 10_000;
     let start = Instant::now();
@@ -600,6 +681,21 @@ fn bench_point_lookups() {
     }
     let duration = start.elapsed();
     print_result("Existence check", iterations, duration);
+
+    // Post-benchmark correctness: point lookup returns exactly one row
+    let check = session
+        .execute("MATCH (r:Record {id: 0}) RETURN r.uuid")
+        .unwrap();
+    assert_eq!(
+        check.rows.len(),
+        1,
+        "Point lookup for id=0 should return exactly one row"
+    );
+    assert_eq!(
+        check.rows[0][0],
+        Value::String("uuid-0".into()),
+        "Record 0 should have uuid 'uuid-0'"
+    );
 }
 
 // ============================================================================
@@ -832,6 +928,28 @@ fn bench_concurrent_reads() {
     }
 
     println!("  Setup complete. Running concurrent read benchmarks...\n");
+
+    // Verify setup: node count matches expectations
+    {
+        let session = db.session();
+        let count_result = session
+            .execute("MATCH (item:Item) RETURN COUNT(item)")
+            .unwrap();
+        assert_eq!(
+            count_result.rows.len(),
+            1,
+            "COUNT query should return one row"
+        );
+        let item_total = match &count_result.rows[0][0] {
+            Value::Int64(n) => *n as usize,
+            other => panic!("Expected integer count, got {:?}", other),
+        };
+        assert_eq!(
+            item_total, node_count,
+            "Should have inserted exactly {} Item nodes",
+            node_count
+        );
+    }
 
     // Benchmark with varying thread counts
     for num_threads in [1, 2, 4, 8] {

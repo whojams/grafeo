@@ -564,9 +564,12 @@ mod tests {
 
         assert_eq!(result.communities.len(), 8);
 
-        // Should detect approximately 2 communities
-        // Louvain should find good modularity
-        assert!(result.num_communities >= 1 && result.num_communities <= 8);
+        // Two K4 cliques connected by a single bridge: should detect 2-3 communities
+        assert!(
+            result.num_communities >= 2 && result.num_communities <= 3,
+            "Two cliques should produce 2-3 communities, got {}",
+            result.num_communities
+        );
     }
 
     #[test]

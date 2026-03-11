@@ -257,6 +257,74 @@ pub enum WalRecord {
         name: String,
     },
 
+    // === Named Graph Lifecycle ===
+    /// Create a named graph partition.
+    CreateNamedGraph {
+        /// Graph name.
+        name: String,
+    },
+
+    /// Drop a named graph partition.
+    DropNamedGraph {
+        /// Graph name.
+        name: String,
+    },
+
+    /// Switch the WAL replay cursor to a named graph.
+    ///
+    /// Subsequent data mutation records apply to this graph until the next
+    /// `SwitchGraph`. `None` switches back to the default graph.
+    SwitchGraph {
+        /// Target graph name, or `None` for the default graph.
+        name: Option<String>,
+    },
+
+    // === RDF Records ===
+    /// Insert an RDF triple into the default or a named graph.
+    ///
+    /// Term strings use N-Triples encoding: IRIs as `<iri>`, literals as
+    /// `"value"`, typed literals as `"value"^^<type>`, blank nodes as `_:id`.
+    InsertRdfTriple {
+        /// Subject term (N-Triples encoding).
+        subject: String,
+        /// Predicate term (N-Triples encoding).
+        predicate: String,
+        /// Object term (N-Triples encoding).
+        object: String,
+        /// Target graph name (`None` = default graph).
+        graph: Option<String>,
+    },
+
+    /// Delete an RDF triple from the default or a named graph.
+    DeleteRdfTriple {
+        /// Subject term (N-Triples encoding).
+        subject: String,
+        /// Predicate term (N-Triples encoding).
+        predicate: String,
+        /// Object term (N-Triples encoding).
+        object: String,
+        /// Target graph name (`None` = default graph).
+        graph: Option<String>,
+    },
+
+    /// Clear all triples from an RDF graph.
+    ClearRdfGraph {
+        /// Graph name (`None` = default graph).
+        graph: Option<String>,
+    },
+
+    /// Create an RDF named graph.
+    CreateRdfGraph {
+        /// Graph name.
+        name: String,
+    },
+
+    /// Drop an RDF named graph.
+    DropRdfGraph {
+        /// Graph name (`None` = drop/clear default graph).
+        name: Option<String>,
+    },
+
     // === Transaction Control ===
     /// Transaction commit.
     TransactionCommit {
@@ -529,6 +597,51 @@ mod tests {
     }
 
     #[test]
+    fn test_create_named_graph_roundtrip() {
+        let record = WalRecord::CreateNamedGraph {
+            name: "analytics".to_string(),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::CreateNamedGraph { name } => assert_eq!(name, "analytics"),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_drop_named_graph_roundtrip() {
+        let record = WalRecord::DropNamedGraph {
+            name: "temp".to_string(),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::DropNamedGraph { name } => assert_eq!(name, "temp"),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_switch_graph_roundtrip() {
+        // Switch to named graph
+        let record = WalRecord::SwitchGraph {
+            name: Some("analytics".to_string()),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SwitchGraph { name } => assert_eq!(name, Some("analytics".to_string())),
+            _ => panic!("Wrong variant"),
+        }
+
+        // Switch back to default
+        let record = WalRecord::SwitchGraph { name: None };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SwitchGraph { name } => assert_eq!(name, None),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
     fn test_wal_entry_requires_sync() {
         use super::WalEntry;
 
@@ -608,6 +721,217 @@ mod tests {
                 assert_eq!(transaction_id, TransactionId::new(42));
             }
             _ => panic!("make_checkpoint should produce Checkpoint variant"),
+        }
+    }
+
+    // =========================================================================
+    // T1-05: Serialization round-trip for untested Value types
+    // =========================================================================
+
+    #[test]
+    fn test_value_map_roundtrip() {
+        use grafeo_common::types::PropertyKey;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let mut map = BTreeMap::new();
+        map.insert(PropertyKey::from("name"), Value::String("Alix".into()));
+        map.insert(PropertyKey::from("age"), Value::Int64(30));
+
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(1),
+            key: "metadata".to_string(),
+            value: Value::Map(Arc::new(map.clone())),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Map(m) => {
+                    assert_eq!(m.len(), 2);
+                    assert_eq!(m[&PropertyKey::from("name")], Value::String("Alix".into()));
+                    assert_eq!(m[&PropertyKey::from("age")], Value::Int64(30));
+                }
+                other => panic!("Expected Map, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_vector_roundtrip() {
+        use std::sync::Arc;
+
+        let embedding: Arc<[f32]> = Arc::from(vec![0.1_f32, 0.2, 0.3, 0.4]);
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(2),
+            key: "embedding".to_string(),
+            value: Value::Vector(embedding.clone()),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Vector(v) => {
+                    assert_eq!(v.len(), 4);
+                    assert!((v[0] - 0.1).abs() < f32::EPSILON);
+                    assert!((v[3] - 0.4).abs() < f32::EPSILON);
+                }
+                other => panic!("Expected Vector, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_timestamp_roundtrip() {
+        use grafeo_common::types::Timestamp;
+
+        let ts = Timestamp::from_secs(1_700_000_000); // 2023-11-14
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(3),
+            key: "created_at".to_string(),
+            value: Value::Timestamp(ts),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Timestamp(t) => {
+                    assert_eq!(t.as_secs(), 1_700_000_000);
+                }
+                other => panic!("Expected Timestamp, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_zoned_datetime_roundtrip() {
+        use grafeo_common::types::{Timestamp, ZonedDatetime};
+
+        let ts = Timestamp::from_secs(1_700_000_000);
+        let zdt = ZonedDatetime::from_timestamp_offset(ts, 3600); // +01:00
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(4),
+            key: "event_time".to_string(),
+            value: Value::ZonedDatetime(zdt),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::ZonedDatetime(z) => {
+                    assert_eq!(z.as_timestamp().as_secs(), 1_700_000_000);
+                    assert_eq!(z.offset_seconds(), 3600);
+                }
+                other => panic!("Expected ZonedDatetime, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_path_roundtrip() {
+        use std::sync::Arc;
+
+        let nodes: Arc<[Value]> = Arc::from(vec![
+            Value::String("node_A".into()),
+            Value::String("node_B".into()),
+            Value::String("node_C".into()),
+        ]);
+        let edges: Arc<[Value]> = Arc::from(vec![
+            Value::String("edge_AB".into()),
+            Value::String("edge_BC".into()),
+        ]);
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(5),
+            key: "route".to_string(),
+            value: Value::Path {
+                nodes: nodes.clone(),
+                edges: edges.clone(),
+            },
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Path { nodes: n, edges: e } => {
+                    assert_eq!(n.len(), 3);
+                    assert_eq!(e.len(), 2);
+                    assert_eq!(n[0], Value::String("node_A".into()));
+                    assert_eq!(e[1], Value::String("edge_BC".into()));
+                }
+                other => panic!("Expected Path, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_date_roundtrip() {
+        use grafeo_common::types::Date;
+
+        let date = Date::from_ymd(2024, 6, 15).unwrap();
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(6),
+            key: "birthday".to_string(),
+            value: Value::Date(date),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Date(d) => {
+                    assert_eq!(d.year(), 2024);
+                    assert_eq!(d.month(), 6);
+                    assert_eq!(d.day(), 15);
+                }
+                other => panic!("Expected Date, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_time_roundtrip() {
+        use grafeo_common::types::Time;
+
+        let time = Time::from_hms(14, 30, 45).unwrap().with_offset(3600);
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(7),
+            key: "alarm".to_string(),
+            value: Value::Time(time),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Time(t) => {
+                    assert_eq!(t.hour(), 14);
+                    assert_eq!(t.minute(), 30);
+                    assert_eq!(t.second(), 45);
+                    assert_eq!(t.offset_seconds(), Some(3600));
+                }
+                other => panic!("Expected Time, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_duration_roundtrip() {
+        use grafeo_common::types::Duration;
+
+        let dur = Duration::new(14, 3, 4 * 3_600_000_000_000 + 5 * 60_000_000_000); // P1Y2M3DT4H5M
+        let record = WalRecord::SetNodeProperty {
+            id: NodeId::new(8),
+            key: "interval".to_string(),
+            value: Value::Duration(dur),
+        };
+        let parsed = roundtrip(&record);
+        match parsed {
+            WalRecord::SetNodeProperty { value, .. } => match value {
+                Value::Duration(d) => {
+                    assert_eq!(d.months(), 14);
+                    assert_eq!(d.days(), 3);
+                }
+                other => panic!("Expected Duration, got {other:?}"),
+            },
+            other => panic!("Wrong variant: {other:?}"),
         }
     }
 }

@@ -127,6 +127,16 @@ pub trait GraphStore: Send + Sync {
     /// Returns all non-deleted node IDs, sorted by ID.
     fn node_ids(&self) -> Vec<NodeId>;
 
+    /// Returns all node IDs including uncommitted/PENDING versions.
+    ///
+    /// Unlike `node_ids()` which pre-filters by current epoch, this method
+    /// returns every node that has a version chain entry. Used by scan operators
+    /// that perform their own MVCC visibility filtering (e.g. with transaction context).
+    fn all_node_ids(&self) -> Vec<NodeId> {
+        // Default: fall back to node_ids() for stores without MVCC
+        self.node_ids()
+    }
+
     /// Returns node IDs with a specific label.
     fn nodes_by_label(&self, label: &str) -> Vec<NodeId>;
 
@@ -140,6 +150,19 @@ pub trait GraphStore: Send + Sync {
 
     /// Returns the type string of an edge.
     fn edge_type(&self, id: EdgeId) -> Option<ArcStr>;
+
+    /// Returns the type string of an edge visible to a specific transaction.
+    ///
+    /// Falls back to epoch-based `edge_type` if not overridden.
+    fn edge_type_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<ArcStr> {
+        let _ = (epoch, transaction_id);
+        self.edge_type(id)
+    }
 
     // --- Index introspection ---
 
@@ -218,6 +241,52 @@ pub trait GraphStore: Send + Sync {
     /// Returns all property key names used in the database.
     fn all_property_keys(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    // --- Visibility checks (fast path, avoids building full entities) ---
+
+    /// Checks if a node is visible at the given epoch without building the full Node.
+    ///
+    /// More efficient than `get_node_at_epoch(...).is_some()` because it skips
+    /// label and property loading. Override in concrete stores for optimal
+    /// performance.
+    fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        self.get_node_at_epoch(id, epoch).is_some()
+    }
+
+    /// Checks if a node is visible to a specific transaction without building
+    /// the full Node.
+    fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.get_node_versioned(id, epoch, transaction_id).is_some()
+    }
+
+    /// Filters node IDs to only those visible at the given epoch (batch).
+    ///
+    /// More efficient than per-node calls because implementations can hold
+    /// a single lock for the entire batch.
+    fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        ids.iter()
+            .copied()
+            .filter(|id| self.is_node_visible_at_epoch(*id, epoch))
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible to a transaction (batch).
+    fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        ids.iter()
+            .copied()
+            .filter(|id| self.is_node_visible_versioned(*id, epoch, transaction_id))
+            .collect()
     }
 
     // --- History ---

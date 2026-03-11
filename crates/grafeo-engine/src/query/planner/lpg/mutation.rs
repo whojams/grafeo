@@ -1,6 +1,16 @@
 //! Mutation planning (CREATE, DELETE, SET, MERGE, CALL, labels).
 
-use super::*;
+use super::{
+    AddLabelOp, AddLabelOperator, AntiJoinOp, Arc, CreateEdgeOp, CreateEdgeOperator, CreateNodeOp,
+    CreateNodeOperator, DeleteEdgeOp, DeleteEdgeOperator, DeleteNodeOp, DeleteNodeOperator,
+    Direction, Error, ExpandDirection, GraphStore, HashMap, LeftJoinOp, LogicalExpression,
+    LogicalOperator, LogicalType, MergeConfig, MergeOp, MergeOperator, MergeRelationshipConfig,
+    MergeRelationshipOp, MergeRelationshipOperator, Operator, ProjectExpr, ProjectOperator,
+    PropertySource, RemoveLabelOp, RemoveLabelOperator, Result, SetPropertyOp, SetPropertyOperator,
+    ShortestPathOp, ShortestPathOperator, UnwindOp, UnwindOperator, Value,
+};
+#[cfg(feature = "algos")]
+use super::{CallProcedureOp, GraphStoreMut, StaticResultOperator};
 
 impl super::Planner {
     /// Plans a CREATE NODE operator.
@@ -42,6 +52,9 @@ impl super::Planner {
         )
         .with_transaction_context(self.viewing_epoch, self.transaction_id);
 
+        if let Some(ref tracker) = self.write_tracker {
+            op = op.with_write_tracker(Arc::clone(tracker));
+        }
         if let Some(ref validator) = self.validator {
             op = op.with_validator(Arc::clone(validator));
         }
@@ -109,6 +122,9 @@ impl super::Planner {
         .with_properties(properties)
         .with_transaction_context(self.viewing_epoch, self.transaction_id);
 
+        if let Some(ref tracker) = self.write_tracker {
+            operator = operator.with_write_tracker(Arc::clone(tracker));
+        }
         if let Some(col) = output_column {
             operator = operator.with_output_column(col);
         }
@@ -150,23 +166,26 @@ impl super::Planner {
         let is_edge = self.edge_columns.borrow().contains(&delete.variable);
 
         if is_edge {
-            let operator = Box::new(
+            let mut op =
                 DeleteEdgeOperator::new(Arc::clone(&self.store), input_op, col_idx, output_schema)
-                    .with_transaction_context(self.viewing_epoch, self.transaction_id),
-            );
-            Ok((operator, output_columns))
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id);
+            if let Some(ref tracker) = self.write_tracker {
+                op = op.with_write_tracker(Arc::clone(tracker));
+            }
+            Ok((Box::new(op), output_columns))
         } else {
-            let operator = Box::new(
-                DeleteNodeOperator::new(
-                    Arc::clone(&self.store),
-                    input_op,
-                    col_idx,
-                    output_schema,
-                    delete.detach,
-                )
-                .with_transaction_context(self.viewing_epoch, self.transaction_id),
-            );
-            Ok((operator, output_columns))
+            let mut op = DeleteNodeOperator::new(
+                Arc::clone(&self.store),
+                input_op,
+                col_idx,
+                output_schema,
+                delete.detach,
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
+            if let Some(ref tracker) = self.write_tracker {
+                op = op.with_write_tracker(Arc::clone(tracker));
+            }
+            Ok((Box::new(op), output_columns))
         }
     }
 
@@ -192,17 +211,18 @@ impl super::Planner {
         let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
         let output_columns = columns.clone();
 
-        let operator = Box::new(
-            DeleteEdgeOperator::new(
-                Arc::clone(&self.store),
-                input_op,
-                edge_column,
-                output_schema,
-            )
-            .with_transaction_context(self.viewing_epoch, self.transaction_id),
-        );
+        let mut op = DeleteEdgeOperator::new(
+            Arc::clone(&self.store),
+            input_op,
+            edge_column,
+            output_schema,
+        )
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
+        if let Some(ref tracker) = self.write_tracker {
+            op = op.with_write_tracker(Arc::clone(tracker));
+        }
 
-        Ok((operator, output_columns))
+        Ok((Box::new(op), output_columns))
     }
 
     /// Plans a LEFT JOIN operator (for OPTIONAL MATCH).
@@ -258,15 +278,18 @@ impl super::Planner {
                 let single_row_op: Box<dyn Operator> = Box::new(
                     grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
                 );
-                let project_op: Box<dyn Operator> = Box::new(ProjectOperator::with_store(
-                    single_row_op,
-                    vec![ProjectExpr::Expression {
-                        expr: literal_list,
-                        variable_columns: HashMap::new(),
-                    }],
-                    vec![LogicalType::Any],
-                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
-                ));
+                let project_op: Box<dyn Operator> = Box::new(
+                    ProjectOperator::with_store(
+                        single_row_op,
+                        vec![ProjectExpr::Expression {
+                            expr: literal_list,
+                            variable_columns: HashMap::new(),
+                        }],
+                        vec![LogicalType::Any],
+                        Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                    )
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                );
 
                 (project_op, vec!["__list__".to_string()])
             } else {
@@ -312,12 +335,15 @@ impl super::Planner {
             });
             let mut proj_schema = self.derive_schema_from_columns(&input_columns);
             proj_schema.push(LogicalType::Any);
-            let project_op: Box<dyn Operator> = Box::new(ProjectOperator::with_store(
-                input_op,
-                proj_exprs,
-                proj_schema,
-                Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            ));
+            let project_op: Box<dyn Operator> = Box::new(
+                ProjectOperator::with_store(
+                    input_op,
+                    proj_exprs,
+                    proj_schema,
+                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+            );
             let list_col = input_columns.len();
             let mut cols = input_columns;
             cols.push("__unwind_list__".to_string());
@@ -425,22 +451,26 @@ impl super::Planner {
         // Build output schema
         let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
 
-        let operator: Box<dyn Operator> = Box::new(
-            MergeOperator::new(
-                Arc::clone(&self.store),
-                input_op,
-                MergeConfig {
-                    variable: merge.variable.clone(),
-                    labels: merge.labels.clone(),
-                    match_properties,
-                    on_create_properties,
-                    on_match_properties,
-                    output_schema,
-                    output_column,
-                },
-            )
-            .with_transaction_context(self.viewing_epoch, self.transaction_id),
-        );
+        let mut merge_op = MergeOperator::new(
+            Arc::clone(&self.store),
+            input_op,
+            MergeConfig {
+                variable: merge.variable.clone(),
+                labels: merge.labels.clone(),
+                match_properties,
+                on_create_properties,
+                on_match_properties,
+                output_schema,
+                output_column,
+            },
+        )
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
+
+        if let Some(ref validator) = self.validator {
+            merge_op = merge_op.with_validator(Arc::clone(validator));
+        }
+
+        let operator: Box<dyn Operator> = Box::new(merge_op);
 
         Ok((operator, columns))
     }
@@ -533,10 +563,15 @@ impl super::Planner {
             edge_output_column,
         };
 
-        let operator: Box<dyn Operator> = Box::new(
+        let mut merge_rel_op =
             MergeRelationshipOperator::new(Arc::clone(&self.store), input_op, config)
-                .with_transaction_context(self.viewing_epoch, self.transaction_id),
-        );
+                .with_transaction_context(self.viewing_epoch, self.transaction_id);
+
+        if let Some(ref validator) = self.validator {
+            merge_rel_op = merge_rel_op.with_validator(Arc::clone(validator));
+        }
+
+        let operator: Box<dyn Operator> = Box::new(merge_rel_op);
 
         Ok((operator, columns))
     }
@@ -743,7 +778,7 @@ impl super::Planner {
         call: &CallProcedureOp,
         proc_def: &crate::catalog::ProcedureDefinition,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        use crate::query::executor::user_procedure::UserProcedureOperator;
+        use crate::query::executor::user_procedure::{ProcedureContext, UserProcedureOperator};
 
         // Validate argument count
         if call.arguments.len() != proc_def.params.len() {
@@ -796,11 +831,13 @@ impl super::Planner {
             param_map,
             return_columns,
             yield_columns,
-            Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
-            self.transaction_manager.clone(),
-            self.transaction_id,
-            self.viewing_epoch,
-            self.catalog.clone(),
+            ProcedureContext {
+                store: Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
+                transaction_manager: self.transaction_manager.clone(),
+                transaction_id: self.transaction_id,
+                viewing_epoch: self.viewing_epoch,
+                catalog: self.catalog.clone(),
+            },
         ));
 
         // Procedure outputs are scalar values, not node/edge IDs
@@ -874,18 +911,19 @@ impl super::Planner {
         let output_schema = vec![LogicalType::Int64];
         let output_columns = vec!["labels_added".to_string()];
 
-        let operator = Box::new(
-            AddLabelOperator::new(
-                Arc::clone(&self.store),
-                input_op,
-                node_column,
-                add_label.labels.clone(),
-                output_schema,
-            )
-            .with_transaction_context(self.viewing_epoch, self.transaction_id),
-        );
+        let mut op = AddLabelOperator::new(
+            Arc::clone(&self.store),
+            input_op,
+            node_column,
+            add_label.labels.clone(),
+            output_schema,
+        )
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
+        if let Some(ref tracker) = self.write_tracker {
+            op = op.with_write_tracker(Arc::clone(tracker));
+        }
 
-        Ok((operator, output_columns))
+        Ok((Box::new(op), output_columns))
     }
 
     /// Plans a REMOVE LABEL operator.
@@ -910,18 +948,19 @@ impl super::Planner {
         let output_schema = vec![LogicalType::Int64];
         let output_columns = vec!["labels_removed".to_string()];
 
-        let operator = Box::new(
-            RemoveLabelOperator::new(
-                Arc::clone(&self.store),
-                input_op,
-                node_column,
-                remove_label.labels.clone(),
-                output_schema,
-            )
-            .with_transaction_context(self.viewing_epoch, self.transaction_id),
-        );
+        let mut op = RemoveLabelOperator::new(
+            Arc::clone(&self.store),
+            input_op,
+            node_column,
+            remove_label.labels.clone(),
+            output_schema,
+        )
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
+        if let Some(ref tracker) = self.write_tracker {
+            op = op.with_write_tracker(Arc::clone(tracker));
+        }
 
-        Ok((operator, output_columns))
+        Ok((Box::new(op), output_columns))
     }
 
     /// Plans a SET PROPERTY operator.
@@ -968,6 +1007,9 @@ impl super::Planner {
             )
             .with_replace(set_prop.replace)
             .with_transaction_context(self.viewing_epoch, self.transaction_id);
+            if let Some(ref tracker) = self.write_tracker {
+                op = op.with_write_tracker(Arc::clone(tracker));
+            }
             if let Some(ref validator) = self.validator {
                 op = op.with_validator(Arc::clone(validator));
             }
@@ -982,6 +1024,9 @@ impl super::Planner {
             )
             .with_replace(set_prop.replace)
             .with_transaction_context(self.viewing_epoch, self.transaction_id);
+            if let Some(ref tracker) = self.write_tracker {
+                op = op.with_write_tracker(Arc::clone(tracker));
+            }
             if let Some(ref validator) = self.validator {
                 op = op.with_validator(Arc::clone(validator));
             }

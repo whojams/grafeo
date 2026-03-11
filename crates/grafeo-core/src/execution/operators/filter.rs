@@ -4,7 +4,8 @@ use super::{Operator, OperatorResult};
 use crate::execution::{ChunkZoneHints, DataChunk, SelectionVector};
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{HashableValue, PropertyKey, Value};
+use crate::graph::lpg::{Edge, Node};
+use grafeo_common::types::{EpochId, HashableValue, NodeId, PropertyKey, TransactionId, Value};
 #[cfg(feature = "regex")]
 use regex::Regex;
 #[cfg(all(feature = "regex-lite", not(feature = "regex")))]
@@ -119,6 +120,29 @@ impl Predicate for ComparisonPredicate {
                 CompareOp::Gt => a > b,
                 CompareOp::Ge => a >= b,
             },
+            // Cross-type Int64/Float64 coercion
+            (Value::Int64(a), Value::Float64(b)) => {
+                let a = *a as f64;
+                match self.op {
+                    CompareOp::Eq => (a - b).abs() < f64::EPSILON,
+                    CompareOp::Ne => (a - b).abs() >= f64::EPSILON,
+                    CompareOp::Lt => a < *b,
+                    CompareOp::Le => a <= *b,
+                    CompareOp::Gt => a > *b,
+                    CompareOp::Ge => a >= *b,
+                }
+            }
+            (Value::Float64(a), Value::Int64(b)) => {
+                let b = *b as f64;
+                match self.op {
+                    CompareOp::Eq => (a - b).abs() < f64::EPSILON,
+                    CompareOp::Ne => (a - b).abs() >= f64::EPSILON,
+                    CompareOp::Lt => *a < b,
+                    CompareOp::Le => *a <= b,
+                    CompareOp::Gt => *a > b,
+                    CompareOp::Ge => *a >= b,
+                }
+            }
             (Value::Bool(a), Value::Bool(b)) => match self.op {
                 CompareOp::Eq => a == b,
                 CompareOp::Ne => a != b,
@@ -155,6 +179,10 @@ pub struct ExpressionPredicate {
     variable_columns: HashMap<String, usize>,
     /// The graph store for property lookups.
     store: Arc<dyn GraphStore>,
+    /// Transaction ID for MVCC-aware lookups.
+    transaction_id: Option<TransactionId>,
+    /// Viewing epoch for MVCC-aware lookups.
+    viewing_epoch: Option<EpochId>,
 }
 
 /// A filter expression that can be evaluated.
@@ -376,6 +404,41 @@ impl ExpressionPredicate {
             expression,
             variable_columns,
             store,
+            transaction_id: None,
+            viewing_epoch: None,
+        }
+    }
+
+    /// Sets the transaction context for MVCC-aware property lookups.
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
+        self.viewing_epoch = Some(epoch);
+        self.transaction_id = transaction_id;
+        self
+    }
+
+    /// Resolves a node using transaction-aware access when available.
+    fn resolve_node(&self, node_id: NodeId) -> Option<Node> {
+        if let (Some(ep), Some(tx)) = (self.viewing_epoch, self.transaction_id) {
+            self.store.get_node_versioned(node_id, ep, tx)
+        } else if let Some(ep) = self.viewing_epoch {
+            self.store.get_node_at_epoch(node_id, ep)
+        } else {
+            self.store.get_node(node_id)
+        }
+    }
+
+    /// Resolves an edge using transaction-aware access when available.
+    fn resolve_edge(&self, edge_id: grafeo_common::types::EdgeId) -> Option<Edge> {
+        if let (Some(ep), Some(tx)) = (self.viewing_epoch, self.transaction_id) {
+            self.store.get_edge_versioned(edge_id, ep, tx)
+        } else if let Some(ep) = self.viewing_epoch {
+            self.store.get_edge_at_epoch(edge_id, ep)
+        } else {
+            self.store.get_edge(edge_id)
         }
     }
 
@@ -402,13 +465,13 @@ impl ExpressionPredicate {
                 let col = chunk.column(col_idx)?;
                 // Try as node first
                 if let Some(node_id) = col.get_node_id(row)
-                    && let Some(node) = self.store.get_node(node_id)
+                    && let Some(node) = self.resolve_node(node_id)
                 {
                     return node.get_property(property).cloned();
                 }
                 // Try as edge if node lookup failed
                 if let Some(edge_id) = col.get_edge_id(row)
-                    && let Some(edge) = self.store.get_edge(edge_id)
+                    && let Some(edge) = self.resolve_edge(edge_id)
                 {
                     return edge.get_property(property).cloned();
                 }
@@ -496,12 +559,12 @@ impl ExpressionPredicate {
                             && let Some(col) = chunk.column(col_idx)
                         {
                             if let Some(node_id) = col.get_node_id(row)
-                                && let Some(node) = self.store.get_node(node_id)
+                                && let Some(node) = self.resolve_node(node_id)
                             {
                                 return node.get_property(key.as_str()).cloned();
                             }
                             if let Some(edge_id) = col.get_edge_id(row)
-                                && let Some(edge) = self.store.get_edge(edge_id)
+                                && let Some(edge) = self.resolve_edge(edge_id)
                             {
                                 return edge.get_property(key.as_str()).cloned();
                             }
@@ -593,7 +656,7 @@ impl ExpressionPredicate {
                 let col_idx = *self.variable_columns.get(variable)?;
                 let col = chunk.column(col_idx)?;
                 let node_id = col.get_node_id(row)?;
-                let node = self.store.get_node(node_id)?;
+                let node = self.resolve_node(node_id)?;
                 let labels: Vec<Value> = node
                     .labels
                     .iter()
@@ -605,7 +668,7 @@ impl ExpressionPredicate {
                 let col_idx = *self.variable_columns.get(variable)?;
                 let col = chunk.column(col_idx)?;
                 let edge_id = col.get_edge_id(row)?;
-                let edge = self.store.get_edge(edge_id)?;
+                let edge = self.resolve_edge(edge_id)?;
                 Some(Value::String(edge.edge_type.clone()))
             }
             FilterExpression::ListComprehension {
@@ -1337,12 +1400,12 @@ impl ExpressionPredicate {
                     // get_node_id and get_edge_id accept, so we must check which
                     // entity actually exists.
                     if let Some(edge_id) = col.get_edge_id(row)
-                        && self.store.get_edge(edge_id).is_some()
+                        && self.resolve_edge(edge_id).is_some()
                     {
                         return Some(Value::String(format!("e:{}", edge_id.0).into()));
                     }
                     if let Some(node_id) = col.get_node_id(row)
-                        && self.store.get_node(node_id).is_some()
+                        && self.resolve_node(node_id).is_some()
                     {
                         return Some(Value::String(format!("n:{}", node_id.0).into()));
                     }
@@ -1357,7 +1420,7 @@ impl ExpressionPredicate {
                     let col_idx = *self.variable_columns.get(var)?;
                     let col = chunk.column(col_idx)?;
                     let node_id = col.get_node_id(row)?;
-                    let node = self.store.get_node(node_id)?;
+                    let node = self.resolve_node(node_id)?;
                     let labels: Vec<Value> = node
                         .labels
                         .iter()
@@ -1375,7 +1438,7 @@ impl ExpressionPredicate {
                     let col_idx = *self.variable_columns.get(var)?;
                     let col = chunk.column(col_idx)?;
                     let edge_id = col.get_edge_id(row)?;
-                    let edge = self.store.get_edge(edge_id)?;
+                    let edge = self.resolve_edge(edge_id)?;
                     return Some(Value::String(edge.edge_type.clone()));
                 }
                 None
@@ -1483,7 +1546,7 @@ impl ExpressionPredicate {
                     return None;
                 };
                 // Check if the node has this label
-                let node = self.store.get_node(node_id)?;
+                let node = self.resolve_node(node_id)?;
                 let has_label = node.labels.iter().any(|l| l.as_str() == label.as_str());
                 Some(Value::Bool(has_label))
             }
@@ -1558,7 +1621,7 @@ impl ExpressionPredicate {
                 } else {
                     return None;
                 };
-                let edge = self.store.get_edge(edge_id)?;
+                let edge = self.resolve_edge(edge_id)?;
                 Some(Value::Bool(edge.src == node_id))
             }
             "isdestination" => {
@@ -1580,7 +1643,7 @@ impl ExpressionPredicate {
                 } else {
                     return None;
                 };
-                let edge = self.store.get_edge(edge_id)?;
+                let edge = self.resolve_edge(edge_id)?;
                 Some(Value::Bool(edge.dst == node_id))
             }
             "all_different" => {
@@ -1688,7 +1751,7 @@ impl ExpressionPredicate {
                     let col_idx = *self.variable_columns.get(var)?;
                     let col = chunk.column(col_idx)?;
                     if let Some(nid) = col.get_node_id(row)
-                        && let Some(node) = self.store.get_node(nid)
+                        && let Some(node) = self.resolve_node(nid)
                     {
                         let exists = node
                             .properties
@@ -1697,7 +1760,7 @@ impl ExpressionPredicate {
                         return Some(Value::Bool(exists));
                     }
                     if let Some(eid) = col.get_edge_id(row)
-                        && let Some(edge) = self.store.get_edge(eid)
+                        && let Some(edge) = self.resolve_edge(eid)
                     {
                         let exists = edge
                             .properties
@@ -1862,7 +1925,7 @@ impl ExpressionPredicate {
                     let col_idx = *self.variable_columns.get(var)?;
                     let col = chunk.column(col_idx)?;
                     if let Some(node_id) = col.get_node_id(row) {
-                        let node = self.store.get_node(node_id)?;
+                        let node = self.resolve_node(node_id)?;
                         let keys: Vec<Value> = node
                             .properties
                             .iter()
@@ -1892,7 +1955,7 @@ impl ExpressionPredicate {
                     let col_idx = *self.variable_columns.get(var)?;
                     let col = chunk.column(col_idx)?;
                     if let Some(node_id) = col.get_node_id(row) {
-                        let node = self.store.get_node(node_id)?;
+                        let node = self.resolve_node(node_id)?;
                         let map: std::collections::BTreeMap<PropertyKey, Value> = node
                             .properties
                             .iter()
@@ -1900,7 +1963,7 @@ impl ExpressionPredicate {
                             .collect();
                         return Some(Value::Map(Arc::new(map)));
                     } else if let Some(edge_id) = col.get_edge_id(row) {
-                        let edge = self.store.get_edge(edge_id)?;
+                        let edge = self.resolve_edge(edge_id)?;
                         let map: std::collections::BTreeMap<PropertyKey, Value> = edge
                             .properties
                             .iter()

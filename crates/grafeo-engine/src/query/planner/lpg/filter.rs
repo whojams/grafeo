@@ -1,6 +1,21 @@
 //! Filter planning with zone map pre-filtering and index lookups.
 
-use super::*;
+use super::{
+    ApplyOperator, Arc, BinaryOp, EmptyOperator, ExpressionPredicate, FilterExpression, FilterOp,
+    FilterOperator, GraphStore, HashAggregateOperator, HashJoinOperator, HashMap,
+    LogicalExpression, LogicalOperator, NodeListOperator, Operator, PhysicalAggregateExpr,
+    PhysicalJoinType, RangeBounds, Result, TransactionId, UnaryOp, Value, convert_binary_op,
+    convert_filter_expression,
+};
+
+/// Cross-type equality comparison with Int64/Float64 coercion.
+fn values_equal_coerced(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int64(a), Value::Float64(b)) => (*a as f64 - b).abs() < f64::EPSILON,
+        (Value::Float64(a), Value::Int64(b)) => (a - *b as f64).abs() < f64::EPSILON,
+        _ => a == b,
+    }
+}
 
 impl super::Planner {
     /// Plans a filter operator.
@@ -68,7 +83,8 @@ impl super::Planner {
             filter_expr,
             variable_columns,
             Arc::clone(&self.store) as Arc<dyn GraphStore>,
-        );
+        )
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
 
         // Create the filter operator
         let operator = Box::new(FilterOperator::new(input_op, Box::new(predicate)));
@@ -275,7 +291,8 @@ impl super::Planner {
                 filter_expr,
                 variable_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            );
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             let filter_op = Box::new(FilterOperator::new(join_op, Box::new(predicate)));
             return Ok((filter_op, output_columns));
         }
@@ -363,7 +380,8 @@ impl super::Planner {
                 filter_expr,
                 variable_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            );
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             result = Box::new(FilterOperator::new(result, Box::new(predicate)));
         }
 
@@ -435,7 +453,8 @@ impl super::Planner {
                 filter_expr,
                 variable_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            );
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             let filter_op = Box::new(FilterOperator::new(join_op, Box::new(predicate)));
             return Ok((filter_op, output_columns));
         }
@@ -591,7 +610,8 @@ impl super::Planner {
             count_filter,
             count_var_columns.clone(),
             Arc::clone(&self.store) as Arc<dyn GraphStore>,
-        );
+        )
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
         let mut result_op: Box<dyn Operator> =
             Box::new(FilterOperator::new(agg_op, Box::new(predicate)));
 
@@ -602,7 +622,8 @@ impl super::Planner {
                 remaining_expr,
                 count_var_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            );
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             result_op = Box::new(FilterOperator::new(
                 result_op,
                 Box::new(remaining_predicate),
@@ -765,14 +786,22 @@ impl super::Planner {
             // because it avoids DataChunk materialization and expression evaluation.
             let label = scan_label.as_ref().expect("label checked above");
             let label_nodes = self.store.nodes_by_label(label);
+            let epoch = self.viewing_epoch;
+            let tx_id = self.transaction_id;
             label_nodes
                 .into_iter()
                 .filter(|&node_id| {
-                    conditions.iter().all(|(prop, val)| {
-                        let key = grafeo_common::types::PropertyKey::new(prop);
-                        self.store
-                            .get_node_property(node_id, &key)
-                            .is_some_and(|v| v == *val)
+                    // Use versioned node access when in a transaction
+                    let node = if let Some(tx) = tx_id {
+                        self.store.get_node_versioned(node_id, epoch, tx)
+                    } else {
+                        self.store.get_node(node_id)
+                    };
+                    node.is_some_and(|n| {
+                        conditions.iter().all(|(prop, val)| {
+                            n.get_property(prop)
+                                .is_some_and(|v| values_equal_coerced(v, val))
+                        })
                     })
                 })
                 .collect()
@@ -805,7 +834,8 @@ impl super::Planner {
                 filter_expr,
                 variable_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
-            );
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             let filtered = Box::new(FilterOperator::new(node_list_op, Box::new(predicate)));
             Ok(Some((filtered, columns)))
         } else {

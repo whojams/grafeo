@@ -27,6 +27,7 @@ pub mod config;
 pub mod database;
 #[cfg(feature = "embed")]
 pub mod embedding;
+pub mod memory_usage;
 #[cfg(feature = "algos")]
 pub mod procedures;
 pub mod query;
@@ -42,5 +43,6 @@ pub use catalog::{Catalog, CatalogError, IndexDefinition, IndexType};
 pub use config::{Config, ConfigError, DurabilityMode, GraphModel};
 pub use database::GrafeoDB;
 pub use grafeo_core::graph::{GraphStore, GraphStoreMut};
+pub use memory_usage::MemoryUsage;
 pub use session::Session;
 pub use transaction::{CommitInfo, PreparedCommit};

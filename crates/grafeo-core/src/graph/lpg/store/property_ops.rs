@@ -4,6 +4,7 @@ use super::LpgStore;
 use super::PropertyUndoEntry;
 use grafeo_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
+use std::sync::atomic::Ordering;
 
 impl LpgStore {
     /// Sets a property on a node.
@@ -383,6 +384,29 @@ impl LpgStore {
                         // Label was removed during the transaction: add it back
                         self.add_label(node_id, &label);
                     }
+                    PropertyUndoEntry::NodeDeleted {
+                        node_id,
+                        labels,
+                        properties,
+                    } => {
+                        self.restore_deleted_node(node_id, transaction_id, &labels, properties);
+                    }
+                    PropertyUndoEntry::EdgeDeleted {
+                        edge_id,
+                        src,
+                        dst,
+                        edge_type,
+                        properties,
+                    } => {
+                        self.restore_deleted_edge(
+                            edge_id,
+                            src,
+                            dst,
+                            transaction_id,
+                            &edge_type,
+                            properties,
+                        );
+                    }
                 }
             }
         }
@@ -453,8 +477,123 @@ impl LpgStore {
                     PropertyUndoEntry::LabelRemoved { node_id, label } => {
                         self.add_label(node_id, &label);
                     }
+                    PropertyUndoEntry::NodeDeleted {
+                        node_id,
+                        labels,
+                        properties,
+                    } => {
+                        self.restore_deleted_node(node_id, transaction_id, &labels, properties);
+                    }
+                    PropertyUndoEntry::EdgeDeleted {
+                        edge_id,
+                        src,
+                        dst,
+                        edge_type,
+                        properties,
+                    } => {
+                        self.restore_deleted_edge(
+                            edge_id,
+                            src,
+                            dst,
+                            transaction_id,
+                            &edge_type,
+                            properties,
+                        );
+                    }
                 }
             }
+        }
+    }
+
+    // === Deletion Restoration Helpers ===
+
+    /// Restores a node that was deleted within a transaction.
+    ///
+    /// Called during rollback to undo a transactional node deletion.
+    fn restore_deleted_node(
+        &self,
+        node_id: NodeId,
+        transaction_id: TransactionId,
+        labels: &[String],
+        properties: Vec<(PropertyKey, Value)>,
+    ) {
+        // Unmark deletion on version chain
+        #[cfg(not(feature = "tiered-storage"))]
+        {
+            let mut nodes = self.nodes.write();
+            if let Some(chain) = nodes.get_mut(&node_id) {
+                chain.unmark_deleted_by(transaction_id);
+            }
+        }
+        #[cfg(feature = "tiered-storage")]
+        {
+            let mut versions = self.node_versions.write();
+            if let Some(index) = versions.get_mut(&node_id) {
+                index.unmark_deleted_by(transaction_id);
+            }
+        }
+
+        // Restore label index entries
+        for label in labels {
+            self.add_label(node_id, label);
+        }
+
+        // Restore properties
+        for (key, value) in properties {
+            self.set_node_property(node_id, key.as_str(), value);
+        }
+
+        self.live_node_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Restores an edge that was deleted within a transaction.
+    ///
+    /// Called during rollback to undo a transactional edge deletion.
+    fn restore_deleted_edge(
+        &self,
+        edge_id: EdgeId,
+        src: NodeId,
+        dst: NodeId,
+        transaction_id: TransactionId,
+        edge_type: &str,
+        properties: Vec<(PropertyKey, Value)>,
+    ) {
+        // Unmark deletion on version chain
+        #[cfg(not(feature = "tiered-storage"))]
+        {
+            let mut edges = self.edges.write();
+            if let Some(chain) = edges.get_mut(&edge_id) {
+                chain.unmark_deleted_by(transaction_id);
+            }
+        }
+        #[cfg(feature = "tiered-storage")]
+        {
+            let mut versions = self.edge_versions.write();
+            if let Some(index) = versions.get_mut(&edge_id) {
+                index.unmark_deleted_by(transaction_id);
+            }
+        }
+
+        // Restore adjacency (unmark soft-delete)
+        self.forward_adj.unmark_deleted(src, edge_id);
+        if let Some(ref backward) = self.backward_adj {
+            backward.unmark_deleted(dst, edge_id);
+        }
+
+        // Restore properties
+        for (key, value) in properties {
+            self.set_edge_property(edge_id, key.as_str(), value);
+        }
+
+        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+
+        // Restore edge type count
+        let type_id = {
+            let type_map = self.edge_type_to_id.read();
+            type_map.get(edge_type).copied()
+        };
+        if let Some(type_id) = type_id {
+            self.increment_edge_type_count(type_id);
         }
     }
 }

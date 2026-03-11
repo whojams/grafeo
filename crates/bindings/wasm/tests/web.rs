@@ -102,3 +102,309 @@ fn test_version() {
     let v = Database::version();
     assert!(!v.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// importLpg tests
+// ---------------------------------------------------------------------------
+
+fn lpg_result_counts(result: &wasm_bindgen::JsValue) -> (u32, u32) {
+    let nodes = js_sys::Reflect::get(result, &wasm_bindgen::JsValue::from_str("nodes"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
+    let edges = js_sys::Reflect::get(result, &wasm_bindgen::JsValue::from_str("edges"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
+    (nodes, edges)
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_basic() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Person"], "properties": { "name": "Alix", "age": 30 } },
+            { "labels": ["Person"], "properties": { "name": "Gus", "age": 25 } }
+        ],
+        "edges": [
+            { "source": 0, "target": 1, "type": "KNOWS", "properties": { "since": 2020 } }
+        ]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, edges) = lpg_result_counts(&result);
+    assert_eq!(nodes, 2);
+    assert_eq!(edges, 1);
+    assert_eq!(db.node_count(), 2);
+    assert_eq!(db.edge_count(), 1);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_nodes_only() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Tag"], "properties": { "name": "rust" } },
+            { "labels": ["Tag"], "properties": { "name": "wasm" } },
+            { "labels": ["Tag"], "properties": { "name": "graph" } }
+        ]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, edges) = lpg_result_counts(&result);
+    assert_eq!(nodes, 3);
+    assert_eq!(edges, 0);
+    assert_eq!(db.node_count(), 3);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_empty() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": []
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, edges) = lpg_result_counts(&result);
+    assert_eq!(nodes, 0);
+    assert_eq!(edges, 0);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_no_properties() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["A"] },
+            { "labels": ["B"] }
+        ],
+        "edges": [
+            { "source": 0, "target": 1, "type": "LINKED" }
+        ]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, edges) = lpg_result_counts(&result);
+    assert_eq!(nodes, 2);
+    assert_eq!(edges, 1);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_multiple_labels() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Person", "Employee", "Developer"], "properties": { "name": "Alix" } }
+        ]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, _) = lpg_result_counts(&result);
+    assert_eq!(nodes, 1);
+    assert_eq!(db.node_count(), 1);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_self_loop() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [{ "labels": ["Node"] }],
+        "edges": [{ "source": 0, "target": 0, "type": "SELF" }]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, edges) = lpg_result_counts(&result);
+    assert_eq!(nodes, 1);
+    assert_eq!(edges, 1);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_multiple_edges_same_pair() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Person"], "properties": { "name": "Alix" } },
+            { "labels": ["Person"], "properties": { "name": "Gus" } }
+        ],
+        "edges": [
+            { "source": 0, "target": 1, "type": "KNOWS" },
+            { "source": 0, "target": 1, "type": "WORKS_WITH" },
+            { "source": 1, "target": 0, "type": "KNOWS" }
+        ]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (_, edges) = lpg_result_counts(&result);
+    assert_eq!(edges, 3);
+    assert_eq!(db.edge_count(), 3);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_edge_source_out_of_bounds() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [{ "labels": ["A"] }],
+        "edges": [{ "source": 5, "target": 0, "type": "BAD" }]
+    }))
+    .unwrap();
+
+    let err = db.import_lpg(data).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("source index 5 out of bounds"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_edge_target_out_of_bounds() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [{ "labels": ["A"] }],
+        "edges": [{ "source": 0, "target": 99, "type": "BAD" }]
+    }))
+    .unwrap();
+
+    let err = db.import_lpg(data).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("target index 99 out of bounds"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_invalid_shape() {
+    let db = Database::new().expect("create db");
+
+    // Missing required 'nodes' field
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "edges": []
+    }))
+    .unwrap();
+
+    let err = db.import_lpg(data).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("Invalid LPG data"), "unexpected error: {msg}");
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_queryable_after_import() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["City"], "properties": { "name": "Amsterdam", "population": 905234 } },
+            { "labels": ["City"], "properties": { "name": "Berlin", "population": 3748148 } }
+        ],
+        "edges": [
+            { "source": 0, "target": 1, "type": "CONNECTED_TO", "properties": { "distance_km": 577 } }
+        ]
+    }))
+    .unwrap();
+
+    db.import_lpg(data).expect("import");
+
+    // Verify nodes are queryable
+    let result = db
+        .execute("MATCH (c:City) RETURN c.name ORDER BY c.name")
+        .expect("query cities");
+    assert!(!result.is_null());
+
+    // Verify edges are queryable
+    let result = db
+        .execute("MATCH (:City)-[e:CONNECTED_TO]->(:City) RETURN e.distance_km")
+        .expect("query edges");
+    assert!(!result.is_null());
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_mixed_property_types() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [{
+            "labels": ["Thing"],
+            "properties": {
+                "str_val": "hello",
+                "int_val": 42,
+                "float_val": 3.14,
+                "bool_val": true,
+                "null_val": null,
+                "list_val": [1, 2, 3]
+            }
+        }]
+    }))
+    .unwrap();
+
+    let result = db.import_lpg(data).expect("import");
+    let (nodes, _) = lpg_result_counts(&result);
+    assert_eq!(nodes, 1);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_incremental() {
+    let db = Database::new().expect("create db");
+
+    // First batch
+    let data1 = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Person"], "properties": { "name": "Alix" } }
+        ]
+    }))
+    .unwrap();
+    db.import_lpg(data1).expect("import 1");
+    assert_eq!(db.node_count(), 1);
+
+    // Second batch
+    let data2 = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Person"], "properties": { "name": "Gus" } }
+        ]
+    }))
+    .unwrap();
+    db.import_lpg(data2).expect("import 2");
+    assert_eq!(db.node_count(), 2);
+}
+
+#[wasm_bindgen_test]
+fn test_import_lpg_snapshot_roundtrip() {
+    let db = Database::new().expect("create db");
+
+    let data = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "nodes": [
+            { "labels": ["Person"], "properties": { "name": "Alix" } },
+            { "labels": ["Person"], "properties": { "name": "Gus" } }
+        ],
+        "edges": [
+            { "source": 0, "target": 1, "type": "KNOWS" }
+        ]
+    }))
+    .unwrap();
+
+    db.import_lpg(data).expect("import");
+
+    // Export and re-import
+    let snapshot = db.export_snapshot().expect("export");
+    let restored = Database::import_snapshot(&snapshot).expect("restore");
+
+    assert_eq!(restored.node_count(), 2);
+    assert_eq!(restored.edge_count(), 1);
+}

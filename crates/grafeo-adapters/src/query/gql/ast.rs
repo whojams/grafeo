@@ -153,6 +153,34 @@ pub struct YieldItem {
     pub span: Option<SourceSpan>,
 }
 
+/// File format for LOAD DATA statements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadFormat {
+    /// CSV (comma-separated values).
+    Csv,
+    /// JSON Lines (one JSON object per line).
+    Jsonl,
+    /// Apache Parquet columnar format.
+    Parquet,
+}
+
+/// LOAD DATA clause: reads data from a file and produces rows.
+#[derive(Debug, Clone)]
+pub struct LoadDataClause {
+    /// File path (local filesystem).
+    pub path: String,
+    /// File format.
+    pub format: LoadFormat,
+    /// Whether the file has a header row (CSV only).
+    pub with_headers: bool,
+    /// Variable name to bind each row to.
+    pub variable: String,
+    /// Optional field terminator override (CSV only).
+    pub field_terminator: Option<char>,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
 /// A clause in a query, preserving source order for correct variable scoping.
 #[derive(Debug, Clone)]
 pub enum QueryClause {
@@ -181,6 +209,8 @@ pub enum QueryClause {
     },
     /// A CALL procedure clause within a query.
     CallProcedure(CallStatement),
+    /// A LOAD DATA clause.
+    LoadData(LoadDataClause),
 }
 
 /// A query statement.
@@ -721,6 +751,22 @@ pub enum SchemaStatement {
         /// IF EXISTS flag.
         if_exists: bool,
     },
+    /// SHOW CONSTRAINTS: lists all constraints.
+    ShowConstraints,
+    /// SHOW INDEXES: lists all indexes.
+    ShowIndexes,
+    /// SHOW NODE TYPES: lists all registered node types.
+    ShowNodeTypes,
+    /// SHOW EDGE TYPES: lists all registered edge types.
+    ShowEdgeTypes,
+    /// SHOW GRAPH TYPES: lists all registered graph types.
+    ShowGraphTypes,
+    /// SHOW GRAPH TYPE `name`: shows details of a specific graph type.
+    ShowGraphType(String),
+    /// SHOW CURRENT GRAPH TYPE: shows the graph type bound to the current graph.
+    ShowCurrentGraphType,
+    /// SHOW GRAPHS: lists all named graphs in the database.
+    ShowGraphs,
 }
 
 /// A CREATE NODE TYPE statement.
@@ -730,6 +776,8 @@ pub struct CreateNodeTypeStatement {
     pub name: String,
     /// Property definitions.
     pub properties: Vec<PropertyDefinition>,
+    /// Parent types for inheritance (GQL `EXTENDS`).
+    pub parent_types: Vec<String>,
     /// IF NOT EXISTS flag.
     pub if_not_exists: bool,
     /// OR REPLACE flag.
@@ -745,6 +793,10 @@ pub struct CreateEdgeTypeStatement {
     pub name: String,
     /// Property definitions.
     pub properties: Vec<PropertyDefinition>,
+    /// Allowed source node types (GQL `CONNECTING`).
+    pub source_node_types: Vec<String>,
+    /// Allowed target node types.
+    pub target_node_types: Vec<String>,
     /// IF NOT EXISTS flag.
     pub if_not_exists: bool,
     /// OR REPLACE flag.
@@ -773,7 +825,21 @@ pub enum InlineElementType {
         properties: Vec<PropertyDefinition>,
         /// Key label sets (GG21): labels that form the key for this type.
         key_labels: Vec<String>,
+        /// Allowed source node types.
+        source_node_types: Vec<String>,
+        /// Allowed target node types.
+        target_node_types: Vec<String>,
     },
+}
+
+impl InlineElementType {
+    /// Returns the type name for this element.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Node { name, .. } | Self::Edge { name, .. } => name,
+        }
+    }
 }
 
 /// A CREATE GRAPH TYPE statement.
@@ -926,6 +992,8 @@ pub struct PropertyDefinition {
     pub data_type: String,
     /// Whether the property is nullable.
     pub nullable: bool,
+    /// Optional default value (literal text from the DDL).
+    pub default_value: Option<String>,
 }
 
 /// An ALTER NODE TYPE or ALTER EDGE TYPE statement.

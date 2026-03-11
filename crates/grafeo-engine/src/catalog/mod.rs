@@ -11,12 +11,15 @@
 //! | Edge types | Maps "KNOWS" → EdgeTypeId |
 //! | Indexes | Which properties are indexed for fast lookups |
 
+mod check_eval;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
+use grafeo_common::collections::{GrafeoConcurrentMap, grafeo_concurrent_map};
 use grafeo_common::types::{EdgeTypeId, IndexId, LabelId, PropertyKeyId, Value};
 
 /// The database's schema dictionary - maps names to compact internal IDs.
@@ -290,6 +293,14 @@ impl Catalog {
         self.schema.as_ref().and_then(|s| s.get_node_type(name))
     }
 
+    /// Gets a resolved node type with inherited properties from parents.
+    #[must_use]
+    pub fn resolved_node_type(&self, name: &str) -> Option<NodeTypeDefinition> {
+        self.schema
+            .as_ref()
+            .and_then(|s| s.resolved_node_type(name))
+    }
+
     /// Returns all registered node type names.
     #[must_use]
     pub fn all_node_type_names(&self) -> Vec<String> {
@@ -353,6 +364,21 @@ impl Catalog {
         }
     }
 
+    /// Returns all registered graph type names.
+    #[must_use]
+    pub fn all_graph_type_names(&self) -> Vec<String> {
+        self.schema
+            .as_ref()
+            .map(SchemaCatalog::all_graph_types)
+            .unwrap_or_default()
+    }
+
+    /// Gets a graph type definition by name.
+    #[must_use]
+    pub fn get_graph_type_def(&self, name: &str) -> Option<GraphTypeDefinition> {
+        self.schema.as_ref().and_then(|s| s.get_graph_type(name))
+    }
+
     /// Registers a schema namespace.
     pub fn register_schema_namespace(&self, name: String) -> Result<(), CatalogError> {
         match &self.schema {
@@ -365,6 +391,18 @@ impl Catalog {
     pub fn drop_schema_namespace(&self, name: &str) -> Result<(), CatalogError> {
         match &self.schema {
             Some(schema) => schema.drop_schema(name),
+            None => Err(CatalogError::SchemaNotEnabled),
+        }
+    }
+
+    /// Adds a constraint to an existing node type, creating a minimal type if needed.
+    pub fn add_constraint_to_type(
+        &self,
+        label: &str,
+        constraint: TypeConstraint,
+    ) -> Result<(), CatalogError> {
+        match &self.schema {
+            Some(schema) => schema.add_constraint_to_type(label, constraint),
             None => Err(CatalogError::SchemaNotEnabled),
         }
     }
@@ -539,48 +577,48 @@ impl Default for Catalog {
 // === Label Catalog ===
 
 /// Bidirectional mapping between label names and IDs.
+///
+/// Uses `DashMap` (shard-level locking) for `name_to_id` so concurrent
+/// readers never block each other. A separate `Mutex` serializes the rare
+/// create path to keep `id_to_name` consistent.
 struct LabelCatalog {
-    name_to_id: RwLock<HashMap<Arc<str>, LabelId>>,
+    name_to_id: GrafeoConcurrentMap<Arc<str>, LabelId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
+    create_lock: Mutex<()>,
 }
 
 impl LabelCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: RwLock::new(HashMap::new()),
+            name_to_id: grafeo_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
+            create_lock: Mutex::new(()),
         }
     }
 
     fn get_or_create(&self, name: &str) -> LabelId {
-        // Fast path: check if already exists
-        {
-            let name_to_id = self.name_to_id.read();
-            if let Some(&id) = name_to_id.get(name) {
-                return id;
-            }
+        // Fast path: shard-level read (no global lock)
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
-        // Slow path: create new entry
-        let mut name_to_id = self.name_to_id.write();
-        let mut id_to_name = self.id_to_name.write();
-
-        // Double-check after acquiring write lock
-        if let Some(&id) = name_to_id.get(name) {
-            return id;
+        // Slow path: serialize creates to keep id_to_name consistent
+        let _guard = self.create_lock.lock();
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
         let id = LabelId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let name: Arc<str> = name.into();
-        name_to_id.insert(Arc::clone(&name), id);
-        id_to_name.push(name);
+        self.id_to_name.write().push(Arc::clone(&name));
+        self.name_to_id.insert(name, id);
         id
     }
 
     fn get_id(&self, name: &str) -> Option<LabelId> {
-        self.name_to_id.read().get(name).copied()
+        self.name_to_id.get(name).map(|r| *r)
     }
 
     fn get_name(&self, id: LabelId) -> Option<Arc<str>> {
@@ -600,47 +638,43 @@ impl LabelCatalog {
 
 /// Bidirectional mapping between property key names and IDs.
 struct PropertyCatalog {
-    name_to_id: RwLock<HashMap<Arc<str>, PropertyKeyId>>,
+    name_to_id: GrafeoConcurrentMap<Arc<str>, PropertyKeyId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
+    create_lock: Mutex<()>,
 }
 
 impl PropertyCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: RwLock::new(HashMap::new()),
+            name_to_id: grafeo_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
+            create_lock: Mutex::new(()),
         }
     }
 
     fn get_or_create(&self, name: &str) -> PropertyKeyId {
-        // Fast path: check if already exists
-        {
-            let name_to_id = self.name_to_id.read();
-            if let Some(&id) = name_to_id.get(name) {
-                return id;
-            }
+        // Fast path: shard-level read (no global lock)
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
-        // Slow path: create new entry
-        let mut name_to_id = self.name_to_id.write();
-        let mut id_to_name = self.id_to_name.write();
-
-        // Double-check after acquiring write lock
-        if let Some(&id) = name_to_id.get(name) {
-            return id;
+        // Slow path: serialize creates to keep id_to_name consistent
+        let _guard = self.create_lock.lock();
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
         let id = PropertyKeyId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let name: Arc<str> = name.into();
-        name_to_id.insert(Arc::clone(&name), id);
-        id_to_name.push(name);
+        self.id_to_name.write().push(Arc::clone(&name));
+        self.name_to_id.insert(name, id);
         id
     }
 
     fn get_id(&self, name: &str) -> Option<PropertyKeyId> {
-        self.name_to_id.read().get(name).copied()
+        self.name_to_id.get(name).map(|r| *r)
     }
 
     fn get_name(&self, id: PropertyKeyId) -> Option<Arc<str>> {
@@ -660,47 +694,43 @@ impl PropertyCatalog {
 
 /// Bidirectional mapping between edge type names and IDs.
 struct EdgeTypeCatalog {
-    name_to_id: RwLock<HashMap<Arc<str>, EdgeTypeId>>,
+    name_to_id: GrafeoConcurrentMap<Arc<str>, EdgeTypeId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
+    create_lock: Mutex<()>,
 }
 
 impl EdgeTypeCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: RwLock::new(HashMap::new()),
+            name_to_id: grafeo_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
+            create_lock: Mutex::new(()),
         }
     }
 
     fn get_or_create(&self, name: &str) -> EdgeTypeId {
-        // Fast path: check if already exists
-        {
-            let name_to_id = self.name_to_id.read();
-            if let Some(&id) = name_to_id.get(name) {
-                return id;
-            }
+        // Fast path: shard-level read (no global lock)
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
-        // Slow path: create new entry
-        let mut name_to_id = self.name_to_id.write();
-        let mut id_to_name = self.id_to_name.write();
-
-        // Double-check after acquiring write lock
-        if let Some(&id) = name_to_id.get(name) {
-            return id;
+        // Slow path: serialize creates to keep id_to_name consistent
+        let _guard = self.create_lock.lock();
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
         let id = EdgeTypeId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let name: Arc<str> = name.into();
-        name_to_id.insert(Arc::clone(&name), id);
-        id_to_name.push(name);
+        self.id_to_name.write().push(Arc::clone(&name));
+        self.name_to_id.insert(name, id);
         id
     }
 
     fn get_id(&self, name: &str) -> Option<EdgeTypeId> {
-        self.name_to_id.read().get(name).copied()
+        self.name_to_id.get(name).map(|r| *r)
     }
 
     fn get_name(&self, id: EdgeTypeId) -> Option<Arc<str>> {
@@ -994,6 +1024,8 @@ pub struct NodeTypeDefinition {
     pub properties: Vec<TypedProperty>,
     /// Type-level constraints.
     pub constraints: Vec<TypeConstraint>,
+    /// Parent type names for inheritance (GQL `EXTENDS`).
+    pub parent_types: Vec<String>,
 }
 
 /// Definition of an edge type (relationship type schema).
@@ -1005,6 +1037,10 @@ pub struct EdgeTypeDefinition {
     pub properties: Vec<TypedProperty>,
     /// Type-level constraints.
     pub constraints: Vec<TypeConstraint>,
+    /// Allowed source node types (empty = any).
+    pub source_node_types: Vec<String>,
+    /// Allowed target node types (empty = any).
+    pub target_node_types: Vec<String>,
 }
 
 /// Definition of a graph type (constrains which node/edge types a graph allows).
@@ -1101,6 +1137,64 @@ impl SchemaCatalog {
         self.node_types.read().get(name).cloned()
     }
 
+    /// Gets a resolved node type with inherited properties and constraints from parents.
+    ///
+    /// Walks the parent chain depth-first, collecting properties and constraints.
+    /// Detects cycles via a visited set. Child properties override parent ones
+    /// with the same name.
+    #[must_use]
+    pub fn resolved_node_type(&self, name: &str) -> Option<NodeTypeDefinition> {
+        let types = self.node_types.read();
+        let base = types.get(name)?;
+        if base.parent_types.is_empty() {
+            return Some(base.clone());
+        }
+        let mut visited = HashSet::new();
+        visited.insert(name.to_string());
+        let mut all_properties = Vec::new();
+        let mut all_constraints = Vec::new();
+        Self::collect_inherited(
+            &types,
+            name,
+            &mut visited,
+            &mut all_properties,
+            &mut all_constraints,
+        );
+        Some(NodeTypeDefinition {
+            name: base.name.clone(),
+            properties: all_properties,
+            constraints: all_constraints,
+            parent_types: base.parent_types.clone(),
+        })
+    }
+
+    /// Recursively collects properties and constraints from a type and its parents.
+    fn collect_inherited(
+        types: &HashMap<String, NodeTypeDefinition>,
+        name: &str,
+        visited: &mut HashSet<String>,
+        properties: &mut Vec<TypedProperty>,
+        constraints: &mut Vec<TypeConstraint>,
+    ) {
+        let Some(def) = types.get(name) else { return };
+        // Walk parents first (depth-first) so child properties override
+        for parent in &def.parent_types {
+            if visited.insert(parent.clone()) {
+                Self::collect_inherited(types, parent, visited, properties, constraints);
+            }
+        }
+        // Add own properties, overriding parent ones with same name
+        for prop in &def.properties {
+            if let Some(pos) = properties.iter().position(|p| p.name == prop.name) {
+                properties[pos] = prop.clone();
+            } else {
+                properties.push(prop.clone());
+            }
+        }
+        // Append own constraints (no dedup, constraints are additive)
+        constraints.extend(def.constraints.iter().cloned());
+    }
+
     /// Returns all registered node type names.
     #[must_use]
     pub fn all_node_types(&self) -> Vec<String> {
@@ -1172,6 +1266,12 @@ impl SchemaCatalog {
         self.graph_types.read().get(name).cloned()
     }
 
+    /// Returns all registered graph type names.
+    #[must_use]
+    pub fn all_graph_types(&self) -> Vec<String> {
+        self.graph_types.read().keys().cloned().collect()
+    }
+
     // --- Schema namespace operations ---
 
     /// Registers a schema namespace.
@@ -1196,6 +1296,30 @@ impl SchemaCatalog {
     }
 
     // --- ALTER operations ---
+
+    /// Adds a constraint to an existing node type, creating a minimal type if needed.
+    pub fn add_constraint_to_type(
+        &self,
+        label: &str,
+        constraint: TypeConstraint,
+    ) -> Result<(), CatalogError> {
+        let mut types = self.node_types.write();
+        if let Some(def) = types.get_mut(label) {
+            def.constraints.push(constraint);
+        } else {
+            // Auto-create a minimal type definition for the label
+            types.insert(
+                label.to_string(),
+                NodeTypeDefinition {
+                    name: label.to_string(),
+                    properties: Vec::new(),
+                    constraints: vec![constraint],
+                    parent_types: Vec::new(),
+                },
+            );
+        }
+        Ok(())
+    }
 
     /// Adds a property to an existing node type.
     pub fn alter_node_type_add_property(
@@ -1466,12 +1590,32 @@ use grafeo_core::execution::operators::OperatorError;
 /// against registered node/edge type definitions.
 pub struct CatalogConstraintValidator {
     catalog: Arc<Catalog>,
+    /// Optional graph name for graph-type-bound validation.
+    graph_name: Option<String>,
+    /// Optional graph store for UNIQUE constraint enforcement via index lookup.
+    store: Option<Arc<dyn grafeo_core::graph::GraphStoreMut>>,
 }
 
 impl CatalogConstraintValidator {
     /// Creates a new validator wrapping the given catalog.
     pub fn new(catalog: Arc<Catalog>) -> Self {
-        Self { catalog }
+        Self {
+            catalog,
+            graph_name: None,
+            store: None,
+        }
+    }
+
+    /// Sets the graph name for graph-type-bound validation.
+    pub fn with_graph_name(mut self, name: String) -> Self {
+        self.graph_name = Some(name);
+        self
+    }
+
+    /// Attaches a graph store for UNIQUE constraint enforcement.
+    pub fn with_store(mut self, store: Arc<dyn grafeo_core::graph::GraphStoreMut>) -> Self {
+        self.store = Some(store);
+        self
     }
 }
 
@@ -1483,7 +1627,7 @@ impl ConstraintValidator for CatalogConstraintValidator {
         value: &Value,
     ) -> Result<(), OperatorError> {
         for label in labels {
-            if let Some(type_def) = self.catalog.get_node_type(label)
+            if let Some(type_def) = self.catalog.resolved_node_type(label)
                 && let Some(typed_prop) = type_def.properties.iter().find(|p| p.name == key)
             {
                 // Check NOT NULL
@@ -1513,7 +1657,7 @@ impl ConstraintValidator for CatalogConstraintValidator {
             properties.iter().map(|(n, _)| n.as_str()).collect();
 
         for label in labels {
-            if let Some(type_def) = self.catalog.get_node_type(label) {
+            if let Some(type_def) = self.catalog.resolved_node_type(label) {
                 // Check that all NOT NULL properties are present
                 for typed_prop in &type_def.properties {
                     if !typed_prop.nullable
@@ -1545,7 +1689,23 @@ impl ConstraintValidator for CatalogConstraintValidator {
                                 }
                             }
                         }
-                        _ => {}
+                        TypeConstraint::Check { name, expression } => {
+                            match check_eval::evaluate_check(expression, properties) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    let constraint_name = name.as_deref().unwrap_or("unnamed");
+                                    return Err(OperatorError::ConstraintViolation(format!(
+                                        "CHECK constraint '{constraint_name}' violated on :{label}"
+                                    )));
+                                }
+                                Err(err) => {
+                                    return Err(OperatorError::ConstraintViolation(format!(
+                                        "CHECK constraint evaluation error: {err}"
+                                    )));
+                                }
+                            }
+                        }
+                        TypeConstraint::Unique(_) => {}
                     }
                 }
             }
@@ -1564,23 +1724,25 @@ impl ConstraintValidator for CatalogConstraintValidator {
             return Ok(());
         }
         for label in labels {
-            if let Some(type_def) = self.catalog.get_node_type(label) {
+            if let Some(type_def) = self.catalog.resolved_node_type(label) {
                 for constraint in &type_def.constraints {
                     let is_unique = match constraint {
                         TypeConstraint::Unique(props) => props.iter().any(|p| p == key),
                         TypeConstraint::PrimaryKey(props) => props.iter().any(|p| p == key),
                         _ => false,
                     };
-                    if is_unique {
-                        // Use the catalog's label/property ID-based check if available
-                        let label_id = self.catalog.get_or_create_label(label);
-                        let prop_id = self.catalog.get_or_create_property_key(key);
-                        if self.catalog.is_property_unique(label_id, prop_id) {
-                            // The constraint is registered, enforcement depends on
-                            // the property index which is checked at the store level.
-                            // For now, we mark the constraint as active.
-                            // Full duplicate detection requires index lookup, which
-                            // is done when the property index exists.
+                    if is_unique && let Some(ref store) = self.store {
+                        let existing = store.find_nodes_by_property(key, value);
+                        for node_id in existing {
+                            if let Some(node) = store.get_node(node_id) {
+                                let has_label = node.labels.iter().any(|l| l.as_str() == label);
+                                if has_label {
+                                    return Err(OperatorError::ConstraintViolation(format!(
+                                        "UNIQUE constraint violation: property '{key}' \
+                                             with value {value:?} already exists on :{label}"
+                                    )));
+                                }
+                            }
                         }
                     }
                 }
@@ -1635,8 +1797,132 @@ impl ConstraintValidator for CatalogConstraintValidator {
                     )));
                 }
             }
+
+            for constraint in &type_def.constraints {
+                if let TypeConstraint::Check { name, expression } = constraint {
+                    match check_eval::evaluate_check(expression, properties) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let constraint_name = name.as_deref().unwrap_or("unnamed");
+                            return Err(OperatorError::ConstraintViolation(format!(
+                                "CHECK constraint '{constraint_name}' violated on :{edge_type}"
+                            )));
+                        }
+                        Err(err) => {
+                            return Err(OperatorError::ConstraintViolation(format!(
+                                "CHECK constraint evaluation error: {err}"
+                            )));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
+    }
+
+    fn validate_node_labels_allowed(&self, labels: &[String]) -> Result<(), OperatorError> {
+        let Some(ref graph_name) = self.graph_name else {
+            return Ok(());
+        };
+        let Some(type_name) = self.catalog.get_graph_type_binding(graph_name) else {
+            return Ok(());
+        };
+        let Some(gt) = self
+            .catalog
+            .schema()
+            .and_then(|s| s.get_graph_type(&type_name))
+        else {
+            return Ok(());
+        };
+        if !gt.open && !gt.allowed_node_types.is_empty() {
+            let allowed = labels
+                .iter()
+                .any(|l| gt.allowed_node_types.iter().any(|a| a == l));
+            if !allowed {
+                return Err(OperatorError::ConstraintViolation(format!(
+                    "node labels {labels:?} are not allowed by graph type '{}'",
+                    gt.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_edge_type_allowed(&self, edge_type: &str) -> Result<(), OperatorError> {
+        let Some(ref graph_name) = self.graph_name else {
+            return Ok(());
+        };
+        let Some(type_name) = self.catalog.get_graph_type_binding(graph_name) else {
+            return Ok(());
+        };
+        let Some(gt) = self
+            .catalog
+            .schema()
+            .and_then(|s| s.get_graph_type(&type_name))
+        else {
+            return Ok(());
+        };
+        if !gt.open && !gt.allowed_edge_types.is_empty() {
+            let allowed = gt.allowed_edge_types.iter().any(|a| a == edge_type);
+            if !allowed {
+                return Err(OperatorError::ConstraintViolation(format!(
+                    "edge type '{edge_type}' is not allowed by graph type '{}'",
+                    gt.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_edge_endpoints(
+        &self,
+        edge_type: &str,
+        source_labels: &[String],
+        target_labels: &[String],
+    ) -> Result<(), OperatorError> {
+        let Some(type_def) = self.catalog.get_edge_type_def(edge_type) else {
+            return Ok(());
+        };
+        if !type_def.source_node_types.is_empty() {
+            let source_ok = source_labels
+                .iter()
+                .any(|l| type_def.source_node_types.iter().any(|s| s == l));
+            if !source_ok {
+                return Err(OperatorError::ConstraintViolation(format!(
+                    "source node labels {source_labels:?} are not allowed for edge type '{edge_type}', \
+                     expected one of {:?}",
+                    type_def.source_node_types
+                )));
+            }
+        }
+        if !type_def.target_node_types.is_empty() {
+            let target_ok = target_labels
+                .iter()
+                .any(|l| type_def.target_node_types.iter().any(|t| t == l));
+            if !target_ok {
+                return Err(OperatorError::ConstraintViolation(format!(
+                    "target node labels {target_labels:?} are not allowed for edge type '{edge_type}', \
+                     expected one of {:?}",
+                    type_def.target_node_types
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn inject_defaults(&self, labels: &[String], properties: &mut Vec<(String, Value)>) {
+        for label in labels {
+            if let Some(type_def) = self.catalog.resolved_node_type(label) {
+                for typed_prop in &type_def.properties {
+                    if let Some(ref default) = typed_prop.default_value {
+                        let already_set = properties.iter().any(|(n, _)| n == &typed_prop.name);
+                        if !already_set {
+                            properties.push((typed_prop.name.clone(), default.clone()));
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

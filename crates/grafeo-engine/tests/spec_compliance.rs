@@ -65,6 +65,10 @@ fn social_network() -> GrafeoDB {
     session.create_edge(gus, techcorp, "WORKS_AT");
     session.create_edge(dave, techcorp, "WORKS_AT");
 
+    // Verify setup: 4 Person + 1 Company = 5 nodes, 3 KNOWS + 3 WORKS_AT = 6 edges
+    assert_eq!(db.node_count(), 5, "social_network: expected 5 nodes");
+    assert_eq!(db.edge_count(), 6, "social_network: expected 6 edges");
+
     db
 }
 
@@ -100,8 +104,8 @@ mod gql_set_ops {
                  MATCH (n:Person) WHERE n.age > 24 RETURN n.name",
             )
             .unwrap();
-        // Gus (25) and Dave (28) match both sides
-        assert!(result.row_count() >= 4);
+        // Left (age<30): Gus(25), Dave(28) = 2; Right (age>24): Gus, Dave, Alix, Harm = 4
+        assert_eq!(result.row_count(), 6);
     }
 
     #[test]
@@ -157,8 +161,8 @@ mod gql_set_ops {
                  MATCH (n:Person) WHERE n.age <= 30 RETURN n.name",
             )
             .unwrap();
-        // Intersection: age 25-30 (Gus, Alix, Dave)
-        assert!(result.row_count() >= 2);
+        // Intersection of age>=25 and age<=30: Gus(25), Dave(28), Alix(30)
+        assert_eq!(result.row_count(), 3);
     }
 
     #[test]
@@ -210,6 +214,7 @@ mod gql_predicates {
         assert_eq!(result.row_count(), 4, "All persons have age property");
     }
 
+    /// GQL NULLIF: returns NULL when both arguments are equal.
     #[test]
     fn nullif_returns_null_when_equal() {
         let db = social_network();
@@ -220,6 +225,7 @@ mod gql_predicates {
         assert_eq!(result.rows[0][0], Value::Null);
     }
 
+    /// GQL NULLIF: returns the first argument when they differ.
     #[test]
     fn nullif_returns_value_when_different() {
         let db = social_network();
@@ -303,9 +309,11 @@ mod gql_predicates {
             &db,
             "MATCH (n:Person) WHERE (n.age > 30) XOR (n.name = 'Gus') RETURN n.name ORDER BY n.name",
         );
-        assert!(names.contains(&"Gus".to_string()));
-        assert!(names.contains(&"Harm".to_string()));
-        assert!(!names.contains(&"Alix".to_string())); // age=30, not >30, not Gus
+        assert_eq!(
+            names,
+            vec!["Gus", "Harm"],
+            "ORDER BY n.name should produce alphabetical order"
+        );
     }
 }
 
@@ -350,9 +358,12 @@ mod gql_statements {
                 _ => None,
             })
             .collect();
-        assert!(names.contains(&"Alix".to_string())); // age 30
-        assert!(names.contains(&"Harm".to_string())); // age 35
-        assert!(!names.contains(&"Gus".to_string())); // age 25
+        // ORDER BY n.name: Alix (age 30) before Harm (age 35), Gus (age 25) excluded
+        assert_eq!(
+            names,
+            vec!["Alix", "Harm"],
+            "ORDER BY n.name should produce alphabetical order"
+        );
     }
 
     #[test]
@@ -366,7 +377,7 @@ mod gql_statements {
             )
             .unwrap();
         // since>=2020: Alix->Gus (2020), Gus->Harm (2021)
-        assert!(result.row_count() >= 2);
+        assert_eq!(result.row_count(), 2);
     }
 
     #[test]
@@ -377,7 +388,8 @@ mod gql_statements {
         let result = session
             .execute("MATCH (a:Person)-[:KNOWS{1}]->(b:Person) RETURN a.name, b.name")
             .unwrap();
-        assert!(result.row_count() >= 3, "Should find direct connections");
+        // Exactly 3 direct KNOWS edges: Alix->Gus, Alix->Harm, Gus->Harm
+        assert_eq!(result.row_count(), 3, "Should find direct connections");
     }
 
     #[test]
@@ -390,8 +402,8 @@ mod gql_statements {
                 "MATCH (a:Person)-[:KNOWS{1,2}]->(b:Person) WHERE a.name = 'Alix' RETURN b.name",
             )
             .unwrap();
-        // Alix->Gus (1), Alix->Harm (1), Alix->Gus->Harm (2)
-        assert!(result.row_count() >= 2);
+        // 1-hop: Gus, Harm; 2-hop: Gus->Harm = Harm again
+        assert_eq!(result.row_count(), 3);
     }
 
     #[test]
@@ -402,7 +414,8 @@ mod gql_statements {
         let result = session
             .execute("MATCH (a:Person)-[e:KNOWS {since: 2020}]->(b:Person) RETURN a.name, b.name")
             .unwrap();
-        assert!(result.row_count() >= 1);
+        // Only Alix->Gus has since=2020
+        assert_eq!(result.row_count(), 1);
     }
 
     #[test]
@@ -415,7 +428,8 @@ mod gql_statements {
                 "MATCH DIFFERENT EDGES (a:Person)-[:KNOWS*1..2]->(b:Person) RETURN a.name, b.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 3);
+        // 1-hop: (Alix,Gus), (Alix,Harm), (Gus,Harm); 2-hop: (Alix,Harm via Gus)
+        assert_eq!(result.row_count(), 4);
     }
 
     #[test]
@@ -426,7 +440,8 @@ mod gql_statements {
         let result = session
             .execute("MATCH REPEATABLE ELEMENTS (a:Person)-[:KNOWS*1..2]->(b:Person) RETURN a.name, b.name")
             .unwrap();
-        assert!(result.row_count() >= 3);
+        // No cycles in KNOWS, so same as TRAIL: 3 one-hop + 1 two-hop
+        assert_eq!(result.row_count(), 4);
     }
 
     #[test]
@@ -472,7 +487,8 @@ mod gql_statements {
                  RETURN c.name, count(n) AS cnt GROUP BY c.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 1);
+        // Only one company (TechCorp) has WORKS_AT edges
+        assert_eq!(result.row_count(), 1);
     }
 
     #[test]
@@ -483,7 +499,8 @@ mod gql_statements {
         let result = session
             .execute("MATCH (n:Person) FILTER n.age > 28 RETURN n.name ORDER BY n.name")
             .unwrap();
-        assert!(result.row_count() >= 2); // Alix (30), Harm (35)
+        // age > 28: Alix(30), Harm(35)
+        assert_eq!(result.row_count(), 2);
     }
 
     #[test]
@@ -721,8 +738,8 @@ mod gql_path_features {
                  RETURN a.name, b.name",
             )
             .unwrap();
-        // Alix->Harm is 1 hop (direct), should find it
-        assert!(result.row_count() >= 1);
+        // Alix->Harm is 1 hop (direct), the single shortest path
+        assert_eq!(result.row_count(), 1);
     }
 
     #[test]
@@ -736,7 +753,8 @@ mod gql_path_features {
                  RETURN a.name, b.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 1);
+        // Only one shortest path: Alix->Harm (1 hop, direct)
+        assert_eq!(result.row_count(), 1);
     }
 
     #[test]
@@ -746,7 +764,8 @@ mod gql_path_features {
         let result = session
             .execute("MATCH WALK (a:Person)-[:KNOWS*1..2]->(b:Person) RETURN a.name, b.name")
             .unwrap();
-        assert!(result.row_count() >= 3);
+        // No cycles in KNOWS: 3 one-hop + 1 two-hop = 4
+        assert_eq!(result.row_count(), 4);
     }
 
     #[test]
@@ -756,7 +775,8 @@ mod gql_path_features {
         let result = session
             .execute("MATCH TRAIL (a:Person)-[:KNOWS*1..2]->(b:Person) RETURN a.name, b.name")
             .unwrap();
-        assert!(result.row_count() >= 3);
+        // No cycles in KNOWS: 3 one-hop + 1 two-hop = 4
+        assert_eq!(result.row_count(), 4);
     }
 }
 
@@ -831,7 +851,8 @@ mod cypher_features {
                  ORDER BY p.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 3);
+        // One row per Person: Alix, Dave, Gus, Harm
+        assert_eq!(result.row_count(), 4);
     }
 
     #[test]
@@ -1099,7 +1120,8 @@ mod cypher_features {
                  RETURN p.name ORDER BY p.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 3); // Alix, Gus, Dave work at TechCorp
+        // Alix, Dave, Gus all WORKS_AT TechCorp
+        assert_eq!(result.row_count(), 3);
     }
 
     #[test]
@@ -1113,7 +1135,8 @@ mod cypher_features {
                  RETURN p.name ORDER BY p.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 3); // same as the explicit MATCH version
+        // Same as explicit MATCH version: Alix, Dave, Gus
+        assert_eq!(result.row_count(), 3);
     }
 
     #[test]
@@ -1168,7 +1191,8 @@ mod cypher_features {
                  RETURN p.name, cnt ORDER BY p.name",
             )
             .unwrap();
-        assert!(result.row_count() >= 2);
+        // One row per Person: Alix, Dave, Gus, Harm
+        assert_eq!(result.row_count(), 4);
     }
 
     #[test]
@@ -1183,7 +1207,7 @@ mod cypher_features {
             .unwrap();
         assert_eq!(result.row_count(), 1);
         match &result.rows[0][1] {
-            Value::List(items) => assert!(items.len() >= 2, "Alix knows Gus and Harm"),
+            Value::List(items) => assert_eq!(items.len(), 2, "Alix knows exactly Gus and Harm"),
             other => panic!("Expected list of friends, got {other:?}"),
         }
     }
@@ -1425,11 +1449,276 @@ mod cypher_features {
 }
 
 // ============================================================================
+// LOAD DATA Features (GQL LOAD DATA, JSONL, Parquet)
+// ============================================================================
+
+#[cfg(feature = "gql")]
+mod load_data_features {
+    use grafeo_engine::GrafeoDB;
+    use std::io::Write;
+
+    #[test]
+    fn gql_load_data_csv_with_headers() {
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_gql_load_csv.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "name,age,city").unwrap();
+            writeln!(f, "Alix,30,Amsterdam").unwrap();
+            writeln!(f, "Gus,25,Berlin").unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT CSV WITH HEADERS AS row RETURN row.name AS name, row.age AS age ORDER BY row.name",
+            csv_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA CSV failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn gql_load_data_csv_without_headers() {
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_gql_load_csv_no_headers.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "Alix,30,Amsterdam").unwrap();
+            writeln!(f, "Gus,25,Berlin").unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT CSV AS row RETURN row[0] AS name, row[1] AS age",
+            csv_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA CSV without headers failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn gql_load_csv_compat_syntax() {
+        // GQL parser also accepts Cypher-compatible LOAD CSV syntax
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_gql_load_csv_compat.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "name,city").unwrap();
+            writeln!(f, "Alix,Amsterdam").unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD CSV WITH HEADERS FROM '{}' AS row RETURN row.name AS name",
+            csv_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD CSV compat failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn gql_load_data_csv_create_nodes() {
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_gql_load_csv_create.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "name,city").unwrap();
+            writeln!(f, "Alix,Amsterdam").unwrap();
+            writeln!(f, "Gus,Berlin").unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT CSV WITH HEADERS AS row INSERT (:Person {{name: row.name, city: row.city}})",
+            csv_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA + INSERT failed: {:?}",
+            result.err()
+        );
+
+        // Verify nodes were created
+        let verify = session
+            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(verify.rows.len(), 2);
+    }
+
+    #[test]
+    fn gql_load_data_csv_with_fieldterminator() {
+        let dir = std::env::temp_dir();
+        let tsv_path = dir.join("grafeo_test_gql_load_csv_tab.tsv");
+        {
+            let mut f = std::fs::File::create(&tsv_path).unwrap();
+            writeln!(f, "name\tage").unwrap();
+            writeln!(f, "Alix\t30").unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT CSV WITH HEADERS AS row FIELDTERMINATOR '\\t' RETURN row.name AS name",
+            tsv_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA with FIELDTERMINATOR failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn gql_load_data_file_not_found() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute("LOAD DATA FROM '/nonexistent/path/file.csv' FORMAT CSV AS row RETURN row");
+        assert!(result.is_err(), "Should fail for missing file");
+    }
+
+    #[test]
+    fn gql_load_data_explain() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute(
+            "EXPLAIN LOAD DATA FROM 'test.csv' FORMAT CSV WITH HEADERS AS row RETURN row.name",
+        );
+        assert!(
+            result.is_ok(),
+            "EXPLAIN LOAD DATA should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[cfg(feature = "jsonl-import")]
+    #[test]
+    fn gql_load_data_jsonl() {
+        let dir = std::env::temp_dir();
+        let jsonl_path = dir.join("grafeo_test_gql_load_jsonl.jsonl");
+        {
+            let mut f = std::fs::File::create(&jsonl_path).unwrap();
+            writeln!(f, r#"{{"name": "Alix", "age": 30, "city": "Amsterdam"}}"#).unwrap();
+            writeln!(f, r#"{{"name": "Gus", "age": 25, "city": "Berlin"}}"#).unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT JSONL AS row RETURN row.name AS name, row.age AS age ORDER BY row.name",
+            jsonl_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA JSONL failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[cfg(feature = "jsonl-import")]
+    #[test]
+    fn gql_load_data_jsonl_create_nodes() {
+        let dir = std::env::temp_dir();
+        let jsonl_path = dir.join("grafeo_test_gql_load_jsonl_create.jsonl");
+        {
+            let mut f = std::fs::File::create(&jsonl_path).unwrap();
+            writeln!(f, r#"{{"name": "Vincent", "city": "Paris"}}"#).unwrap();
+            writeln!(f, r#"{{"name": "Jules", "city": "Amsterdam"}}"#).unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT JSONL AS row INSERT (:Person {{name: row.name, city: row.city}})",
+            jsonl_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA JSONL + INSERT failed: {:?}",
+            result.err()
+        );
+
+        let verify = session
+            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(verify.rows.len(), 2);
+    }
+
+    #[cfg(feature = "jsonl-import")]
+    #[test]
+    fn gql_load_data_ndjson_alias() {
+        // NDJSON is an alias for JSONL
+        let dir = std::env::temp_dir();
+        let jsonl_path = dir.join("grafeo_test_gql_load_ndjson.jsonl");
+        {
+            let mut f = std::fs::File::create(&jsonl_path).unwrap();
+            writeln!(f, r#"{{"x": 1}}"#).unwrap();
+        }
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD DATA FROM '{}' FORMAT NDJSON AS row RETURN row.x AS x",
+            jsonl_path.display()
+        );
+        let result = session.execute(&query);
+        assert!(
+            result.is_ok(),
+            "GQL LOAD DATA NDJSON alias failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn gql_load_data_parquet_disabled_error() {
+        // When parquet-import feature is disabled, should give a clear error
+        if cfg!(not(feature = "parquet-import")) {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+            let result =
+                session.execute("LOAD DATA FROM 'test.parquet' FORMAT PARQUET AS row RETURN row");
+            assert!(
+                result.is_err(),
+                "Should fail when parquet-import is disabled"
+            );
+            let err = result.unwrap_err().to_string();
+            assert!(
+                err.contains("Parquet") || err.contains("parquet"),
+                "Error should mention Parquet: {err}"
+            );
+        }
+    }
+}
+
+// ============================================================================
 // SPARQL Features (covers sparql_translator.rs)
 // ============================================================================
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod sparql_features {
+    use grafeo_common::types::Value;
     use grafeo_engine::{Config, GrafeoDB, GraphModel};
 
     fn rdf_db() -> GrafeoDB {
@@ -1508,6 +1797,209 @@ mod sparql_features {
             .unwrap();
         // Both Alix and Gus, but only Alix has age
         assert_eq!(result.row_count(), 2);
+    }
+
+    #[test]
+    fn sparql_optional_null_values() {
+        // Verify that unbound variables from OPTIONAL produce NULL in results.
+        let db = rdf_db();
+        let session = db.session();
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/age> "30" .
+                    <http://ex.org/gus> <http://ex.org/name> "Gus" .
+                }"#,
+            )
+            .unwrap();
+        let result = session
+            .execute_sparql(
+                r#"SELECT ?name ?age WHERE {
+                    ?s <http://ex.org/name> ?name .
+                    OPTIONAL { ?s <http://ex.org/age> ?age }
+                }
+                ORDER BY ?name"#,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+        // Alix has age, Gus does not
+        // Verify Gus row has NULL for age
+        let gus_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Gus".into()))
+            .expect("Gus should appear in results");
+        assert_eq!(gus_row[1], Value::Null, "Gus has no age, should be NULL");
+    }
+
+    #[test]
+    fn sparql_nested_optional() {
+        // Nested OPTIONAL: OPTIONAL { ?x <p> ?y OPTIONAL { ?y <q> ?z } }
+        let db = rdf_db();
+        let session = db.session();
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+                    <http://ex.org/gus> <http://ex.org/name> "Gus" .
+                    <http://ex.org/gus> <http://ex.org/city> "Amsterdam" .
+                    <http://ex.org/harm> <http://ex.org/name> "Harm" .
+                }"#,
+            )
+            .unwrap();
+        let result = session
+            .execute_sparql(
+                r#"SELECT ?name ?friend ?city WHERE {
+                    ?s <http://ex.org/name> ?name .
+                    OPTIONAL {
+                        ?s <http://ex.org/knows> ?f .
+                        ?f <http://ex.org/name> ?friend .
+                        OPTIONAL { ?f <http://ex.org/city> ?city }
+                    }
+                }
+                ORDER BY ?name"#,
+            )
+            .unwrap();
+        // Alix knows Gus (who has city Amsterdam): Alix, "Gus", "Amsterdam"
+        // Gus knows nobody: Gus, NULL, NULL
+        // Harm knows nobody: Harm, NULL, NULL
+        assert_eq!(result.row_count(), 3);
+        let alix_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Alix".into()))
+            .expect("Alix should appear");
+        assert_eq!(alix_row[1], Value::String("Gus".into()));
+        assert_eq!(alix_row[2], Value::String("Amsterdam".into()));
+
+        let harm_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Harm".into()))
+            .expect("Harm should appear");
+        assert_eq!(harm_row[1], Value::Null, "Harm knows nobody");
+        assert_eq!(harm_row[2], Value::Null, "Nested optional also NULL");
+    }
+
+    #[test]
+    fn sparql_optional_with_filter_inside() {
+        // SPARQL semantics: FILTER inside OPTIONAL acts as a join condition,
+        // not a post-filter. Persons without a matching score should get NULL,
+        // not be eliminated.
+        let db = rdf_db();
+        let session = db.session();
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/score> "80" .
+                    <http://ex.org/gus> <http://ex.org/name> "Gus" .
+                    <http://ex.org/gus> <http://ex.org/score> "40" .
+                    <http://ex.org/harm> <http://ex.org/name> "Harm" .
+                }"#,
+            )
+            .unwrap();
+
+        let result = session
+            .execute_sparql(
+                r#"SELECT ?name ?score WHERE {
+                    ?s <http://ex.org/name> ?name .
+                    OPTIONAL {
+                        ?s <http://ex.org/score> ?score .
+                        FILTER(?score > "50")
+                    }
+                }
+                ORDER BY ?name"#,
+            )
+            .unwrap();
+        // All 3 persons should appear:
+        // Alix: score "80" > "50" -> bound
+        // Gus: score "40" NOT > "50" -> NULL (filter eliminates inside optional)
+        // Harm: no score -> NULL
+        assert_eq!(
+            result.row_count(),
+            3,
+            "All 3 persons preserved: FILTER inside OPTIONAL is a join condition"
+        );
+        let alix_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Alix".into()))
+            .expect("Alix should appear");
+        assert_eq!(
+            alix_row[1],
+            Value::String("80".into()),
+            "Alix score passes filter"
+        );
+
+        let gus_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Gus".into()))
+            .expect("Gus should appear");
+        assert_eq!(
+            gus_row[1],
+            Value::Null,
+            "Gus score fails filter, should be NULL"
+        );
+
+        let harm_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Harm".into()))
+            .expect("Harm should appear");
+        assert_eq!(
+            harm_row[1],
+            Value::Null,
+            "Harm has no score, should be NULL"
+        );
+    }
+
+    #[test]
+    fn sparql_optional_shared_variables() {
+        // Shared variable between required and optional patterns.
+        let db = rdf_db();
+        let session = db.session();
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    <http://ex.org/alix> <http://ex.org/name> "Alix" .
+                    <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+                    <http://ex.org/gus> <http://ex.org/name> "Gus" .
+                }"#,
+            )
+            .unwrap();
+        let result = session
+            .execute_sparql(
+                r#"SELECT ?name ?friend WHERE {
+                    ?s <http://ex.org/name> ?name .
+                    OPTIONAL { ?s <http://ex.org/knows> ?f . ?f <http://ex.org/name> ?friend }
+                }
+                ORDER BY ?name"#,
+            )
+            .unwrap();
+        // Alix knows Gus -> Alix, Gus
+        // Gus knows nobody -> Gus, NULL
+        assert_eq!(result.row_count(), 2);
+        let alix_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Alix".into()))
+            .expect("Alix should appear");
+        assert_eq!(alix_row[1], Value::String("Gus".into()));
+
+        let gus_row = result
+            .rows
+            .iter()
+            .find(|r| r[0] == Value::String("Gus".into()))
+            .expect("Gus should appear");
+        assert_eq!(
+            gus_row[1],
+            Value::Null,
+            "Gus has no knows, friend should be NULL"
+        );
     }
 
     #[test]
@@ -1648,7 +2140,7 @@ mod sparql_features {
                 }"#,
             )
             .unwrap();
-        assert!(result.row_count() >= 3, "One-or-more should find b, c, d");
+        assert_eq!(result.row_count(), 3, "One-or-more should find b, c, d");
     }
 
     #[test]
@@ -1671,7 +2163,12 @@ mod sparql_features {
                 }"#,
             )
             .unwrap();
-        assert!(result.row_count() >= 3, "Zero-or-more should find a, b, c");
+        // Zero-or-more from fixed subject: 0-hop (a), 1-hop (b), 2-hop (c) = 3 results
+        assert_eq!(
+            result.row_count(),
+            3,
+            "Zero-or-more from a with chain a->b->c"
+        );
     }
 
     #[test]

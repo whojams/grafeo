@@ -1,5 +1,6 @@
 //! GQL Parser.
 
+#[allow(clippy::wildcard_imports)]
 use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result, SourceSpan};
@@ -270,7 +271,8 @@ impl<'a> Parser<'a> {
             | TokenKind::Optional
             | TokenKind::Unwind
             | TokenKind::Merge
-            | TokenKind::For => self.parse_query().map(Statement::Query),
+            | TokenKind::For
+            | TokenKind::Return => self.parse_query().map(Statement::Query),
             TokenKind::Insert => self
                 .parse_insert()
                 .map(|s| Statement::DataModification(DataModificationStatement::Insert(s))),
@@ -354,15 +356,17 @@ impl<'a> Parser<'a> {
                         )))
                     }
                     "ALTER" => self.parse_alter(),
+                    "SHOW" => self.parse_show().map(Statement::Schema),
+                    "LOAD" => self.parse_query().map(Statement::Query),
                     _ => Err(self.error(
                         "Expected MATCH, INSERT, DELETE, MERGE, UNWIND, FOR, CREATE, CALL, \
-                         DROP, ALTER, USE, SESSION, START, COMMIT, ROLLBACK, or SAVEPOINT",
+                         DROP, ALTER, SHOW, LOAD, USE, SESSION, START, COMMIT, ROLLBACK, or SAVEPOINT",
                     )),
                 }
             }
             _ => Err(self.error(
                 "Expected MATCH, INSERT, DELETE, MERGE, UNWIND, FOR, CREATE, CALL, \
-                 DROP, USE, SESSION, START, COMMIT, or ROLLBACK",
+                 DROP, SHOW, LOAD, USE, SESSION, START, COMMIT, or ROLLBACK",
             )),
         }
     }
@@ -578,6 +582,12 @@ impl<'a> Parser<'a> {
                 {
                     let bindings = self.parse_let_clause()?;
                     ordered_clauses.push(QueryClause::Let(bindings));
+                }
+                _ if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("LOAD") =>
+                {
+                    let clause = self.parse_load_data_clause()?;
+                    ordered_clauses.push(QueryClause::LoadData(clause));
                 }
                 _ => break,
             }
@@ -978,6 +988,159 @@ impl<'a> Parser<'a> {
             self.advance(); // consume comma
         }
         Ok(bindings)
+    }
+
+    /// Parses `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET [WITH HEADERS] AS variable [FIELDTERMINATOR 'char']`
+    /// Also accepts Cypher-compatible `LOAD CSV [WITH HEADERS] FROM 'path' AS variable [FIELDTERMINATOR 'char']`
+    fn parse_load_data_clause(&mut self) -> Result<LoadDataClause> {
+        let span_start = self.current.span.start;
+        self.advance(); // consume LOAD
+
+        // Check for Cypher-compatible LOAD CSV syntax
+        if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("CSV") {
+            return self.parse_load_csv_compat(span_start);
+        }
+
+        // GQL syntax: LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET [WITH HEADERS] AS variable
+        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("DATA") {
+            return Err(self.error("Expected DATA or CSV after LOAD"));
+        }
+        self.advance(); // consume DATA
+
+        // FROM 'path'
+        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("FROM") {
+            return Err(self.error("Expected FROM after DATA in LOAD DATA"));
+        }
+        self.advance(); // consume FROM
+        let path = self.parse_string_value()?;
+
+        // FORMAT CSV|JSONL|PARQUET
+        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("FORMAT") {
+            return Err(self.error("Expected FORMAT after file path in LOAD DATA"));
+        }
+        self.advance(); // consume FORMAT
+
+        let format = if self.is_identifier() {
+            let name = self.get_identifier_name();
+            self.advance();
+            match name.to_ascii_uppercase().as_str() {
+                "CSV" => LoadFormat::Csv,
+                "JSONL" | "NDJSON" => LoadFormat::Jsonl,
+                "PARQUET" => LoadFormat::Parquet,
+                _ => {
+                    return Err(self.error(&format!(
+                        "Unknown format '{name}', expected CSV, JSONL, or PARQUET"
+                    )));
+                }
+            }
+        } else {
+            return Err(self.error("Expected format name (CSV, JSONL, or PARQUET)"));
+        };
+
+        // Optional: WITH HEADERS (CSV only)
+        let with_headers = if self.current.kind == TokenKind::With {
+            self.advance();
+            if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("HEADERS")
+            {
+                return Err(self.error("Expected HEADERS after WITH in LOAD DATA"));
+            }
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // AS variable
+        self.expect(TokenKind::As)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable name after AS in LOAD DATA"));
+        }
+        let variable = self.get_identifier_name();
+        self.advance();
+
+        // Optional: FIELDTERMINATOR 'char'
+        let field_terminator = self.parse_optional_field_terminator()?;
+
+        Ok(LoadDataClause {
+            path,
+            format,
+            with_headers,
+            variable,
+            field_terminator,
+            span: SourceSpan::new(span_start, self.current.span.end, 1, 1),
+        })
+    }
+
+    /// Parses Cypher-compatible `LOAD CSV [WITH HEADERS] FROM 'path' AS variable [FIELDTERMINATOR 'char']`.
+    fn parse_load_csv_compat(&mut self, span_start: usize) -> Result<LoadDataClause> {
+        self.advance(); // consume CSV
+
+        // Optional: WITH HEADERS
+        let with_headers = if self.current.kind == TokenKind::With {
+            self.advance();
+            if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("HEADERS")
+            {
+                return Err(self.error("Expected HEADERS after WITH"));
+            }
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // FROM 'path'
+        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("FROM") {
+            return Err(self.error("Expected FROM after WITH HEADERS or CSV"));
+        }
+        self.advance(); // consume FROM
+        let path = self.parse_string_value()?;
+
+        // AS variable
+        self.expect(TokenKind::As)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable name after AS"));
+        }
+        let variable = self.get_identifier_name();
+        self.advance();
+
+        // Optional: FIELDTERMINATOR 'char'
+        let field_terminator = self.parse_optional_field_terminator()?;
+
+        Ok(LoadDataClause {
+            path,
+            format: LoadFormat::Csv,
+            with_headers,
+            variable,
+            field_terminator,
+            span: SourceSpan::new(span_start, self.current.span.end, 1, 1),
+        })
+    }
+
+    /// Expects and consumes a string literal, returning the unescaped value.
+    fn parse_string_value(&mut self) -> Result<String> {
+        if self.current.kind != TokenKind::String {
+            return Err(self.error("Expected string literal"));
+        }
+        let text = &self.current.text;
+        let inner = &text[1..text.len() - 1];
+        let value = unescape_string(inner);
+        self.advance();
+        Ok(value)
+    }
+
+    /// Parses an optional `FIELDTERMINATOR 'char'` clause.
+    fn parse_optional_field_terminator(&mut self) -> Result<Option<char>> {
+        if self.is_identifier()
+            && self
+                .get_identifier_name()
+                .eq_ignore_ascii_case("FIELDTERMINATOR")
+        {
+            self.advance();
+            let term = self.parse_string_value()?;
+            Ok(term.chars().next())
+        } else {
+            Ok(None)
+        }
     }
 
     fn parse_merge_clause(&mut self) -> Result<MergeClause> {
@@ -2956,6 +3119,35 @@ impl<'a> Parser<'a> {
                         index: Box::new(index),
                     };
                 }
+                // n:Label label-check syntax (compact form of IS LABELED).
+                // Multiple labels (n:Person:Actor) are ANDead together.
+                TokenKind::Colon => {
+                    let base = expr;
+                    let mut combined: Option<Expression> = None;
+                    while self.current.kind == TokenKind::Colon {
+                        self.advance();
+                        if !self.is_label_or_type_name() {
+                            return Err(self.error("Expected label name after ':'"));
+                        }
+                        let label = self.get_identifier_name();
+                        self.advance();
+                        let check = Expression::FunctionCall {
+                            name: "hasLabel".to_string(),
+                            args: vec![base.clone(), Expression::Literal(Literal::String(label))],
+                            distinct: false,
+                        };
+                        combined = Some(match combined {
+                            None => check,
+                            Some(prev) => Expression::Binary {
+                                left: Box::new(prev),
+                                op: BinaryOp::And,
+                                right: Box::new(check),
+                            },
+                        });
+                    }
+                    expr = combined
+                        .ok_or_else(|| self.error("Expected at least one label after ':'"))?;
+                }
                 _ => break,
             }
         }
@@ -3817,6 +4009,28 @@ impl<'a> Parser<'a> {
                 let name = self.get_identifier_name();
                 self.advance();
 
+                // Optional EXTENDS <parent1>, <parent2>
+                let parent_types = if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("EXTENDS")
+                {
+                    self.advance();
+                    let mut parents = Vec::new();
+                    if self.is_identifier() || self.is_label_or_type_name() {
+                        parents.push(self.get_identifier_name());
+                        self.advance();
+                        while self.current.kind == TokenKind::Comma {
+                            self.advance();
+                            if self.is_identifier() || self.is_label_or_type_name() {
+                                parents.push(self.get_identifier_name());
+                                self.advance();
+                            }
+                        }
+                    }
+                    parents
+                } else {
+                    Vec::new()
+                };
+
                 // Parse property definitions
                 let properties = if self.current.kind == TokenKind::LParen {
                     self.parse_property_definitions()?
@@ -3827,6 +4041,7 @@ impl<'a> Parser<'a> {
                 Ok(SchemaStatement::CreateNodeType(CreateNodeTypeStatement {
                     name,
                     properties,
+                    parent_types,
                     if_not_exists,
                     or_replace,
                     span: None,
@@ -3845,6 +4060,46 @@ impl<'a> Parser<'a> {
                 let name = self.get_identifier_name();
                 self.advance();
 
+                // Optional CONNECTING (Source) TO (Target)
+                let (source_node_types, target_node_types) = if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("CONNECTING")
+                {
+                    self.advance();
+                    self.expect(TokenKind::LParen)?;
+                    let mut sources = Vec::new();
+                    while self.is_identifier() || self.is_label_or_type_name() {
+                        sources.push(self.get_identifier_name());
+                        self.advance();
+                        if self.current.kind == TokenKind::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    if !(self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("TO"))
+                    {
+                        return Err(self.error("Expected 'TO' after source node types"));
+                    }
+                    self.advance();
+                    self.expect(TokenKind::LParen)?;
+                    let mut targets = Vec::new();
+                    while self.is_identifier() || self.is_label_or_type_name() {
+                        targets.push(self.get_identifier_name());
+                        self.advance();
+                        if self.current.kind == TokenKind::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    (sources, targets)
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+
                 let properties = if self.current.kind == TokenKind::LParen {
                     self.parse_property_definitions()?
                 } else {
@@ -3854,6 +4109,8 @@ impl<'a> Parser<'a> {
                 Ok(SchemaStatement::CreateEdgeType(CreateEdgeTypeStatement {
                     name,
                     properties,
+                    source_node_types,
+                    target_node_types,
                     if_not_exists,
                     or_replace,
                     span: None,
@@ -4427,13 +4684,28 @@ impl<'a> Parser<'a> {
         Ok((node_types, edge_types, open))
     }
 
-    /// Parses the ISO-syntax body of CREATE GRAPH TYPE:
-    /// `(NODE TYPE Name (props), EDGE TYPE Name (props), ...)`
+    /// Parses the ISO-syntax body of CREATE GRAPH TYPE.
+    ///
+    /// Supports two forms:
+    /// - Verbose: `(NODE TYPE Name (props), EDGE TYPE Name (props), ...)`
+    /// - Pattern: `((:Person {name STRING})-[:KNOWS {since INT64}]->(:Person), ...)`
     ///
     /// Returns a list of inline element type definitions.
     fn parse_graph_type_iso_body(&mut self) -> Result<Vec<InlineElementType>> {
         self.expect(TokenKind::LParen)?;
 
+        // Detect which form: pattern form starts with `(` (nested paren for node pattern),
+        // verbose form starts with NODE or EDGE.
+        if self.current.kind == TokenKind::LParen {
+            self.parse_graph_type_pattern_body()
+        } else {
+            self.parse_graph_type_verbose_body()
+        }
+    }
+
+    /// Parses the verbose form: `NODE TYPE Name (props), EDGE TYPE Name (props), ...)`
+    /// (closing `)` included).
+    fn parse_graph_type_verbose_body(&mut self) -> Result<Vec<InlineElementType>> {
         let mut types = Vec::new();
 
         while self.current.kind != TokenKind::RParen && self.current.kind != TokenKind::Eof {
@@ -4496,6 +4768,8 @@ impl<'a> Parser<'a> {
                     name: type_name,
                     properties,
                     key_labels,
+                    source_node_types: Vec::new(),
+                    target_node_types: Vec::new(),
                 });
             }
 
@@ -4507,6 +4781,148 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::RParen)?;
         Ok(types)
+    }
+
+    /// Parses the pattern form of a graph type body:
+    /// `(:Person {name STRING})-[:KNOWS {since INT64}]->(:Person), ...)`
+    /// (closing `)` included).
+    fn parse_graph_type_pattern_body(&mut self) -> Result<Vec<InlineElementType>> {
+        let mut types = Vec::new();
+        // Track which node type names we've already emitted so we don't duplicate them.
+        let mut seen_node_types = std::collections::HashSet::new();
+
+        while self.current.kind != TokenKind::RParen && self.current.kind != TokenKind::Eof {
+            // Parse the first node pattern: (:Label {props})
+            let (src_label, src_props) = self.parse_graph_type_node_pattern()?;
+
+            // Check if an edge follows: `-[` or `<-[`
+            if self.current.kind == TokenKind::Minus || self.current.kind == TokenKind::LeftArrow {
+                let backward = self.current.kind == TokenKind::LeftArrow;
+                if backward {
+                    // <-[ : incoming direction
+                    self.advance(); // consume `<-`
+                } else {
+                    // -[ : outgoing or undirected
+                    self.advance(); // consume `-`
+                }
+
+                self.expect(TokenKind::LBracket)?;
+
+                // Parse edge label: `:EdgeType`
+                self.expect(TokenKind::Colon)?;
+                if !self.is_identifier() && !self.is_label_or_type_name() {
+                    return Err(self.error("Expected edge type name after `:` in pattern"));
+                }
+                let edge_label = self.get_identifier_name();
+                self.advance();
+
+                // Optional properties: { prop TYPE, ... }
+                let edge_props = if self.current.kind == TokenKind::LBrace {
+                    self.parse_property_definitions_braces()?
+                } else {
+                    Vec::new()
+                };
+
+                self.expect(TokenKind::RBracket)?;
+
+                // Parse direction after `]`: `->` for outgoing, `-` for undirected
+                let forward = if self.current.kind == TokenKind::Arrow {
+                    self.advance(); // consume `->`
+                    true
+                } else if self.current.kind == TokenKind::Minus {
+                    self.advance(); // consume `-` (undirected)
+                    false
+                } else {
+                    return Err(self.error("Expected `->` or `-` after edge pattern `]`"));
+                };
+
+                // Parse target node: (:Label {props})
+                let (tgt_label, tgt_props) = self.parse_graph_type_node_pattern()?;
+
+                // Determine source and target based on direction
+                let (effective_src, effective_tgt) = if backward {
+                    (tgt_label.clone(), src_label.clone())
+                } else {
+                    (src_label.clone(), tgt_label.clone())
+                };
+
+                let (src_types, tgt_types) = if !forward && !backward {
+                    // Undirected: both directions
+                    (
+                        vec![src_label.clone(), tgt_label.clone()],
+                        vec![src_label.clone(), tgt_label.clone()],
+                    )
+                } else {
+                    (vec![effective_src], vec![effective_tgt])
+                };
+
+                // Add node types (deduplicated)
+                if seen_node_types.insert(src_label.clone()) {
+                    types.push(InlineElementType::Node {
+                        name: src_label,
+                        properties: src_props,
+                        key_labels: Vec::new(),
+                    });
+                }
+                if seen_node_types.insert(tgt_label.clone()) {
+                    types.push(InlineElementType::Node {
+                        name: tgt_label,
+                        properties: tgt_props,
+                        key_labels: Vec::new(),
+                    });
+                }
+
+                // Add edge type
+                types.push(InlineElementType::Edge {
+                    name: edge_label,
+                    properties: edge_props,
+                    key_labels: Vec::new(),
+                    source_node_types: src_types,
+                    target_node_types: tgt_types,
+                });
+            } else {
+                // Standalone node pattern
+                if seen_node_types.insert(src_label.clone()) {
+                    types.push(InlineElementType::Node {
+                        name: src_label,
+                        properties: src_props,
+                        key_labels: Vec::new(),
+                    });
+                }
+            }
+
+            // Optional comma separator
+            if self.current.kind == TokenKind::Comma {
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::RParen)?;
+        Ok(types)
+    }
+
+    /// Parses a node pattern inside a graph type pattern body: `(:Label {prop TYPE, ...})`.
+    ///
+    /// Returns `(label, properties)`.
+    fn parse_graph_type_node_pattern(&mut self) -> Result<(String, Vec<PropertyDefinition>)> {
+        self.expect(TokenKind::LParen)?;
+        self.expect(TokenKind::Colon)?;
+
+        if !self.is_identifier() && !self.is_label_or_type_name() {
+            return Err(self.error("Expected label name in node pattern"));
+        }
+        let label = self.get_identifier_name();
+        self.advance();
+
+        // Optional property definitions in braces
+        let properties = if self.current.kind == TokenKind::LBrace {
+            self.parse_property_definitions_braces()?
+        } else {
+            Vec::new()
+        };
+
+        self.expect(TokenKind::RParen)?;
+        Ok((label, properties))
     }
 
     /// Parses `[T1, T2, T3]`, returning a list of identifiers.
@@ -4733,10 +5149,30 @@ impl<'a> Parser<'a> {
                     } else {
                         true
                     };
+                    // Optional DEFAULT <literal>
+                    let default_value = if self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("DEFAULT")
+                    {
+                        self.advance();
+                        let lit = match self.current.kind {
+                            TokenKind::String
+                            | TokenKind::Integer
+                            | TokenKind::Float
+                            | TokenKind::True
+                            | TokenKind::False
+                            | TokenKind::Null => self.current.text.clone(),
+                            _ => return Err(self.error("Expected literal value after DEFAULT")),
+                        };
+                        self.advance();
+                        Some(lit)
+                    } else {
+                        None
+                    };
                     alterations.push(TypeAlteration::AddProperty(PropertyDefinition {
                         name: prop_name,
                         data_type,
                         nullable,
+                        default_value,
                     }));
                 }
                 "DROP" => {
@@ -4887,10 +5323,31 @@ impl<'a> Parser<'a> {
                     true
                 };
 
+                // Optional DEFAULT <literal>
+                let default_value = if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("DEFAULT")
+                {
+                    self.advance();
+                    let lit = match self.current.kind {
+                        TokenKind::String
+                        | TokenKind::Integer
+                        | TokenKind::Float
+                        | TokenKind::True
+                        | TokenKind::False
+                        | TokenKind::Null => self.current.text.clone(),
+                        _ => return Err(self.error("Expected literal value after DEFAULT")),
+                    };
+                    self.advance();
+                    Some(lit)
+                } else {
+                    None
+                };
+
                 defs.push(PropertyDefinition {
                     name,
                     data_type,
                     nullable,
+                    default_value,
                 });
 
                 if self.current.kind != TokenKind::Comma {
@@ -4902,6 +5359,177 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::RParen)?;
         Ok(defs)
+    }
+
+    /// Parses property definitions inside braces: `{ name TYPE [NOT NULL], ... }`.
+    ///
+    /// Used by pattern-form graph type syntax where properties use `{}` instead of `()`.
+    fn parse_property_definitions_braces(&mut self) -> Result<Vec<PropertyDefinition>> {
+        self.expect(TokenKind::LBrace)?;
+
+        let mut defs = Vec::new();
+
+        if self.current.kind != TokenKind::RBrace {
+            loop {
+                if !self.is_identifier() {
+                    return Err(self.error("Expected property name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+
+                if !self.is_identifier() {
+                    return Err(self.error("Expected type name"));
+                }
+                let data_type = self.get_identifier_name();
+                self.advance();
+
+                let nullable = if self.current.kind == TokenKind::Not {
+                    self.advance();
+                    if self.current.kind != TokenKind::Null {
+                        return Err(self.error("Expected NULL after NOT"));
+                    }
+                    self.advance();
+                    false
+                } else {
+                    true
+                };
+
+                // Optional DEFAULT <literal>
+                let default_value = if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("DEFAULT")
+                {
+                    self.advance();
+                    let lit = match self.current.kind {
+                        TokenKind::String
+                        | TokenKind::Integer
+                        | TokenKind::Float
+                        | TokenKind::True
+                        | TokenKind::False
+                        | TokenKind::Null => self.current.text.clone(),
+                        _ => return Err(self.error("Expected literal value after DEFAULT")),
+                    };
+                    self.advance();
+                    Some(lit)
+                } else {
+                    None
+                };
+
+                defs.push(PropertyDefinition {
+                    name,
+                    data_type,
+                    nullable,
+                    default_value,
+                });
+
+                if self.current.kind != TokenKind::Comma {
+                    break;
+                }
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::RBrace)?;
+        Ok(defs)
+    }
+
+    /// Parses a SHOW statement.
+    ///
+    /// ```text
+    /// SHOW CONSTRAINTS
+    /// SHOW INDEXES
+    /// SHOW NODE TYPES
+    /// SHOW EDGE TYPES
+    /// SHOW GRAPH TYPES
+    /// SHOW GRAPH TYPE <name>
+    /// ```
+    fn parse_show(&mut self) -> Result<SchemaStatement> {
+        self.advance(); // consume SHOW
+
+        if !self.is_identifier()
+            && self.current.kind != TokenKind::Node
+            && self.current.kind != TokenKind::Edge
+            && self.current.kind != TokenKind::Index
+        {
+            return Err(self.error(
+                "Expected CONSTRAINTS, INDEXES, NODE TYPES, EDGE TYPES, GRAPHS, GRAPH TYPES, or GRAPH TYPE <name> after SHOW",
+            ));
+        }
+
+        match self.current.kind {
+            TokenKind::Node => {
+                // SHOW NODE TYPES
+                self.advance();
+                if self.current.kind != TokenKind::Type
+                    && !(self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("TYPES"))
+                {
+                    return Err(self.error("Expected TYPES after SHOW NODE"));
+                }
+                self.advance();
+                Ok(SchemaStatement::ShowNodeTypes)
+            }
+            TokenKind::Edge => {
+                // SHOW EDGE TYPES
+                self.advance();
+                if self.current.kind != TokenKind::Type
+                    && !(self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("TYPES"))
+                {
+                    return Err(self.error("Expected TYPES after SHOW EDGE"));
+                }
+                self.advance();
+                Ok(SchemaStatement::ShowEdgeTypes)
+            }
+            TokenKind::Index => {
+                // SHOW INDEXES (INDEX is a keyword token)
+                self.advance();
+                // Allow optional plural "ES" as a separate token won't happen,
+                // but the keyword is INDEX. Accept both SHOW INDEX and SHOW INDEXES.
+                Ok(SchemaStatement::ShowIndexes)
+            }
+            _ => {
+                let name = self.get_identifier_name();
+                match name.to_uppercase().as_str() {
+                    "CONSTRAINTS" => {
+                        self.advance();
+                        Ok(SchemaStatement::ShowConstraints)
+                    }
+                    "INDEXES" => {
+                        self.advance();
+                        Ok(SchemaStatement::ShowIndexes)
+                    }
+                    "GRAPHS" => {
+                        self.advance();
+                        Ok(SchemaStatement::ShowGraphs)
+                    }
+                    "GRAPH" => {
+                        self.advance();
+                        // SHOW GRAPH TYPES or SHOW GRAPH TYPE <name>
+                        if self.current.kind == TokenKind::Type {
+                            self.advance();
+                            // SHOW GRAPH TYPE <name> (singular)
+                            if !self.is_identifier() {
+                                return Err(self.error("Expected graph type name after SHOW GRAPH TYPE"));
+                            }
+                            let type_name = self.get_identifier_name();
+                            self.advance();
+                            Ok(SchemaStatement::ShowGraphType(type_name))
+                        } else if self.is_identifier()
+                            && self.get_identifier_name().eq_ignore_ascii_case("TYPES")
+                        {
+                            // SHOW GRAPH TYPES (plural)
+                            self.advance();
+                            Ok(SchemaStatement::ShowGraphTypes)
+                        } else {
+                            Err(self.error("Expected TYPE <name> or TYPES after SHOW GRAPH"))
+                        }
+                    }
+                    _ => Err(self.error(
+                        "Expected CONSTRAINTS, INDEXES, NODE TYPES, EDGE TYPES, GRAPHS, GRAPH TYPES, or GRAPH TYPE <name> after SHOW",
+                    )),
+                }
+            }
+        }
     }
 
     fn advance(&mut self) {
@@ -5057,11 +5685,12 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::RParen)?;
         }
 
-        // Expect AS
-        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("AS") {
+        // Expect AS (TokenKind::As is a keyword, not a contextual identifier)
+        if self.current.kind == TokenKind::As {
+            self.advance();
+        } else {
             return Err(self.error("Expected AS before procedure body"));
         }
-        self.advance();
 
         // Parse body: { ... } with brace nesting
         self.expect(TokenKind::LBrace)?;
@@ -5503,29 +6132,79 @@ mod tests {
     #[test]
     fn test_parse_match_with_label() {
         let mut parser = Parser::new("MATCH (n:Person) RETURN n");
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            assert_eq!(query.match_clauses.len(), 1);
+            if let Pattern::Node(node) = &query.match_clauses[0].patterns[0].pattern {
+                assert_eq!(node.variable, Some("n".to_string()));
+                assert_eq!(node.labels, vec!["Person".to_string()]);
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
     }
 
     #[test]
     fn test_parse_match_with_where() {
         let mut parser = Parser::new("MATCH (n:Person) WHERE n.age > 30 RETURN n");
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            assert!(
+                query.where_clause.is_some(),
+                "WHERE clause should be parsed"
+            );
+            let where_clause = query.where_clause.as_ref().unwrap();
+            if let Expression::Binary { op, .. } = &where_clause.expression {
+                assert_eq!(*op, BinaryOp::Gt);
+            } else {
+                panic!("Expected binary expression in WHERE clause");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
     }
 
     #[test]
     fn test_parse_path_pattern() {
         let mut parser = Parser::new("MATCH (a)-[:KNOWS]->(b) RETURN a, b");
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Pattern::Path(path) = &query.match_clauses[0].patterns[0].pattern {
+                assert_eq!(path.source.variable, Some("a".to_string()));
+                assert_eq!(path.edges.len(), 1);
+                assert_eq!(path.edges[0].types, vec!["KNOWS".to_string()]);
+                assert_eq!(
+                    path.edges[0].direction,
+                    EdgeDirection::Outgoing,
+                    "Arrow should point outward"
+                );
+                assert_eq!(path.edges[0].target.variable, Some("b".to_string()));
+            } else {
+                panic!("Expected path pattern");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
     }
 
     #[test]
     fn test_parse_insert() {
         let mut parser = Parser::new("INSERT (n:Person {name: 'Alix'})");
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let result = parser.parse().unwrap();
+        if let Statement::DataModification(DataModificationStatement::Insert(insert)) = result {
+            assert_eq!(insert.patterns.len(), 1);
+            if let Pattern::Node(node) = &insert.patterns[0] {
+                assert_eq!(node.labels, vec!["Person".to_string()]);
+                assert_eq!(node.properties.len(), 1);
+                assert_eq!(node.properties[0].0, "name");
+            } else {
+                panic!("Expected node pattern");
+            }
+        } else {
+            panic!("Expected Insert statement");
+        }
     }
 
     #[test]
@@ -8155,5 +8834,554 @@ mod tests {
             result.is_ok(),
             "EXISTS bare pattern with WHERE should parse: {result:?}"
         );
+    }
+
+    // ==================== Pattern-form graph type syntax ====================
+
+    #[test]
+    fn test_parse_graph_type_pattern_form_simple() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE social (\
+                (:Person {name STRING NOT NULL})-[:KNOWS {since INTEGER}]->(:Person)\
+            )",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Pattern-form graph type should parse: {result:?}"
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            assert_eq!(stmt.name, "social");
+            assert!(stmt.node_types.contains(&"Person".to_string()));
+            assert!(stmt.edge_types.contains(&"KNOWS".to_string()));
+            // Should have Person node type and KNOWS edge type
+            let node_count = stmt
+                .inline_types
+                .iter()
+                .filter(|t| matches!(t, InlineElementType::Node { .. }))
+                .count();
+            let edge_count = stmt
+                .inline_types
+                .iter()
+                .filter(|t| matches!(t, InlineElementType::Edge { .. }))
+                .count();
+            assert_eq!(
+                node_count, 1,
+                "Should have 1 node type (Person, deduplicated)"
+            );
+            assert_eq!(edge_count, 1, "Should have 1 edge type (KNOWS)");
+            // Check KNOWS edge has source/target
+            for t in &stmt.inline_types {
+                if let InlineElementType::Edge {
+                    name,
+                    source_node_types,
+                    target_node_types,
+                    ..
+                } = t
+                {
+                    assert_eq!(name, "KNOWS");
+                    assert_eq!(source_node_types, &["Person"]);
+                    assert_eq!(target_node_types, &["Person"]);
+                }
+            }
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    #[test]
+    fn test_parse_graph_type_pattern_form_multiple_patterns() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE social (\
+                (:Person {name STRING NOT NULL})-[:KNOWS {since INTEGER}]->(:Person),\
+                (:Person)-[:LIVES_IN]->(:City)\
+            )",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Multiple pattern-form entries should parse: {result:?}"
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            assert_eq!(stmt.name, "social");
+            assert!(stmt.node_types.contains(&"Person".to_string()));
+            assert!(stmt.node_types.contains(&"City".to_string()));
+            assert!(stmt.edge_types.contains(&"KNOWS".to_string()));
+            assert!(stmt.edge_types.contains(&"LIVES_IN".to_string()));
+            // Person should appear only once despite being in two patterns
+            let node_count = stmt
+                .inline_types
+                .iter()
+                .filter(|t| matches!(t, InlineElementType::Node { .. }))
+                .count();
+            assert_eq!(node_count, 2, "Should have 2 node types (Person, City)");
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    #[test]
+    fn test_parse_graph_type_pattern_form_standalone_node() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE basic_nodes (\
+                (:Person {name STRING})\
+            )",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Standalone node pattern should parse: {result:?}"
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            assert_eq!(stmt.inline_types.len(), 1);
+            assert!(matches!(
+                &stmt.inline_types[0],
+                InlineElementType::Node { name, .. } if name == "Person"
+            ));
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    #[test]
+    fn test_parse_graph_type_pattern_form_no_props() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE bare (\
+                (:Person)-[:KNOWS]->(:Person)\
+            )",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Pattern without properties should parse: {result:?}"
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            // Node should have no properties
+            for t in &stmt.inline_types {
+                if let InlineElementType::Node { properties, .. } = t {
+                    assert!(properties.is_empty());
+                }
+                if let InlineElementType::Edge { properties, .. } = t {
+                    assert!(properties.is_empty());
+                }
+            }
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    #[test]
+    fn test_parse_graph_type_pattern_form_backward_edge() {
+        let mut parser = Parser::new(
+            "CREATE GRAPH TYPE rev (\
+                (:City)<-[:LIVES_IN]-(:Person)\
+            )",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "Backward edge pattern should parse: {result:?}"
+        );
+        if let Statement::Schema(SchemaStatement::CreateGraphType(stmt)) = result.unwrap() {
+            for t in &stmt.inline_types {
+                if let InlineElementType::Edge {
+                    name,
+                    source_node_types,
+                    target_node_types,
+                    ..
+                } = t
+                {
+                    assert_eq!(name, "LIVES_IN");
+                    // Backward: source is Person (right side), target is City (left side)
+                    assert_eq!(source_node_types, &["Person"]);
+                    assert_eq!(target_node_types, &["City"]);
+                }
+            }
+        } else {
+            panic!("Expected CreateGraphType");
+        }
+    }
+
+    // ==================== SHOW commands ====================
+
+    #[test]
+    fn test_parse_show_constraints() {
+        let mut parser = Parser::new("SHOW CONSTRAINTS");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW CONSTRAINTS should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowConstraints)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_indexes() {
+        let mut parser = Parser::new("SHOW INDEXES");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW INDEXES should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowIndexes)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_index_singular() {
+        // INDEX is a keyword token, so SHOW INDEX should also work
+        let mut parser = Parser::new("SHOW INDEX");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW INDEX should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowIndexes)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_node_types() {
+        let mut parser = Parser::new("SHOW NODE TYPES");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW NODE TYPES should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowNodeTypes)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_edge_types() {
+        let mut parser = Parser::new("SHOW EDGE TYPES");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW EDGE TYPES should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowEdgeTypes)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_graph_types() {
+        let mut parser = Parser::new("SHOW GRAPH TYPES");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW GRAPH TYPES should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowGraphTypes)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_graphs() {
+        let mut parser = Parser::new("SHOW GRAPHS");
+        let result = parser.parse();
+        assert!(result.is_ok(), "SHOW GRAPHS should parse: {result:?}");
+        assert!(matches!(
+            result.unwrap(),
+            Statement::Schema(SchemaStatement::ShowGraphs)
+        ));
+    }
+
+    #[test]
+    fn test_parse_show_graph_type_named() {
+        let mut parser = Parser::new("SHOW GRAPH TYPE social");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "SHOW GRAPH TYPE <name> should parse: {result:?}"
+        );
+        if let Statement::Schema(SchemaStatement::ShowGraphType(name)) = result.unwrap() {
+            assert_eq!(name, "social");
+        } else {
+            panic!("Expected ShowGraphType");
+        }
+    }
+
+    // --- LOAD DATA ---
+
+    #[test]
+    fn test_parse_load_data_csv() {
+        let mut parser = Parser::new(
+            "LOAD DATA FROM 'people.csv' FORMAT CSV WITH HEADERS AS row RETURN row.name",
+        );
+        let result = parser.parse();
+        assert!(result.is_ok(), "LOAD DATA CSV parse failed: {result:?}");
+        if let Statement::Query(query) = result.unwrap() {
+            assert!(!query.ordered_clauses.is_empty());
+            assert!(matches!(query.ordered_clauses[0], QueryClause::LoadData(_)));
+            if let QueryClause::LoadData(ref ld) = query.ordered_clauses[0] {
+                assert_eq!(ld.path, "people.csv");
+                assert_eq!(ld.format, LoadFormat::Csv);
+                assert!(ld.with_headers);
+                assert_eq!(ld.variable, "row");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_data_csv_no_headers() {
+        let mut parser = Parser::new("LOAD DATA FROM 'data.csv' FORMAT CSV AS r RETURN r[0]");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "LOAD DATA CSV no headers parse failed: {result:?}"
+        );
+        if let Statement::Query(query) = result.unwrap()
+            && let QueryClause::LoadData(ref ld) = query.ordered_clauses[0]
+        {
+            assert!(!ld.with_headers);
+            assert_eq!(ld.variable, "r");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_data_jsonl() {
+        let mut parser =
+            Parser::new("LOAD DATA FROM 'events.jsonl' FORMAT JSONL AS row RETURN row.title");
+        let result = parser.parse();
+        assert!(result.is_ok(), "LOAD DATA JSONL parse failed: {result:?}");
+        if let Statement::Query(query) = result.unwrap()
+            && let QueryClause::LoadData(ref ld) = query.ordered_clauses[0]
+        {
+            assert_eq!(ld.format, LoadFormat::Jsonl);
+            assert_eq!(ld.path, "events.jsonl");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_data_ndjson() {
+        let mut parser =
+            Parser::new("LOAD DATA FROM 'data.ndjson' FORMAT NDJSON AS row RETURN row");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "LOAD DATA NDJSON alias parse failed: {result:?}"
+        );
+        if let Statement::Query(query) = result.unwrap()
+            && let QueryClause::LoadData(ref ld) = query.ordered_clauses[0]
+        {
+            assert_eq!(ld.format, LoadFormat::Jsonl);
+        }
+    }
+
+    #[test]
+    fn test_parse_load_data_parquet() {
+        let mut parser =
+            Parser::new("LOAD DATA FROM 'data.parquet' FORMAT PARQUET AS row RETURN row.id");
+        let result = parser.parse();
+        assert!(result.is_ok(), "LOAD DATA PARQUET parse failed: {result:?}");
+        if let Statement::Query(query) = result.unwrap()
+            && let QueryClause::LoadData(ref ld) = query.ordered_clauses[0]
+        {
+            assert_eq!(ld.format, LoadFormat::Parquet);
+        }
+    }
+
+    #[test]
+    fn test_parse_load_csv_compat() {
+        // Cypher-compatible LOAD CSV syntax in GQL parser
+        let mut parser =
+            Parser::new("LOAD CSV WITH HEADERS FROM 'file.csv' AS row RETURN row.name");
+        let result = parser.parse();
+        assert!(result.is_ok(), "LOAD CSV compat parse failed: {result:?}");
+        if let Statement::Query(query) = result.unwrap()
+            && let QueryClause::LoadData(ref ld) = query.ordered_clauses[0]
+        {
+            assert_eq!(ld.format, LoadFormat::Csv);
+            assert!(ld.with_headers);
+            assert_eq!(ld.path, "file.csv");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_data_with_fieldterminator() {
+        let mut parser = Parser::new(
+            "LOAD DATA FROM 'data.tsv' FORMAT CSV WITH HEADERS AS row FIELDTERMINATOR '\\t' RETURN row",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "LOAD DATA with FIELDTERMINATOR parse failed: {result:?}"
+        );
+        if let Statement::Query(query) = result.unwrap()
+            && let QueryClause::LoadData(ref ld) = query.ordered_clauses[0]
+        {
+            assert_eq!(ld.field_terminator, Some('\t'));
+        }
+    }
+
+    #[test]
+    fn test_parse_load_data_with_insert() {
+        let mut parser = Parser::new(
+            "LOAD DATA FROM 'people.csv' FORMAT CSV WITH HEADERS AS row INSERT (:Person {name: row.name})",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "LOAD DATA + INSERT parse failed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_load_data_bad_format() {
+        let mut parser = Parser::new("LOAD DATA FROM 'data.xml' FORMAT XML AS row RETURN row");
+        let result = parser.parse();
+        assert!(result.is_err(), "Should fail with unknown format XML");
+    }
+
+    // --- T2-11: GQL keyword case-insensitivity ---
+
+    #[test]
+    fn test_parse_lowercase_keywords() {
+        // Lowercase GQL keywords should parse identically to uppercase
+        let upper = Parser::new("MATCH (n:Person) WHERE n.age > 30 RETURN n.name")
+            .parse()
+            .unwrap();
+        let lower = Parser::new("match (n:Person) where n.age > 30 return n.name")
+            .parse()
+            .unwrap();
+
+        // Both should be Query statements with the same structure
+        let (Statement::Query(q_upper), Statement::Query(q_lower)) = (&upper, &lower) else {
+            panic!("Expected Query statements");
+        };
+        assert_eq!(q_upper.match_clauses.len(), q_lower.match_clauses.len());
+        assert!(q_upper.where_clause.is_some());
+        assert!(q_lower.where_clause.is_some());
+        assert_eq!(
+            q_upper.return_clause.items.len(),
+            q_lower.return_clause.items.len()
+        );
+    }
+
+    #[test]
+    fn test_parse_mixed_case_keywords() {
+        let result = Parser::new("Match (n:Person) Return n").parse();
+        assert!(
+            result.is_ok(),
+            "Mixed-case keywords should parse: {result:?}"
+        );
+    }
+
+    // --- T2-12: Temporal literal parsing ---
+
+    #[test]
+    fn test_parse_date_literal() {
+        let mut parser = Parser::new("RETURN DATE '2024-01-15'");
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Expression::Literal(Literal::Date(s)) = &query.return_clause.items[0].expression
+            {
+                assert_eq!(s, "2024-01-15");
+            } else {
+                panic!(
+                    "Expected Date literal, got: {:?}",
+                    query.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_time_literal() {
+        let mut parser = Parser::new("RETURN TIME '10:30:00'");
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Expression::Literal(Literal::Time(s)) = &query.return_clause.items[0].expression
+            {
+                assert_eq!(s, "10:30:00");
+            } else {
+                panic!(
+                    "Expected Time literal, got: {:?}",
+                    query.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_duration_literal() {
+        let mut parser = Parser::new("RETURN DURATION 'P1Y2M'");
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Expression::Literal(Literal::Duration(s)) =
+                &query.return_clause.items[0].expression
+            {
+                assert_eq!(s, "P1Y2M");
+            } else {
+                panic!(
+                    "Expected Duration literal, got: {:?}",
+                    query.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_datetime_literal() {
+        let mut parser = Parser::new("RETURN DATETIME '2024-01-15T14:30:00'");
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Expression::Literal(Literal::Datetime(s)) =
+                &query.return_clause.items[0].expression
+            {
+                assert_eq!(s, "2024-01-15T14:30:00");
+            } else {
+                panic!(
+                    "Expected Datetime literal, got: {:?}",
+                    query.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_zoned_datetime_literal() {
+        let mut parser = Parser::new("RETURN ZONED DATETIME '2024-01-15T14:30:00+05:30'");
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Expression::Literal(Literal::ZonedDatetime(s)) =
+                &query.return_clause.items[0].expression
+            {
+                assert_eq!(s, "2024-01-15T14:30:00+05:30");
+            } else {
+                panic!(
+                    "Expected ZonedDatetime literal, got: {:?}",
+                    query.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_zoned_time_literal() {
+        let mut parser = Parser::new("RETURN ZONED TIME '14:30:00+01:00'");
+        let result = parser.parse().unwrap();
+        if let Statement::Query(query) = result {
+            if let Expression::Literal(Literal::ZonedTime(s)) =
+                &query.return_clause.items[0].expression
+            {
+                assert_eq!(s, "14:30:00+01:00");
+            } else {
+                panic!(
+                    "Expected ZonedTime literal, got: {:?}",
+                    query.return_clause.items[0].expression
+                );
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
     }
 }

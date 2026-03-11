@@ -376,4 +376,106 @@ mod tests {
         assert!(results.contains(&NodeId::new(3)));
         assert!(results.contains(&NodeId::new(5)));
     }
+
+    #[test]
+    fn test_trie_get_existing_path() {
+        let mut trie = TrieIndex::new();
+        trie.insert_edge(NodeId::new(1), NodeId::new(2), EdgeId::new(10));
+        trie.insert_edge(NodeId::new(1), NodeId::new(3), EdgeId::new(11));
+
+        let edges = trie.get(&[NodeId::new(1), NodeId::new(2)]);
+        assert!(edges.is_some());
+        assert_eq!(edges.unwrap(), &[EdgeId::new(10)]);
+    }
+
+    #[test]
+    fn test_trie_get_nonexistent_path() {
+        let mut trie = TrieIndex::new();
+        trie.insert_edge(NodeId::new(1), NodeId::new(2), EdgeId::new(0));
+
+        assert!(trie.get(&[NodeId::new(99)]).is_none());
+        assert!(trie.get(&[NodeId::new(1), NodeId::new(99)]).is_none());
+    }
+
+    #[test]
+    fn test_trie_get_empty_path() {
+        let trie = TrieIndex::new();
+        // Empty path returns None since root has no edges
+        assert!(trie.get(&[]).is_none());
+    }
+
+    #[test]
+    fn test_trie_iter_at_existing() {
+        let mut trie = TrieIndex::new();
+        trie.insert_edge(NodeId::new(1), NodeId::new(2), EdgeId::new(0));
+        trie.insert_edge(NodeId::new(1), NodeId::new(3), EdgeId::new(1));
+
+        let iter = trie.iter_at(&[NodeId::new(1)]);
+        assert!(iter.is_some());
+        let iter = iter.unwrap();
+        // Should iterate over children of node 1: keys 2 and 3
+        assert_eq!(iter.key(), Some(NodeId::new(2)));
+    }
+
+    #[test]
+    fn test_trie_iter_at_nonexistent() {
+        let trie = TrieIndex::new();
+        assert!(trie.iter_at(&[NodeId::new(99)]).is_none());
+    }
+
+    #[test]
+    fn test_leapfrog_join_open() {
+        let mut trie1 = TrieIndex::new();
+        let mut trie2 = TrieIndex::new();
+
+        // Both have edges from node 1 to different targets
+        trie1.insert_edge(NodeId::new(1), NodeId::new(10), EdgeId::new(0));
+        trie1.insert_edge(NodeId::new(1), NodeId::new(20), EdgeId::new(1));
+        trie2.insert_edge(NodeId::new(1), NodeId::new(15), EdgeId::new(2));
+        trie2.insert_edge(NodeId::new(1), NodeId::new(20), EdgeId::new(3));
+
+        let iters = vec![trie1.iter(), trie2.iter()];
+        let join = LeapfrogJoin::new(iters);
+
+        // Current key should be 1 (intersection of first-level keys)
+        assert_eq!(join.key(), Some(NodeId::new(1)));
+
+        // Opening should descend into node 1's children
+        let child_iters = join.open();
+        assert!(child_iters.is_some());
+        let child_iters = child_iters.unwrap();
+        assert_eq!(child_iters.len(), 2);
+    }
+
+    #[test]
+    fn test_leapfrog_join_empty_intersection() {
+        let mut trie1 = TrieIndex::new();
+        let mut trie2 = TrieIndex::new();
+
+        trie1.insert_edge(NodeId::new(1), NodeId::new(10), EdgeId::new(0));
+        trie2.insert_edge(NodeId::new(2), NodeId::new(20), EdgeId::new(1));
+
+        let iters = vec![trie1.iter(), trie2.iter()];
+        let join = LeapfrogJoin::new(iters);
+
+        // No intersection, key should be None
+        assert!(join.key().is_none());
+    }
+
+    #[test]
+    fn test_trie_seek_backward_stays_forward() {
+        let mut trie = TrieIndex::new();
+        for i in [1, 3, 5, 7] {
+            trie.insert_edge(NodeId::new(i), NodeId::new(100), EdgeId::new(i));
+        }
+
+        let mut iter = trie.iter();
+        // Advance to 5
+        assert!(iter.seek(NodeId::new(5)));
+        assert_eq!(iter.key(), Some(NodeId::new(5)));
+
+        // Seeking backward to 1 should not go back (binary search in sorted keys)
+        assert!(iter.seek(NodeId::new(5)));
+        assert_eq!(iter.key(), Some(NodeId::new(5)));
+    }
 }

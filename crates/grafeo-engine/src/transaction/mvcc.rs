@@ -25,7 +25,7 @@ mod tests {
     #[test]
     fn test_deleted_version_visibility() {
         let mut v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
-        v.mark_deleted(EpochId::new(10));
+        v.mark_deleted(EpochId::new(10), TransactionId::new(99));
 
         // Visible between creation and deletion
         assert!(v.is_visible_at(EpochId::new(5)));
@@ -89,7 +89,7 @@ mod tests {
         let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
 
         // Mark as deleted at epoch 5
-        assert!(chain.mark_deleted(EpochId::new(5)));
+        assert!(chain.mark_deleted(EpochId::new(5), TransactionId::new(99)));
 
         // Should see v1 before deletion, nothing after
         assert_eq!(chain.visible_at(EpochId::new(4)), Some(&"v1"));

@@ -30,7 +30,7 @@ pub struct Transaction {
 
 #[napi]
 impl Transaction {
-    /// Execute a query within this transaction.
+    /// Execute a GQL query within this transaction.
     #[napi]
     #[allow(clippy::unused_async)] // async required for napi Promise return
     pub async fn execute(
@@ -38,36 +38,7 @@ impl Transaction {
         query: String,
         params: Option<serde_json::Value>,
     ) -> Result<QueryResult> {
-        if self.committed || self.rolled_back {
-            return Err(
-                NodeGrafeoError::Transaction("Transaction is no longer active".into()).into(),
-            );
-        }
-        let session_guard = self.session.lock();
-        let session = session_guard.as_ref().ok_or_else(|| {
-            napi::Error::from(NodeGrafeoError::Transaction(
-                "Transaction is no longer active".into(),
-            ))
-        })?;
-
-        let param_map = grafeo_bindings_common::json::json_params_to_map(params.as_ref())
-            .map_err(|msg| napi::Error::from(NodeGrafeoError::InvalidArgument(msg)))?;
-
-        let result = session
-            .execute_language(&query, "gql", param_map)
-            .map_err(NodeGrafeoError::from)?;
-
-        let db = self.db.read();
-        let (nodes, edges) = crate::database::extract_entities(&result, &db);
-
-        Ok(QueryResult::with_metrics(
-            result.columns,
-            result.rows,
-            nodes,
-            edges,
-            result.execution_time_ms,
-            result.rows_scanned,
-        ))
+        self.execute_language_impl("gql", &query, params.as_ref())
     }
 
     /// Commit the transaction.
@@ -112,6 +83,45 @@ impl Transaction {
 }
 
 impl Transaction {
+    /// Shared implementation for all language-specific execute methods.
+    fn execute_language_impl(
+        &self,
+        language: &str,
+        query: &str,
+        params: Option<&serde_json::Value>,
+    ) -> Result<QueryResult> {
+        if self.committed || self.rolled_back {
+            return Err(
+                NodeGrafeoError::Transaction("Transaction is no longer active".into()).into(),
+            );
+        }
+        let session_guard = self.session.lock();
+        let session = session_guard.as_ref().ok_or_else(|| {
+            napi::Error::from(NodeGrafeoError::Transaction(
+                "Transaction is no longer active".into(),
+            ))
+        })?;
+
+        let param_map = grafeo_bindings_common::json::json_params_to_map(params)
+            .map_err(|msg| napi::Error::from(NodeGrafeoError::InvalidArgument(msg)))?;
+
+        let result = session
+            .execute_language(query, language, param_map)
+            .map_err(NodeGrafeoError::from)?;
+
+        let db = self.db.read();
+        let (nodes, edges) = crate::database::extract_entities(&result, &db);
+
+        Ok(QueryResult::with_metrics(
+            result.columns,
+            result.rows,
+            nodes,
+            edges,
+            result.execution_time_ms,
+            result.rows_scanned,
+        ))
+    }
+
     pub(crate) fn new(db: Arc<RwLock<GrafeoDB>>, isolation_level: Option<&str>) -> Result<Self> {
         // Parse isolation level string
         let level = match isolation_level {
@@ -161,5 +171,83 @@ impl Drop for Transaction {
                 let _ = session.rollback();
             }
         }
+    }
+}
+
+// Language-specific execute methods in separate impl blocks so `#[napi]`
+// only generates C callback symbols when the feature is active.
+
+#[cfg(feature = "cypher")]
+#[napi]
+impl Transaction {
+    /// Execute a Cypher query within this transaction.
+    #[napi(js_name = "executeCypher")]
+    #[allow(clippy::unused_async)]
+    pub async fn execute_cypher(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("cypher", &query, params.as_ref())
+    }
+}
+
+#[cfg(feature = "sql-pgq")]
+#[napi]
+impl Transaction {
+    /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE) within this transaction.
+    #[napi(js_name = "executeSql")]
+    #[allow(clippy::unused_async)]
+    pub async fn execute_sql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("sql", &query, params.as_ref())
+    }
+}
+
+#[cfg(feature = "gremlin")]
+#[napi]
+impl Transaction {
+    /// Execute a Gremlin query within this transaction.
+    #[napi(js_name = "executeGremlin")]
+    #[allow(clippy::unused_async)]
+    pub async fn execute_gremlin(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("gremlin", &query, params.as_ref())
+    }
+}
+
+#[cfg(feature = "graphql")]
+#[napi]
+impl Transaction {
+    /// Execute a GraphQL query within this transaction.
+    #[napi(js_name = "executeGraphql")]
+    #[allow(clippy::unused_async)]
+    pub async fn execute_graphql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("graphql", &query, params.as_ref())
+    }
+}
+
+#[cfg(feature = "sparql")]
+#[napi]
+impl Transaction {
+    /// Execute a SPARQL query within this transaction.
+    #[napi(js_name = "executeSparql")]
+    #[allow(clippy::unused_async)]
+    pub async fn execute_sparql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("sparql", &query, params.as_ref())
     }
 }

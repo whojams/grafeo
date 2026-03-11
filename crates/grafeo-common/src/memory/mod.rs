@@ -14,6 +14,8 @@ pub mod arena;
 pub mod buffer;
 pub mod bump;
 pub mod pool;
+pub mod reporter;
+pub mod usage;
 
 pub use arena::{AllocError, Arena, ArenaAllocator};
 pub use buffer::{
@@ -22,3 +24,5 @@ pub use buffer::{
 };
 pub use bump::BumpAllocator;
 pub use pool::ObjectPool;
+pub use reporter::MemoryReporter;
+pub use usage::{IndexMemory, MvccMemory, NamedMemory, StoreMemory, StringPoolMemory};

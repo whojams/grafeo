@@ -15,7 +15,7 @@
 //! - Adaptive to actual data characteristics
 
 use crate::query::plan::{
-    AggregateOp, BinaryOp, DistinctOp, ExpandOp, FilterOp, JoinOp, JoinType, LimitOp,
+    AggregateOp, BinaryOp, DistinctOp, ExpandOp, FilterOp, JoinOp, JoinType, LeftJoinOp, LimitOp,
     LogicalExpression, LogicalOperator, MultiWayJoinOp, NodeScanOp, ProjectOp, SkipOp, SortOp,
     UnaryOp, VectorJoinOp, VectorScanOp,
 };
@@ -670,6 +670,7 @@ impl CardinalityEstimator {
             LogicalOperator::VectorScan(scan) => self.estimate_vector_scan(scan),
             LogicalOperator::VectorJoin(join) => self.estimate_vector_join(join),
             LogicalOperator::MultiWayJoin(mwj) => self.estimate_multi_way_join(mwj),
+            LogicalOperator::LeftJoin(lj) => self.estimate_left_join(lj),
             _ => self.default_row_count as f64,
         }
     }
@@ -778,6 +779,20 @@ impl CardinalityEstimator {
                 (left_card * (1.0 - self.default_selectivity)).max(1.0)
             }
         }
+    }
+
+    /// Estimates left join cardinality (OPTIONAL MATCH).
+    ///
+    /// A left outer join preserves all left rows, so the output is at least
+    /// `left_cardinality`. When the right side matches, the output may be
+    /// larger (one left row can match multiple right rows).
+    fn estimate_left_join(&self, lj: &LeftJoinOp) -> f64 {
+        let left_card = self.estimate(&lj.left);
+        let right_card = self.estimate(&lj.right);
+
+        // Estimate as inner join cardinality, but guaranteed at least left_card
+        let inner_estimate = left_card * right_card * self.default_selectivity;
+        inner_estimate.max(left_card).max(1.0)
     }
 
     /// Estimates aggregation cardinality.

@@ -136,12 +136,19 @@ impl ExpandOperator {
                 // Filter by edge type if specified
                 let type_matches = if self.edge_types.is_empty() {
                     true
-                } else if let Some(actual_type) = self.store.edge_type(*edge_id) {
-                    self.edge_types
-                        .iter()
-                        .any(|t| actual_type.as_str().eq_ignore_ascii_case(t.as_str()))
                 } else {
-                    false
+                    // Use versioned type lookup when in a transaction context so
+                    // PENDING (uncommitted) edges created by this transaction are visible.
+                    let actual_type = if let (Some(ep), Some(tx)) = (epoch, transaction_id) {
+                        self.store.edge_type_versioned(*edge_id, ep, tx)
+                    } else {
+                        self.store.edge_type(*edge_id)
+                    };
+                    actual_type.is_some_and(|t| {
+                        self.edge_types
+                            .iter()
+                            .any(|et| t.as_str().eq_ignore_ascii_case(et.as_str()))
+                    })
                 };
 
                 if !type_matches {

@@ -1408,6 +1408,135 @@ impl PyGrafeoDB {
         Ok(dict.into())
     }
 
+    /// Returns a hierarchical memory usage breakdown.
+    ///
+    /// Walks all internal structures (store, indexes, MVCC chains, caches,
+    /// string pools, buffer manager) and returns estimated heap bytes.
+    ///
+    /// Returns:
+    ///     dict with keys: total_bytes, store, indexes, mvcc, caches,
+    ///     string_pool, buffer_manager (each a nested dict)
+    ///
+    /// Example:
+    ///     usage = db.memory_usage()
+    ///     print(f"Total: {usage['total_bytes']} bytes")
+    ///     print(f"Store: {usage['store']['total_bytes']} bytes")
+    fn memory_usage(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let db = self.inner.read();
+        let usage = db.memory_usage();
+
+        let store = pyo3::types::PyDict::new(py);
+        store.set_item("total_bytes", usage.store.total_bytes)?;
+        store.set_item("nodes_bytes", usage.store.nodes_bytes)?;
+        store.set_item("edges_bytes", usage.store.edges_bytes)?;
+        store.set_item("node_properties_bytes", usage.store.node_properties_bytes)?;
+        store.set_item("edge_properties_bytes", usage.store.edge_properties_bytes)?;
+        store.set_item("property_column_count", usage.store.property_column_count)?;
+
+        let indexes = pyo3::types::PyDict::new(py);
+        indexes.set_item("total_bytes", usage.indexes.total_bytes)?;
+        indexes.set_item(
+            "forward_adjacency_bytes",
+            usage.indexes.forward_adjacency_bytes,
+        )?;
+        indexes.set_item(
+            "backward_adjacency_bytes",
+            usage.indexes.backward_adjacency_bytes,
+        )?;
+        indexes.set_item("label_index_bytes", usage.indexes.label_index_bytes)?;
+        indexes.set_item("node_labels_bytes", usage.indexes.node_labels_bytes)?;
+        indexes.set_item("property_index_bytes", usage.indexes.property_index_bytes)?;
+
+        let vec_idxs = pyo3::types::PyList::empty(py);
+        for vi in &usage.indexes.vector_indexes {
+            let d = pyo3::types::PyDict::new(py);
+            d.set_item("name", &vi.name)?;
+            d.set_item("bytes", vi.bytes)?;
+            d.set_item("item_count", vi.item_count)?;
+            vec_idxs.append(d)?;
+        }
+        indexes.set_item("vector_indexes", vec_idxs)?;
+
+        let txt_idxs = pyo3::types::PyList::empty(py);
+        for ti in &usage.indexes.text_indexes {
+            let d = pyo3::types::PyDict::new(py);
+            d.set_item("name", &ti.name)?;
+            d.set_item("bytes", ti.bytes)?;
+            d.set_item("item_count", ti.item_count)?;
+            txt_idxs.append(d)?;
+        }
+        indexes.set_item("text_indexes", txt_idxs)?;
+
+        let mvcc = pyo3::types::PyDict::new(py);
+        mvcc.set_item("total_bytes", usage.mvcc.total_bytes)?;
+        mvcc.set_item(
+            "node_version_chains_bytes",
+            usage.mvcc.node_version_chains_bytes,
+        )?;
+        mvcc.set_item(
+            "edge_version_chains_bytes",
+            usage.mvcc.edge_version_chains_bytes,
+        )?;
+        mvcc.set_item("average_chain_depth", usage.mvcc.average_chain_depth)?;
+        mvcc.set_item("max_chain_depth", usage.mvcc.max_chain_depth)?;
+
+        let caches = pyo3::types::PyDict::new(py);
+        caches.set_item("total_bytes", usage.caches.total_bytes)?;
+        caches.set_item(
+            "parsed_plan_cache_bytes",
+            usage.caches.parsed_plan_cache_bytes,
+        )?;
+        caches.set_item(
+            "optimized_plan_cache_bytes",
+            usage.caches.optimized_plan_cache_bytes,
+        )?;
+        caches.set_item("cached_plan_count", usage.caches.cached_plan_count)?;
+
+        let string_pool = pyo3::types::PyDict::new(py);
+        string_pool.set_item("total_bytes", usage.string_pool.total_bytes)?;
+        string_pool.set_item(
+            "label_registry_bytes",
+            usage.string_pool.label_registry_bytes,
+        )?;
+        string_pool.set_item(
+            "edge_type_registry_bytes",
+            usage.string_pool.edge_type_registry_bytes,
+        )?;
+        string_pool.set_item("label_count", usage.string_pool.label_count)?;
+        string_pool.set_item("edge_type_count", usage.string_pool.edge_type_count)?;
+
+        let buffer_mgr = pyo3::types::PyDict::new(py);
+        buffer_mgr.set_item("budget_bytes", usage.buffer_manager.budget_bytes)?;
+        buffer_mgr.set_item("allocated_bytes", usage.buffer_manager.allocated_bytes)?;
+        buffer_mgr.set_item(
+            "graph_storage_bytes",
+            usage.buffer_manager.graph_storage_bytes,
+        )?;
+        buffer_mgr.set_item(
+            "index_buffers_bytes",
+            usage.buffer_manager.index_buffers_bytes,
+        )?;
+        buffer_mgr.set_item(
+            "execution_buffers_bytes",
+            usage.buffer_manager.execution_buffers_bytes,
+        )?;
+        buffer_mgr.set_item(
+            "spill_staging_bytes",
+            usage.buffer_manager.spill_staging_bytes,
+        )?;
+
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("total_bytes", usage.total_bytes)?;
+        dict.set_item("store", store)?;
+        dict.set_item("indexes", indexes)?;
+        dict.set_item("mvcc", mvcc)?;
+        dict.set_item("caches", caches)?;
+        dict.set_item("string_pool", string_pool)?;
+        dict.set_item("buffer_manager", buffer_mgr)?;
+
+        Ok(dict.into())
+    }
+
     /// Returns schema information (labels, edge types, property keys).
     ///
     /// Returns:
@@ -1808,6 +1937,145 @@ impl PyGrafeoDB {
         Ok(df.unbind())
     }
 
+    /// Import nodes or edges from a pandas or polars DataFrame.
+    ///
+    /// **Node import** (`mode='nodes'`): each row becomes a node. The `label`
+    /// parameter sets the label(s). All DataFrame columns become properties.
+    ///
+    /// **Edge import** (`mode='edges'`): each row becomes an edge. The
+    /// `source` and `target` columns must contain integer node IDs.
+    /// Remaining columns become edge properties.
+    ///
+    /// Requires pandas or polars (`uv add pandas` or `uv add polars`).
+    ///
+    /// Example:
+    /// ```python
+    /// import pandas as pd
+    ///
+    /// # Import nodes
+    /// people = pd.DataFrame({"name": ["Alix", "Gus"], "age": [30, 25]})
+    /// db.import_df(people, mode="nodes", label="Person")
+    ///
+    /// # Import edges (source/target are node IDs)
+    /// edges = pd.DataFrame({"source": [0, 1], "target": [1, 0], "since": [2020, 2021]})
+    /// db.import_df(edges, mode="edges", edge_type="KNOWS")
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (df, mode, *, label=None, edge_type=None, source="source", target="target"))]
+    fn import_df(
+        &self,
+        py: Python<'_>,
+        df: &Bound<'_, PyAny>,
+        mode: &str,
+        label: Option<Py<PyAny>>,
+        edge_type: Option<&str>,
+        source: &str,
+        target: &str,
+    ) -> PyResult<u64> {
+        // Extract columns and rows from pandas or polars DataFrame
+        let (columns, rows) = extract_dataframe(py, df)?;
+
+        let db = self.inner.read();
+        let mut count: u64 = 0;
+
+        match mode {
+            "nodes" => {
+                // Resolve label(s)
+                let labels: Vec<String> = match label {
+                    Some(ref obj) => {
+                        let bound = obj.bind(py);
+                        if let Ok(s) = bound.extract::<String>() {
+                            vec![s]
+                        } else if let Ok(list) = bound.extract::<Vec<String>>() {
+                            list
+                        } else {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "label must be a string or list of strings",
+                            ));
+                        }
+                    }
+                    None => {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "label is required for mode='nodes'",
+                        ));
+                    }
+                };
+                let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+                for row in &rows {
+                    let props: Vec<(
+                        grafeo_common::types::PropertyKey,
+                        grafeo_common::types::Value,
+                    )> = columns
+                        .iter()
+                        .zip(row.iter())
+                        .filter(|(_, v)| !v.is_null())
+                        .map(|(col, val)| {
+                            (
+                                grafeo_common::types::PropertyKey::new(col.clone()),
+                                val.clone(),
+                            )
+                        })
+                        .collect();
+
+                    db.create_node_with_props(&label_refs, props);
+                    count += 1;
+                }
+            }
+            "edges" => {
+                let edge_type_str = edge_type.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "edge_type is required for mode='edges'",
+                    )
+                })?;
+
+                let source_idx = columns.iter().position(|c| c == source).ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "source column '{source}' not found in DataFrame"
+                    ))
+                })?;
+                let target_idx = columns.iter().position(|c| c == target).ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "target column '{target}' not found in DataFrame"
+                    ))
+                })?;
+
+                for row in &rows {
+                    let src_id = value_to_node_id(&row[source_idx], source)?;
+                    let dst_id = value_to_node_id(&row[target_idx], target)?;
+
+                    let props: Vec<(
+                        grafeo_common::types::PropertyKey,
+                        grafeo_common::types::Value,
+                    )> = columns
+                        .iter()
+                        .zip(row.iter())
+                        .enumerate()
+                        .filter(|(i, (_, val))| {
+                            *i != source_idx && *i != target_idx && !val.is_null()
+                        })
+                        .map(|(_, (col, val))| {
+                            (
+                                grafeo_common::types::PropertyKey::new(col.clone()),
+                                val.clone(),
+                            )
+                        })
+                        .collect();
+
+                    db.create_edge_with_props(src_id, dst_id, edge_type_str, props);
+                    count += 1;
+                }
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "mode must be 'nodes' or 'edges'",
+                ));
+            }
+        }
+
+        Ok(count)
+    }
+
     fn __repr__(&self) -> String {
         "GrafeoDB()".to_string()
     }
@@ -2088,6 +2356,30 @@ impl PyTransaction {
         self.execute_language_impl("gql", query, params)
     }
 
+    /// Execute a Cypher query within this transaction.
+    #[cfg(feature = "cypher")]
+    #[pyo3(signature = (query, params=None))]
+    fn execute_cypher(
+        &self,
+        query: &str,
+        params: Option<&Bound<'_, pyo3::types::PyDict>>,
+        _py: Python<'_>,
+    ) -> PyResult<PyQueryResult> {
+        self.execute_language_impl("cypher", query, params)
+    }
+
+    /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE) within this transaction.
+    #[cfg(feature = "sql-pgq")]
+    #[pyo3(signature = (query, params=None))]
+    fn execute_sql(
+        &self,
+        query: &str,
+        params: Option<&Bound<'_, pyo3::types::PyDict>>,
+        _py: Python<'_>,
+    ) -> PyResult<PyQueryResult> {
+        self.execute_language_impl("sql-pgq", query, params)
+    }
+
     /// Execute a Gremlin query within this transaction.
     ///
     /// All queries executed through this method see the same snapshot
@@ -2303,4 +2595,111 @@ fn change_event_to_dict(
     map.insert("after".to_string(), after_py);
 
     map
+}
+
+/// Extracts column names and row data from a pandas or polars DataFrame.
+///
+/// Returns `(column_names, rows)` where each row is a `Vec<Value>`.
+fn extract_dataframe(
+    py: Python<'_>,
+    df: &Bound<'_, PyAny>,
+) -> PyResult<(Vec<String>, Vec<Vec<Value>>)> {
+    let columns_attr = df.getattr("columns")?;
+    let columns: Vec<String> = columns_attr
+        .extract()
+        .or_else(|_| columns_attr.call_method0("tolist")?.extract())?;
+
+    let num_rows: usize = df.call_method0("__len__")?.extract()?;
+    let mut rows = Vec::with_capacity(num_rows);
+
+    // Try iterrows (pandas) or iter_rows (polars)
+    let is_polars = df
+        .getattr("__class__")?
+        .getattr("__module__")?
+        .extract::<String>()?
+        .starts_with("polars");
+
+    if is_polars {
+        // polars: iter_rows(named=False) returns tuples
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("named", false)?;
+        let iter = df.call_method("iter_rows", (), Some(&kwargs))?;
+        for row_result in iter.try_iter()? {
+            let row_tuple = row_result?;
+            let mut row_values = Vec::with_capacity(columns.len());
+            for i in 0..columns.len() {
+                let item = row_tuple.get_item(i)?;
+                let val = PyValue::from_py(&item)?;
+                row_values.push(val);
+            }
+            rows.push(row_values);
+        }
+    } else {
+        // pandas: use .values.tolist() for efficient bulk extraction
+        let values_list = df.getattr("values")?.call_method0("tolist")?;
+        for row_result in values_list.try_iter()? {
+            let row_list = row_result?;
+            let mut row_values = Vec::with_capacity(columns.len());
+            for i in 0..columns.len() {
+                let item = row_list.get_item(i)?;
+                // pandas NaN/NaT -> check for NaN explicitly
+                let val = if is_pandas_na(py, &item) {
+                    Value::Null
+                } else {
+                    PyValue::from_py(&item)?
+                };
+                row_values.push(val);
+            }
+            rows.push(row_values);
+        }
+    }
+
+    Ok((columns, rows))
+}
+
+/// Check if a Python value is pandas NA / NaN / NaT.
+fn is_pandas_na(py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
+    // float NaN
+    if let Ok(f) = obj.extract::<f64>()
+        && f.is_nan()
+    {
+        return true;
+    }
+    // pandas.isna()
+    if let Ok(pd) = py.import("pandas")
+        && let Ok(result) = pd.call_method1("isna", (obj,))
+        && let Ok(b) = result.extract::<bool>()
+    {
+        return b;
+    }
+    false
+}
+
+/// Convert a Value to a NodeId, validating that it's a valid integer.
+fn value_to_node_id(value: &Value, col_name: &str) -> PyResult<NodeId> {
+    match value {
+        Value::Int64(i) => {
+            if *i < 0 {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "negative node ID {i} in column '{col_name}'"
+                )))
+            } else {
+                #[allow(clippy::cast_sign_loss)]
+                Ok(NodeId(*i as u64))
+            }
+        }
+        Value::Float64(f) => {
+            if *f < 0.0 || f.fract() != 0.0 {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid node ID {f} in column '{col_name}' (must be a non-negative integer)"
+                )))
+            } else {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                Ok(NodeId(*f as u64))
+            }
+        }
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "column '{col_name}' must contain integer node IDs, got {value:?}"
+        ))),
+    }
 }

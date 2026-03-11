@@ -26,9 +26,13 @@ foldhash.workspace = true
 
 # Serialization
 serde.workspace = true
+serde_json = { version = "1", optional = true }
 byteorder.workspace = true
 bytes.workspace = true
 bincode = { workspace = true, optional = true }
+
+# Data import (optional)
+parquet = { version = "58", optional = true, default-features = false }
 
 # Concurrency
 parking_lot.workspace = true
@@ -65,6 +69,10 @@ ring-index = ["succinct-indexes", "rdf"]  # Ring Index for RDF (3x space reducti
 vector-index = ["ordered-float", "rand"]  # HNSW vector index for approximate nearest neighbor search
 text-index = []  # BM25 inverted index for full-text search
 hybrid-search = ["text-index", "vector-index"]  # Combined text + vector search with score fusion
+
+# Data import
+jsonl-import = ["serde_json"]   # JSON Lines file import (LOAD DATA ... FORMAT JSONL)
+parquet-import = ["parquet"]  # Apache Parquet file import (LOAD DATA ... FORMAT PARQUET)
 
 # Convenience groups
 ai = ["vector-index", "text-index", "hybrid-search"]  # All AI/RAG search features

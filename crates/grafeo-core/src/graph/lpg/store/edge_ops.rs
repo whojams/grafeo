@@ -11,6 +11,17 @@ use grafeo_common::mvcc::VersionChain;
 use grafeo_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
 
 impl LpgStore {
+    /// Builds an `Edge` from a record, resolving the type name and loading properties.
+    fn build_edge(&self, id: EdgeId, record: &EdgeRecord) -> Option<Edge> {
+        let edge_type = {
+            let id_to_type = self.id_to_edge_type.read();
+            id_to_type.get(record.type_id as usize)?.clone()
+        };
+        let mut edge = Edge::new(id, record.src, record.dst, edge_type);
+        edge.properties = self.edge_properties.get_all(id).into_iter().collect();
+        Some(edge)
+    }
+
     /// Creates a new edge.
     pub fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
         self.create_edge_versioned(
@@ -37,7 +48,15 @@ impl LpgStore {
         let type_id = self.get_or_create_edge_type_id(edge_type);
 
         let record = EdgeRecord::new(id, src, dst, type_id, epoch);
-        let chain = VersionChain::with_initial(record, epoch, transaction_id);
+
+        // Uncommitted transactional versions use PENDING epoch so they are
+        // invisible to other sessions until the transaction commits.
+        let version_epoch = if transaction_id == TransactionId::SYSTEM {
+            epoch
+        } else {
+            EpochId::PENDING
+        };
+        let chain = VersionChain::with_initial(record, version_epoch, transaction_id);
         self.edges.write().insert(id, chain);
 
         // Update adjacency
@@ -77,8 +96,16 @@ impl LpgStore {
             .alloc_value_with_offset(record)
             .expect("arena allocation failed for edge record");
 
+        // Uncommitted transactional versions use PENDING epoch so they are
+        // invisible to other sessions until the transaction commits.
+        let version_epoch = if transaction_id == TransactionId::SYSTEM {
+            epoch
+        } else {
+            EpochId::PENDING
+        };
+
         // Create HotVersionRef pointing to arena data
-        let hot_ref = HotVersionRef::new(epoch, offset, transaction_id);
+        let hot_ref = HotVersionRef::new(version_epoch, epoch, offset, transaction_id);
 
         // Create or update version index
         let mut versions = self.edge_versions.write();
@@ -129,22 +156,12 @@ impl LpgStore {
         let edges = self.edges.read();
         let chain = edges.get(&id)?;
         let record = chain.visible_at(epoch)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let edge_type = {
-            let id_to_type = self.id_to_edge_type.read();
-            id_to_type.get(record.type_id as usize)?.clone()
-        };
-
-        let mut edge = Edge::new(id, record.src, record.dst, edge_type);
-
-        // Get properties
-        edge.properties = self.edge_properties.get_all(id).into_iter().collect();
-
-        Some(edge)
+        let record = *record;
+        drop(edges);
+        self.build_edge(id, &record)
     }
 
     /// Gets an edge by ID at a specific epoch.
@@ -155,24 +172,12 @@ impl LpgStore {
         let versions = self.edge_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_at(epoch)?;
-
         let record = self.read_edge_record(&version_ref)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let edge_type = {
-            let id_to_type = self.id_to_edge_type.read();
-            id_to_type.get(record.type_id as usize)?.clone()
-        };
-
-        let mut edge = Edge::new(id, record.src, record.dst, edge_type);
-
-        // Get properties
-        edge.properties = self.edge_properties.get_all(id).into_iter().collect();
-
-        Some(edge)
+        drop(versions);
+        self.build_edge(id, &record)
     }
 
     /// Gets an edge visible to a specific transaction.
@@ -188,22 +193,12 @@ impl LpgStore {
         let edges = self.edges.read();
         let chain = edges.get(&id)?;
         let record = chain.visible_to(epoch, transaction_id)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let edge_type = {
-            let id_to_type = self.id_to_edge_type.read();
-            id_to_type.get(record.type_id as usize)?.clone()
-        };
-
-        let mut edge = Edge::new(id, record.src, record.dst, edge_type);
-
-        // Get properties
-        edge.properties = self.edge_properties.get_all(id).into_iter().collect();
-
-        Some(edge)
+        let record = *record;
+        drop(edges);
+        self.build_edge(id, &record)
     }
 
     /// Gets an edge visible to a specific transaction.
@@ -220,24 +215,12 @@ impl LpgStore {
         let versions = self.edge_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_to(epoch, transaction_id)?;
-
         let record = self.read_edge_record(&version_ref)?;
-
         if record.is_deleted() {
             return None;
         }
-
-        let edge_type = {
-            let id_to_type = self.id_to_edge_type.read();
-            id_to_type.get(record.type_id as usize)?.clone()
-        };
-
-        let mut edge = Edge::new(id, record.src, record.dst, edge_type);
-
-        // Get properties
-        edge.properties = self.edge_properties.get_all(id).into_iter().collect();
-
-        Some(edge)
+        drop(versions);
+        self.build_edge(id, &record)
     }
 
     /// Reads an EdgeRecord from arena using a VersionRef.
@@ -248,8 +231,8 @@ impl LpgStore {
             VersionRef::Hot(hot_ref) => {
                 let arena = self
                     .arena_allocator
-                    .arena(hot_ref.epoch)
-                    .expect("epoch must exist for hot version ref");
+                    .arena(hot_ref.arena_epoch)
+                    .expect("arena epoch must exist for hot version ref");
                 // SAFETY: The offset was returned by alloc_value_with_offset for an EdgeRecord
                 let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                 Some(*record)
@@ -340,7 +323,7 @@ impl LpgStore {
             };
 
             // Mark the version chain as deleted
-            chain.mark_deleted(epoch);
+            chain.mark_deleted(epoch, TransactionId::SYSTEM);
 
             drop(edges); // Release lock
 
@@ -386,7 +369,7 @@ impl LpgStore {
             };
 
             // Mark as deleted in version index
-            index.mark_deleted(epoch);
+            index.mark_deleted(epoch, TransactionId::SYSTEM);
 
             drop(versions); // Release lock
 
@@ -401,6 +384,151 @@ impl LpgStore {
 
             self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
             self.decrement_edge_type_count(type_id);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deletes an edge within a transaction, capturing undo information for rollback.
+    #[cfg(not(feature = "tiered-storage"))]
+    pub(crate) fn delete_edge_transactional(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let mut edges = self.edges.write();
+        if let Some(chain) = edges.get_mut(&id) {
+            let (src, dst, type_id) = {
+                match chain.visible_at(epoch) {
+                    Some(record) => {
+                        if record.is_deleted() {
+                            return false;
+                        }
+                        (record.src, record.dst, record.type_id)
+                    }
+                    None => return false,
+                }
+            };
+
+            // Mark deleted with transaction tracking
+            chain.mark_deleted(epoch, transaction_id);
+            drop(edges);
+
+            // Get edge type name for undo log
+            let edge_type_name = {
+                let id_to_type = self.id_to_edge_type.read();
+                id_to_type
+                    .get(type_id as usize)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default()
+            };
+
+            // Capture properties for undo log
+            let properties: Vec<(PropertyKey, Value)> =
+                self.edge_properties.get_all(id).into_iter().collect();
+
+            // Mark as deleted in adjacency (soft delete)
+            self.forward_adj.mark_deleted(src, id);
+            if let Some(ref backward) = self.backward_adj {
+                backward.mark_deleted(dst, id);
+            }
+
+            // Remove properties
+            self.edge_properties.remove_all(id);
+
+            self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_edge_type_count(type_id);
+
+            // Record undo entry for rollback
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(super::PropertyUndoEntry::EdgeDeleted {
+                    edge_id: id,
+                    src,
+                    dst,
+                    edge_type: edge_type_name,
+                    properties,
+                });
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deletes an edge within a transaction, capturing undo information for rollback.
+    /// (Tiered storage version)
+    #[cfg(feature = "tiered-storage")]
+    pub(crate) fn delete_edge_transactional(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let mut versions = self.edge_versions.write();
+        if let Some(index) = versions.get_mut(&id) {
+            let (src, dst, type_id) = {
+                match index.visible_at(epoch) {
+                    Some(version_ref) => {
+                        if let Some(record) = self.read_edge_record(&version_ref) {
+                            if record.is_deleted() {
+                                return false;
+                            }
+                            (record.src, record.dst, record.type_id)
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            };
+
+            // Mark deleted with transaction tracking
+            index.mark_deleted(epoch, transaction_id);
+            drop(versions);
+
+            // Get edge type name for undo log
+            let edge_type_name = {
+                let id_to_type = self.id_to_edge_type.read();
+                id_to_type
+                    .get(type_id as usize)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default()
+            };
+
+            // Capture properties for undo log
+            let properties: Vec<(PropertyKey, Value)> =
+                self.edge_properties.get_all(id).into_iter().collect();
+
+            // Mark as deleted in adjacency
+            self.forward_adj.mark_deleted(src, id);
+            if let Some(ref backward) = self.backward_adj {
+                backward.mark_deleted(dst, id);
+            }
+
+            // Remove properties
+            self.edge_properties.remove_all(id);
+
+            self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_edge_type_count(type_id);
+
+            // Record undo entry for rollback
+            self.property_undo_log
+                .write()
+                .entry(transaction_id)
+                .or_default()
+                .push(super::PropertyUndoEntry::EdgeDeleted {
+                    edge_id: id,
+                    src,
+                    dst,
+                    edge_type: edge_type_name,
+                    properties,
+                });
 
             true
         } else {
@@ -541,7 +669,7 @@ impl LpgStore {
                 let (offset, _stored) = arena
                     .alloc_value_with_offset(record)
                     .expect("arena allocation failed for edge record");
-                let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
+                let hot_ref = HotVersionRef::new(epoch, epoch, offset, TransactionId::SYSTEM);
                 versions.insert(id, VersionIndex::with_initial(hot_ref));
 
                 forward_batch.push((src, dst, id));
@@ -598,6 +726,42 @@ impl LpgStore {
         let index = versions.get(&id)?;
         let epoch = self.current_epoch();
         let vref = index.visible_at(epoch)?;
+        let record = self.read_edge_record(&vref)?;
+        let id_to_type = self.id_to_edge_type.read();
+        id_to_type.get(record.type_id as usize).cloned()
+    }
+
+    /// Gets the type of an edge visible to a specific transaction.
+    ///
+    /// Used by operators that need edge type info for PENDING (uncommitted) edges.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn edge_type_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<ArcStr> {
+        let edges = self.edges.read();
+        let chain = edges.get(&id)?;
+        let record = chain.visible_to(epoch, transaction_id)?;
+        let id_to_type = self.id_to_edge_type.read();
+        id_to_type.get(record.type_id as usize).cloned()
+    }
+
+    /// Gets the type of an edge visible to a specific transaction.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn edge_type_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<ArcStr> {
+        let versions = self.edge_versions.read();
+        let index = versions.get(&id)?;
+        let vref = index.visible_to(epoch, transaction_id)?;
         let record = self.read_edge_record(&vref)?;
         let id_to_type = self.id_to_edge_type.read();
         id_to_type.get(record.type_id as usize).cloned()

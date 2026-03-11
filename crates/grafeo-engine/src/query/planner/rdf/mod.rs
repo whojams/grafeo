@@ -36,6 +36,30 @@ use regex_lite::Regex;
 /// Default chunk size for morsel-driven execution.
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
+/// Logs an RDF WAL record if a WAL reference is present.
+#[cfg(feature = "wal")]
+fn log_rdf_wal(wal: &Option<Arc<RdfWal>>, record: &grafeo_adapters::storage::wal::WalRecord) {
+    if let Some(wal) = wal
+        && let Err(err) = wal.log(record)
+    {
+        tracing::warn!("RDF WAL log failed: {err}");
+    }
+}
+
+/// Converts a Term to its N-Triples string for WAL serialization.
+#[cfg(feature = "wal")]
+fn term_to_wal(term: &Term) -> String {
+    term.to_string()
+}
+
+/// Converts logical plans with RDF operators to physical operators.
+///
+/// This planner produces push-based operators that process data in chunks
+/// (morsels) for cache efficiency and parallelism compatibility.
+/// Type alias for the WAL used by the RDF planner.
+#[cfg(feature = "wal")]
+type RdfWal = grafeo_adapters::storage::wal::LpgWal;
+
 /// Converts logical plans with RDF operators to physical operators.
 ///
 /// This planner produces push-based operators that process data in chunks
@@ -51,6 +75,9 @@ pub struct RdfPlanner {
     profiling: std::cell::Cell<bool>,
     /// Profile entries collected during planning (post-order).
     profile_entries: std::cell::RefCell<Vec<crate::query::profile::ProfileEntry>>,
+    /// Optional WAL for logging RDF mutations.
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfPlanner {
@@ -63,6 +90,8 @@ impl RdfPlanner {
             transaction_id: None,
             profiling: std::cell::Cell::new(false),
             profile_entries: std::cell::RefCell::new(Vec::new()),
+            #[cfg(feature = "wal")]
+            wal: None,
         }
     }
 
@@ -77,6 +106,14 @@ impl RdfPlanner {
     #[must_use]
     pub fn with_transaction_id(mut self, transaction_id: Option<TransactionId>) -> Self {
         self.transaction_id = transaction_id;
+        self
+    }
+
+    /// Sets the WAL for logging RDF mutations.
+    #[cfg(feature = "wal")]
+    #[must_use]
+    pub fn with_wal(mut self, wal: Option<Arc<RdfWal>>) -> Self {
+        self.wal = wal;
         self
     }
 
@@ -888,6 +925,8 @@ impl RdfPlanner {
                     insert.predicate.clone(),
                     insert.object.clone(),
                     column_map,
+                    #[cfg(feature = "wal")]
+                    self.wal.clone(),
                 ));
 
                 return Ok((operator, Vec::new()));
@@ -905,6 +944,8 @@ impl RdfPlanner {
             triple,
             insert.graph.clone(),
             self.transaction_id,
+            #[cfg(feature = "wal")]
+            self.wal.clone(),
         ));
 
         // Insert operations don't output columns
@@ -968,6 +1009,8 @@ impl RdfPlanner {
                     delete.predicate.clone(),
                     delete.object.clone(),
                     column_map,
+                    #[cfg(feature = "wal")]
+                    self.wal.clone(),
                 ));
 
                 return Ok((operator, Vec::new()));
@@ -985,6 +1028,8 @@ impl RdfPlanner {
             triple,
             delete.graph.clone(),
             self.transaction_id,
+            #[cfg(feature = "wal")]
+            self.wal.clone(),
         ));
 
         Ok((operator, Vec::new()))
@@ -996,6 +1041,8 @@ impl RdfPlanner {
             Arc::clone(&self.store),
             clear.graph.clone(),
             clear.silent,
+            #[cfg(feature = "wal")]
+            self.wal.clone(),
         ));
         Ok((operator, Vec::new()))
     }
@@ -1009,6 +1056,8 @@ impl RdfPlanner {
             Arc::clone(&self.store),
             create.graph.clone(),
             create.silent,
+            #[cfg(feature = "wal")]
+            self.wal.clone(),
         ));
         Ok((operator, Vec::new()))
     }
@@ -1019,6 +1068,8 @@ impl RdfPlanner {
             Arc::clone(&self.store),
             drop_op.graph.clone(),
             drop_op.silent,
+            #[cfg(feature = "wal")]
+            self.wal.clone(),
         ));
         Ok((operator, Vec::new()))
     }
@@ -1096,6 +1147,8 @@ struct RdfInsertTripleOperator {
     graph_name: Option<String>,
     transaction_id: Option<TransactionId>,
     inserted: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfInsertTripleOperator {
@@ -1104,6 +1157,7 @@ impl RdfInsertTripleOperator {
         triple: Triple,
         graph_name: Option<String>,
         transaction_id: Option<TransactionId>,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
     ) -> Self {
         Self {
             store,
@@ -1111,6 +1165,8 @@ impl RdfInsertTripleOperator {
             graph_name,
             transaction_id,
             inserted: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 }
@@ -1133,6 +1189,18 @@ impl Operator for RdfInsertTripleOperator {
         } else {
             target.insert(self.triple.clone());
         }
+
+        #[cfg(feature = "wal")]
+        log_rdf_wal(
+            &self.wal,
+            &grafeo_adapters::storage::wal::WalRecord::InsertRdfTriple {
+                subject: term_to_wal(self.triple.subject()),
+                predicate: term_to_wal(self.triple.predicate()),
+                object: term_to_wal(self.triple.object()),
+                graph: self.graph_name.clone(),
+            },
+        );
+
         self.inserted = true;
 
         // Return an empty result (INSERT doesn't produce rows)
@@ -1162,6 +1230,8 @@ struct RdfInsertPatternOperator {
     object: TripleComponent,
     column_map: HashMap<String, usize>,
     done: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfInsertPatternOperator {
@@ -1172,6 +1242,7 @@ impl RdfInsertPatternOperator {
         predicate: TripleComponent,
         object: TripleComponent,
         column_map: HashMap<String, usize>,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
     ) -> Self {
         Self {
             store,
@@ -1181,6 +1252,8 @@ impl RdfInsertPatternOperator {
             object,
             column_map,
             done: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 
@@ -1275,8 +1348,21 @@ impl Operator for RdfInsertPatternOperator {
         }
 
         // Insert all collected triples
-        for triple in triples_to_insert {
-            self.store.insert(triple);
+        for triple in &triples_to_insert {
+            self.store.insert(triple.clone());
+        }
+
+        #[cfg(feature = "wal")]
+        for triple in &triples_to_insert {
+            log_rdf_wal(
+                &self.wal,
+                &grafeo_adapters::storage::wal::WalRecord::InsertRdfTriple {
+                    subject: term_to_wal(triple.subject()),
+                    predicate: term_to_wal(triple.predicate()),
+                    object: term_to_wal(triple.object()),
+                    graph: None,
+                },
+            );
         }
 
         self.done = true;
@@ -1304,6 +1390,8 @@ struct RdfDeleteTripleOperator {
     graph_name: Option<String>,
     transaction_id: Option<TransactionId>,
     deleted: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfDeleteTripleOperator {
@@ -1312,6 +1400,7 @@ impl RdfDeleteTripleOperator {
         triple: Triple,
         graph_name: Option<String>,
         transaction_id: Option<TransactionId>,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
     ) -> Self {
         Self {
             store,
@@ -1319,6 +1408,8 @@ impl RdfDeleteTripleOperator {
             graph_name,
             transaction_id,
             deleted: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 }
@@ -1341,6 +1432,18 @@ impl Operator for RdfDeleteTripleOperator {
         } else {
             target.remove(&self.triple);
         }
+
+        #[cfg(feature = "wal")]
+        log_rdf_wal(
+            &self.wal,
+            &grafeo_adapters::storage::wal::WalRecord::DeleteRdfTriple {
+                subject: term_to_wal(self.triple.subject()),
+                predicate: term_to_wal(self.triple.predicate()),
+                object: term_to_wal(self.triple.object()),
+                graph: self.graph_name.clone(),
+            },
+        );
+
         self.deleted = true;
 
         // Return an empty result (DELETE doesn't produce rows)
@@ -1370,6 +1473,8 @@ struct RdfDeletePatternOperator {
     object: TripleComponent,
     column_map: HashMap<String, usize>,
     done: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfDeletePatternOperator {
@@ -1380,6 +1485,7 @@ impl RdfDeletePatternOperator {
         predicate: TripleComponent,
         object: TripleComponent,
         column_map: HashMap<String, usize>,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
     ) -> Self {
         Self {
             store,
@@ -1389,6 +1495,8 @@ impl RdfDeletePatternOperator {
             object,
             column_map,
             done: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 
@@ -1483,8 +1591,21 @@ impl Operator for RdfDeletePatternOperator {
         }
 
         // Delete all collected triples
-        for triple in triples_to_delete {
-            self.store.remove(&triple);
+        for triple in &triples_to_delete {
+            self.store.remove(triple);
+        }
+
+        #[cfg(feature = "wal")]
+        for triple in &triples_to_delete {
+            log_rdf_wal(
+                &self.wal,
+                &grafeo_adapters::storage::wal::WalRecord::DeleteRdfTriple {
+                    subject: term_to_wal(triple.subject()),
+                    predicate: term_to_wal(triple.predicate()),
+                    object: term_to_wal(triple.object()),
+                    graph: None,
+                },
+            );
         }
 
         self.done = true;
@@ -1510,14 +1631,23 @@ struct RdfClearGraphOperator {
     store: Arc<RdfStore>,
     graph: Option<String>,
     cleared: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfClearGraphOperator {
-    fn new(store: Arc<RdfStore>, graph: Option<String>, _silent: bool) -> Self {
+    fn new(
+        store: Arc<RdfStore>,
+        graph: Option<String>,
+        _silent: bool,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+    ) -> Self {
         Self {
             store,
             graph,
             cleared: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 }
@@ -1529,6 +1659,15 @@ impl Operator for RdfClearGraphOperator {
         }
 
         self.store.clear_graph(self.graph.as_deref());
+
+        #[cfg(feature = "wal")]
+        log_rdf_wal(
+            &self.wal,
+            &grafeo_adapters::storage::wal::WalRecord::ClearRdfGraph {
+                graph: self.graph.clone(),
+            },
+        );
+
         self.cleared = true;
 
         Ok(None)
@@ -1553,15 +1692,24 @@ struct RdfCreateGraphOperator {
     graph: String,
     silent: bool,
     done: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfCreateGraphOperator {
-    fn new(store: Arc<RdfStore>, graph: String, silent: bool) -> Self {
+    fn new(
+        store: Arc<RdfStore>,
+        graph: String,
+        silent: bool,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+    ) -> Self {
         Self {
             store,
             graph,
             silent,
             done: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 }
@@ -1578,6 +1726,15 @@ impl Operator for RdfCreateGraphOperator {
                 "Graph <{}> already exists",
                 self.graph
             )));
+        }
+        #[cfg(feature = "wal")]
+        if created {
+            log_rdf_wal(
+                &self.wal,
+                &grafeo_adapters::storage::wal::WalRecord::CreateRdfGraph {
+                    name: self.graph.clone(),
+                },
+            );
         }
         Ok(None)
     }
@@ -1597,15 +1754,24 @@ struct RdfDropGraphOperator {
     graph: Option<String>,
     silent: bool,
     done: bool,
+    #[cfg(feature = "wal")]
+    wal: Option<Arc<RdfWal>>,
 }
 
 impl RdfDropGraphOperator {
-    fn new(store: Arc<RdfStore>, graph: Option<String>, silent: bool) -> Self {
+    fn new(
+        store: Arc<RdfStore>,
+        graph: Option<String>,
+        silent: bool,
+        #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+    ) -> Self {
         Self {
             store,
             graph,
             silent,
             done: false,
+            #[cfg(feature = "wal")]
+            wal,
         }
     }
 }
@@ -1630,6 +1796,13 @@ impl Operator for RdfDropGraphOperator {
                 }
             }
         }
+        #[cfg(feature = "wal")]
+        log_rdf_wal(
+            &self.wal,
+            &grafeo_adapters::storage::wal::WalRecord::DropRdfGraph {
+                name: self.graph.clone(),
+            },
+        );
         Ok(None)
     }
 

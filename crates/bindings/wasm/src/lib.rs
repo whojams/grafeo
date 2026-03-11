@@ -304,6 +304,159 @@ impl Database {
         Ok(arr.into())
     }
 
+    // ── Vector Index ──────────────────────────────────────────────────
+
+    /// Creates a vector (HNSW) index on a label+property pair.
+    ///
+    /// Indexes all existing nodes whose property value is a float array.
+    ///
+    /// ```js
+    /// db.createVectorIndex("Doc", "embedding", {
+    ///   dimensions: 384,
+    ///   metric: "cosine",       // "cosine" | "euclidean" | "dot_product" | "manhattan"
+    ///   m: 16,                  // HNSW links per node
+    ///   efConstruction: 128,    // build beam width
+    /// });
+    /// ```
+    #[cfg(feature = "vector-index")]
+    #[wasm_bindgen(js_name = "createVectorIndex")]
+    pub fn create_vector_index(
+        &self,
+        label: &str,
+        property: &str,
+        options: JsValue,
+    ) -> Result<(), JsError> {
+        let opts: VectorIndexOptions = if options.is_undefined() || options.is_null() {
+            VectorIndexOptions::default()
+        } else {
+            serde_wasm_bindgen::from_value(options)
+                .map_err(|e| JsError::new(&format!("Invalid options: {e}")))?
+        };
+
+        self.inner
+            .create_vector_index(
+                label,
+                property,
+                opts.dimensions,
+                opts.metric.as_deref(),
+                opts.m,
+                opts.ef_construction,
+            )
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Drops a vector index on a label+property pair.
+    ///
+    /// Returns `true` if the index existed and was removed.
+    #[cfg(feature = "vector-index")]
+    #[wasm_bindgen(js_name = "dropVectorIndex")]
+    pub fn drop_vector_index(&self, label: &str, property: &str) -> bool {
+        self.inner.drop_vector_index(label, property)
+    }
+
+    /// Rebuilds a vector index by re-scanning all matching nodes.
+    ///
+    /// Use after bulk imports to refresh the index. Preserves existing
+    /// configuration (dimensions, metric, M, ef_construction).
+    #[cfg(feature = "vector-index")]
+    #[wasm_bindgen(js_name = "rebuildVectorIndex")]
+    pub fn rebuild_vector_index(&self, label: &str, property: &str) -> Result<(), JsError> {
+        self.inner
+            .rebuild_vector_index(label, property)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Performs k-nearest-neighbor vector search.
+    ///
+    /// Returns an array of `{id, distance}` objects, ordered by proximity.
+    ///
+    /// ```js
+    /// db.createVectorIndex("Doc", "embedding");
+    /// const results = db.vectorSearch("Doc", "embedding",
+    ///   new Float32Array([1.0, 0.0, 0.0]), 10, { ef: 200 });
+    /// // [{id: 42, distance: 0.12}, {id: 17, distance: 0.34}]
+    /// ```
+    #[cfg(feature = "vector-index")]
+    #[wasm_bindgen(js_name = "vectorSearch")]
+    pub fn vector_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: &[f32],
+        k: usize,
+        options: JsValue,
+    ) -> Result<JsValue, JsError> {
+        let opts: VectorSearchOptions = if options.is_undefined() || options.is_null() {
+            VectorSearchOptions::default()
+        } else {
+            serde_wasm_bindgen::from_value(options)
+                .map_err(|e| JsError::new(&format!("Invalid options: {e}")))?
+        };
+
+        let filters = opts.filters.as_ref().map(|f| {
+            f.iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .collect::<HashMap<String, Value>>()
+        });
+
+        let results = self
+            .inner
+            .vector_search(label, property, query, k, opts.ef, filters.as_ref())
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        Ok(vector_results_to_js(&results))
+    }
+
+    /// Performs Maximal Marginal Relevance search for diverse results.
+    ///
+    /// Balances relevance and diversity via the `lambda` parameter
+    /// (1.0 = pure relevance, 0.0 = pure diversity).
+    ///
+    /// ```js
+    /// const results = db.mmrSearch("Doc", "embedding",
+    ///   new Float32Array([1.0, 0.0, 0.0]), 5, { fetchK: 20, lambda: 0.7 });
+    /// // [{id, distance}]
+    /// ```
+    #[cfg(feature = "vector-index")]
+    #[wasm_bindgen(js_name = "mmrSearch")]
+    pub fn mmr_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: &[f32],
+        k: usize,
+        options: JsValue,
+    ) -> Result<JsValue, JsError> {
+        let opts: MmrSearchOptions = if options.is_undefined() || options.is_null() {
+            MmrSearchOptions::default()
+        } else {
+            serde_wasm_bindgen::from_value(options)
+                .map_err(|e| JsError::new(&format!("Invalid options: {e}")))?
+        };
+
+        let filters = opts.filters.as_ref().map(|f| {
+            f.iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .collect::<HashMap<String, Value>>()
+        });
+
+        let results = self
+            .inner
+            .mmr_search(
+                label,
+                property,
+                query,
+                k,
+                opts.fetch_k,
+                opts.lambda,
+                opts.ef,
+                filters.as_ref(),
+            )
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        Ok(vector_results_to_js(&results))
+    }
+
     /// Executes a GQL query with parameters and returns results as an array of objects.
     ///
     /// Parameters are passed as a JavaScript object with string keys.
@@ -787,6 +940,62 @@ impl Database {
 }
 
 // ---------------------------------------------------------------------------
+// Vector search option types (serde, not exported to JS)
+// ---------------------------------------------------------------------------
+
+/// Options for `createVectorIndex()`.
+#[cfg(feature = "vector-index")]
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorIndexOptions {
+    dimensions: Option<usize>,
+    metric: Option<String>,
+    m: Option<usize>,
+    ef_construction: Option<usize>,
+}
+
+/// Options for `vectorSearch()`.
+#[cfg(feature = "vector-index")]
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorSearchOptions {
+    ef: Option<usize>,
+    filters: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Options for `mmrSearch()`.
+#[cfg(feature = "vector-index")]
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MmrSearchOptions {
+    fetch_k: Option<usize>,
+    lambda: Option<f32>,
+    ef: Option<usize>,
+    filters: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Converts a `Vec<(NodeId, f32)>` to a JS array of `{id, distance}` objects.
+#[cfg(feature = "vector-index")]
+fn vector_results_to_js(results: &[(grafeo_common::types::NodeId, f32)]) -> JsValue {
+    let arr = Array::new_with_length(results.len() as u32);
+    for (i, (id, distance)) in results.iter().enumerate() {
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("id"),
+            &JsValue::from_f64(id.0 as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("distance"),
+            &JsValue::from_f64(f64::from(*distance)),
+        );
+        arr.set(i as u32, obj.into());
+    }
+    arr.into()
+}
+
+// ---------------------------------------------------------------------------
 // Batch import data types (serde, not exported to JS)
 // ---------------------------------------------------------------------------
 
@@ -925,6 +1134,124 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    // === Vector options deserialization tests ===
+
+    #[cfg(feature = "vector-index")]
+    mod vector_tests {
+        use serde_json::json;
+
+        use super::super::*;
+
+        #[test]
+        fn vector_index_options_defaults() {
+            let opts: VectorIndexOptions = serde_json::from_value(json!({})).unwrap();
+            assert!(opts.dimensions.is_none());
+            assert!(opts.metric.is_none());
+            assert!(opts.m.is_none());
+            assert!(opts.ef_construction.is_none());
+        }
+
+        #[test]
+        fn vector_index_options_full() {
+            let opts: VectorIndexOptions = serde_json::from_value(json!({
+                "dimensions": 384,
+                "metric": "cosine",
+                "m": 16,
+                "efConstruction": 128
+            }))
+            .unwrap();
+            assert_eq!(opts.dimensions, Some(384));
+            assert_eq!(opts.metric.as_deref(), Some("cosine"));
+            assert_eq!(opts.m, Some(16));
+            assert_eq!(opts.ef_construction, Some(128));
+        }
+
+        #[test]
+        fn vector_search_options_with_filters() {
+            let opts: VectorSearchOptions = serde_json::from_value(json!({
+                "ef": 200,
+                "filters": { "category": "science" }
+            }))
+            .unwrap();
+            assert_eq!(opts.ef, Some(200));
+            assert!(opts.filters.is_some());
+            assert_eq!(opts.filters.unwrap()["category"], json!("science"));
+        }
+
+        #[test]
+        fn mmr_search_options_partial() {
+            let opts: MmrSearchOptions =
+                serde_json::from_value(json!({ "fetchK": 20, "lambda": 0.7 })).unwrap();
+            assert_eq!(opts.fetch_k, Some(20));
+            assert_eq!(opts.lambda, Some(0.7));
+            assert!(opts.ef.is_none());
+            assert!(opts.filters.is_none());
+        }
+
+        // vector_results_to_js requires a JS runtime, tested via wasm-bindgen-test
+
+        #[test]
+        fn create_vector_index_and_search() {
+            use grafeo_common::types::{PropertyKey, Value};
+
+            let db = GrafeoDB::new_in_memory();
+            // Create index first, then insert nodes with Value::Vector
+            db.create_vector_index("Doc", "embedding", Some(3), Some("cosine"), None, None)
+                .unwrap();
+
+            let vecs: &[&[f32]] = &[&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0], &[0.0, 0.0, 1.0]];
+            for (i, v) in vecs.iter().enumerate() {
+                let id = db.create_node_with_props(
+                    &["Doc"],
+                    vec![(PropertyKey::new("title"), Value::from(format!("doc_{i}")))],
+                );
+                db.set_node_property(id, "embedding", Value::Vector(v.to_vec().into()));
+            }
+
+            let results = db
+                .vector_search("Doc", "embedding", &[1.0, 0.0, 0.0], 2, None, None)
+                .unwrap();
+            assert_eq!(results.len(), 2);
+            assert!(
+                results[0].1 <= results[1].1,
+                "results should be sorted by distance"
+            );
+        }
+
+        #[test]
+        fn mmr_search_returns_diverse_results() {
+            use grafeo_common::types::{PropertyKey, Value};
+
+            let db = GrafeoDB::new_in_memory();
+            db.create_vector_index("Doc", "embedding", Some(3), Some("cosine"), None, None)
+                .unwrap();
+
+            for i in 0..5 {
+                let x = if i < 3 { 1.0f32 } else { 0.0 };
+                let y = if i >= 3 { 1.0f32 } else { 0.0 };
+                let id = db.create_node_with_props(
+                    &["Doc"],
+                    vec![(PropertyKey::new("idx"), Value::Int64(i))],
+                );
+                db.set_node_property(id, "embedding", Value::Vector(vec![x, y, 0.0].into()));
+            }
+
+            let results = db
+                .mmr_search(
+                    "Doc",
+                    "embedding",
+                    &[1.0, 0.0, 0.0],
+                    3,
+                    Some(5),
+                    Some(0.5),
+                    None,
+                    None,
+                )
+                .unwrap();
+            assert_eq!(results.len(), 3);
+        }
+    }
 
     // === LPG deserialization tests ===
 

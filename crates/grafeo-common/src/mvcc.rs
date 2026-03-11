@@ -423,15 +423,23 @@ impl OptionalEpochId {
 ///
 /// # Memory Layout
 /// - `epoch`: 8 bytes
+/// - `arena_epoch`: 8 bytes
 /// - `arena_offset`: 4 bytes
 /// - `created_by`: 8 bytes
 /// - `deleted_epoch`: 4 bytes
-/// - Total: 24 bytes
+/// - Total: 32 bytes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(feature = "tiered-storage")]
 pub struct HotVersionRef {
-    /// Epoch when this version was created.
+    /// Epoch used for MVCC visibility checks.
+    ///
+    /// Set to `EpochId::PENDING` for uncommitted transactional versions,
+    /// then finalized to the real commit epoch on commit.
     pub epoch: EpochId,
+    /// Epoch whose arena holds the actual data.
+    ///
+    /// Always the real epoch (never PENDING), used for arena lookups.
+    pub arena_epoch: EpochId,
     /// Offset within the epoch's arena where the data is stored.
     pub arena_offset: u32,
     /// Transaction that created this version.
@@ -445,10 +453,19 @@ pub struct HotVersionRef {
 #[cfg(feature = "tiered-storage")]
 impl HotVersionRef {
     /// Creates a new hot version reference.
+    ///
+    /// `epoch` is used for MVCC visibility (may be `PENDING` for uncommitted versions).
+    /// `arena_epoch` is the real epoch whose arena holds the data.
     #[must_use]
-    pub fn new(epoch: EpochId, arena_offset: u32, created_by: TransactionId) -> Self {
+    pub fn new(
+        epoch: EpochId,
+        arena_epoch: EpochId,
+        arena_offset: u32,
+        created_by: TransactionId,
+    ) -> Self {
         Self {
             epoch,
+            arena_epoch,
             arena_offset,
             created_by,
             deleted_epoch: OptionalEpochId::NONE,
@@ -1088,7 +1105,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_hot_version_ref_visibility() {
-        let hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(5), EpochId::new(5), 100, TransactionId::new(1));
 
         // Not visible before creation
         assert!(!hot.is_visible_at(EpochId::new(4)));
@@ -1100,7 +1117,8 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_hot_version_ref_deleted_visibility() {
-        let mut hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(1));
+        let mut hot =
+            HotVersionRef::new(EpochId::new(5), EpochId::new(5), 100, TransactionId::new(1));
         hot.deleted_epoch = OptionalEpochId::some(EpochId::new(10));
 
         // Visible between creation and deletion
@@ -1114,7 +1132,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_hot_version_ref_transaction_visibility() {
-        let hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(5), EpochId::new(5), 100, TransactionId::new(1));
 
         // Creator can see it even at earlier epoch
         assert!(hot.is_visible_to(EpochId::new(3), TransactionId::new(1)));
@@ -1126,7 +1144,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_index_basic() {
-        let hot = HotVersionRef::new(EpochId::new(1), 0, TransactionId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(1), EpochId::new(1), 0, TransactionId::new(1));
         let mut index = VersionIndex::with_initial(hot);
 
         // Should see version at epoch 1+
@@ -1134,7 +1152,7 @@ mod tiered_storage_tests {
         assert!(index.visible_at(EpochId::new(0)).is_none());
 
         // Add another version
-        let hot2 = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(2));
+        let hot2 = HotVersionRef::new(EpochId::new(5), EpochId::new(5), 100, TransactionId::new(2));
         index.add_hot(hot2);
 
         // Should see v1 at epoch < 5, v2 at epoch >= 5
@@ -1147,7 +1165,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_index_deletion() {
-        let hot = HotVersionRef::new(EpochId::new(1), 0, TransactionId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(1), EpochId::new(1), 0, TransactionId::new(1));
         let mut index = VersionIndex::with_initial(hot);
 
         // Mark as deleted at epoch 5
@@ -1162,7 +1180,7 @@ mod tiered_storage_tests {
     #[test]
     fn test_version_index_transaction_visibility() {
         let tx = TransactionId::new(10);
-        let hot = HotVersionRef::new(EpochId::new(5), 0, tx);
+        let hot = HotVersionRef::new(EpochId::new(5), EpochId::new(5), 0, tx);
         let index = VersionIndex::with_initial(hot);
 
         // Creator can see it even at earlier epoch
@@ -1187,9 +1205,19 @@ mod tiered_storage_tests {
         let tx2 = TransactionId::new(20);
 
         let mut index = VersionIndex::new();
-        index.add_hot(HotVersionRef::new(EpochId::new(1), 0, tx1));
-        index.add_hot(HotVersionRef::new(EpochId::new(2), 100, tx2));
-        index.add_hot(HotVersionRef::new(EpochId::new(3), 200, tx2));
+        index.add_hot(HotVersionRef::new(EpochId::new(1), EpochId::new(1), 0, tx1));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(2),
+            EpochId::new(2),
+            100,
+            tx2,
+        ));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(3),
+            EpochId::new(3),
+            200,
+            tx2,
+        ));
 
         assert_eq!(index.version_count(), 3);
         assert!(index.modified_by(tx1));
@@ -1215,6 +1243,7 @@ mod tiered_storage_tests {
         for epoch in [1, 3, 5] {
             index.add_hot(HotVersionRef::new(
                 EpochId::new(epoch),
+                EpochId::new(epoch),
                 epoch as u32 * 100,
                 TransactionId::new(epoch),
             ));
@@ -1239,8 +1268,13 @@ mod tiered_storage_tests {
         let tx2 = TransactionId::new(20);
 
         let mut index = VersionIndex::new();
-        index.add_hot(HotVersionRef::new(EpochId::new(1), 0, tx1));
-        index.add_hot(HotVersionRef::new(EpochId::new(5), 100, tx2));
+        index.add_hot(HotVersionRef::new(EpochId::new(1), EpochId::new(1), 0, tx1));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(5),
+            EpochId::new(5),
+            100,
+            tx2,
+        ));
 
         // tx1 started at epoch 0, tx2 modified at epoch 5 -> conflict for tx1
         assert!(index.has_conflict(EpochId::new(0), tx1));
@@ -1256,7 +1290,7 @@ mod tiered_storage_tests {
 
         // If only tx1's version exists, tx1 doesn't conflict with itself
         let mut index2 = VersionIndex::new();
-        index2.add_hot(HotVersionRef::new(EpochId::new(5), 0, tx1));
+        index2.add_hot(HotVersionRef::new(EpochId::new(5), EpochId::new(5), 0, tx1));
         assert!(!index2.has_conflict(EpochId::new(0), tx1));
     }
 
@@ -1267,6 +1301,7 @@ mod tiered_storage_tests {
         // Add 2 hot versions (within inline capacity)
         for i in 0..2 {
             index.add_hot(HotVersionRef::new(
+                EpochId::new(i),
                 EpochId::new(i),
                 i as u32,
                 TransactionId::new(i),
@@ -1283,10 +1318,12 @@ mod tiered_storage_tests {
         let mut index = VersionIndex::new();
         index.add_hot(HotVersionRef::new(
             EpochId::new(1),
+            EpochId::new(1),
             0,
             TransactionId::new(1),
         ));
         index.add_hot(HotVersionRef::new(
+            EpochId::new(2),
             EpochId::new(2),
             100,
             TransactionId::new(2),
@@ -1324,7 +1361,12 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_ref_accessors() {
-        let hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(10));
+        let hot = HotVersionRef::new(
+            EpochId::new(5),
+            EpochId::new(5),
+            100,
+            TransactionId::new(10),
+        );
         let vr = VersionRef::Hot(hot);
 
         assert_eq!(vr.epoch(), EpochId::new(5));
@@ -1340,12 +1382,14 @@ mod tiered_storage_tests {
 
         index.add_hot(HotVersionRef::new(
             EpochId::new(5),
+            EpochId::new(5),
             0,
             TransactionId::new(1),
         ));
         assert_eq!(index.latest_epoch(), EpochId::new(5));
 
         index.add_hot(HotVersionRef::new(
+            EpochId::new(10),
             EpochId::new(10),
             100,
             TransactionId::new(2),
@@ -1371,6 +1415,7 @@ mod tiered_storage_tests {
 
         index.add_hot(HotVersionRef::new(
             EpochId::new(1),
+            EpochId::new(1),
             0,
             TransactionId::new(1),
         ));
@@ -1378,6 +1423,7 @@ mod tiered_storage_tests {
         assert!(matches!(latest, VersionRef::Hot(h) if h.epoch == EpochId::new(1)));
 
         index.add_hot(HotVersionRef::new(
+            EpochId::new(5),
             EpochId::new(5),
             100,
             TransactionId::new(2),

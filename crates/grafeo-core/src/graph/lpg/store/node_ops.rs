@@ -125,7 +125,7 @@ impl LpgStore {
         };
 
         // Create HotVersionRef pointing to arena data
-        let hot_ref = HotVersionRef::new(version_epoch, offset, transaction_id);
+        let hot_ref = HotVersionRef::new(version_epoch, epoch, offset, transaction_id);
 
         // Create or update version index
         let mut versions = self.node_versions.write();
@@ -336,8 +336,8 @@ impl LpgStore {
             VersionRef::Hot(hot_ref) => {
                 let arena = self
                     .arena_allocator
-                    .arena(hot_ref.epoch)
-                    .expect("epoch must exist for hot version ref");
+                    .arena(hot_ref.arena_epoch)
+                    .expect("arena epoch must exist for hot version ref");
                 // SAFETY: The offset was returned by alloc_value_with_offset for a NodeRecord
                 let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                 Some(*record)

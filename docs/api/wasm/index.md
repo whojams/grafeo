@@ -35,9 +35,17 @@ const db = new Database();   // in-memory (all WASM databases are in-memory)
 ## Query Methods
 
 ```javascript
-db.execute(gql);                 // GQL: returns array of row objects
-db.executeRaw(gql);             // GQL: returns {columns, rows, executionTimeMs}
-db.executeWithLanguage(query, language);  // "gql", "cypher", "graphql", etc.
+db.execute(gql);                              // GQL: returns array of row objects
+db.executeRaw(gql);                          // GQL: returns {columns, rows, executionTimeMs}
+db.executeWithParams(gql, params);           // GQL with parameter binding
+db.executeWithLanguage(query, language);     // "gql", "cypher", "graphql", etc.
+db.executeWithLanguageAndParams(query, language, params);  // language + params
+db.executeCypher(query);                     // Cypher shorthand
+db.executeGremlin(query);                    // Gremlin shorthand
+db.executeGraphql(query);                    // GraphQL shorthand
+db.executeSparql(query);                     // SPARQL shorthand (requires rdf feature)
+db.executeSql(query);                        // SQL/PGQ shorthand
+db.executeRawWithLanguage(query, language);  // raw result with language selection
 ```
 
 ## Properties
@@ -46,6 +54,7 @@ db.executeWithLanguage(query, language);  // "gql", "cypher", "graphql", etc.
 db.nodeCount();   // number of nodes
 db.edgeCount();   // number of edges
 db.schema();      // database schema as JSON
+Database.version(); // Grafeo version string
 ```
 
 ## Text Search
@@ -81,6 +90,56 @@ const results = db.hybridSearch(
 !!! note "Vector Index Creation"
     The `createVectorIndex` method is not available in the WASM bindings.
     Use a GQL `CREATE VECTOR INDEX` query via `db.execute()` instead.
+
+## Batch Import
+
+Load structured data in a single call, avoiding per-row query overhead.
+
+### LPG Import
+
+```javascript
+const result = db.importLpg({
+    nodes: [
+        { labels: ["Person"], properties: { name: "Alix", age: 30 } },
+        { labels: ["Person"], properties: { name: "Gus", age: 25 } },
+    ],
+    edges: [
+        { source: 0, target: 1, type: "KNOWS", properties: { since: 2020 } }
+    ]
+});
+console.log(result); // { nodes: 2, edges: 1 }
+```
+
+Edge `source` and `target` are zero-based indexes into the `nodes` array from the same call.
+
+### RDF Import
+
+Requires the `rdf` feature flag.
+
+```javascript
+const result = db.importRdf({
+    triples: [
+        {
+            subject: "http://example.org/Alix",
+            predicate: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+            object: "http://example.org/Person"
+        },
+        {
+            subject: "http://example.org/Alix",
+            predicate: "http://example.org/name",
+            object: { value: "Alix" }
+        },
+        {
+            subject: "http://example.org/Alix",
+            predicate: "http://example.org/age",
+            object: { value: "30", datatype: "http://www.w3.org/2001/XMLSchema#integer" }
+        }
+    ]
+});
+console.log(result); // { triples: 3 }
+```
+
+Objects can be a plain string (treated as IRI), or a structured literal with `value`, optional `datatype`, and optional `language` fields.
 
 ## Snapshots (Persistence)
 

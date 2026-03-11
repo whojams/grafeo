@@ -837,7 +837,7 @@ impl super::GrafeoDB {
 
     /// Batch-inserts RDF triples into the RDF store.
     ///
-    /// Delegates to [`RdfStore::batch_insert`], which acquires each index lock
+    /// Delegates to `RdfStore::batch_insert`, which acquires each index lock
     /// once for the entire batch. Duplicates are silently skipped.
     ///
     /// Returns the number of triples that were newly inserted.

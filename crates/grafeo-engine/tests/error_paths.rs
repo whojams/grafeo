@@ -710,8 +710,8 @@ fn test_gql_error_includes_caret_marker() {
 fn test_sparql_error_includes_position() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
-    // Use genuinely invalid SPARQL: SELECT is not a keyword
-    let result = session.execute_sparql("SELECT ?s WHERE { ?s ?p ?o }");
+    // Use genuinely invalid SPARQL syntax
+    let result = session.execute_sparql("GRAB ?s WHERE { ?s ?p ?o }");
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(

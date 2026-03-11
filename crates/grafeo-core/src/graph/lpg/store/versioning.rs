@@ -274,8 +274,8 @@ impl LpgStore {
                 for hot_ref in index.hot_refs_for_epoch(epoch) {
                     let arena = self
                         .arena_allocator
-                        .arena(hot_ref.epoch)
-                        .expect("epoch must exist for hot version ref");
+                        .arena(hot_ref.arena_epoch)
+                        .expect("arena epoch must exist for hot version ref");
                     // SAFETY: The offset was returned by alloc_value_with_offset for a NodeRecord
                     let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                     node_records.push((node_id.as_u64(), *record));
@@ -294,8 +294,8 @@ impl LpgStore {
                 for hot_ref in index.hot_refs_for_epoch(epoch) {
                     let arena = self
                         .arena_allocator
-                        .arena(hot_ref.epoch)
-                        .expect("epoch must exist for hot version ref");
+                        .arena(hot_ref.arena_epoch)
+                        .expect("arena epoch must exist for hot version ref");
                     // SAFETY: The offset was returned by alloc_value_with_offset for an EdgeRecord
                     let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                     edge_records.push((edge_id.as_u64(), *record));
@@ -435,7 +435,7 @@ impl LpgStore {
         let (offset, _stored) = arena.alloc_value_with_offset(record)?;
 
         // Create HotVersionRef (using SYSTEM tx for recovery)
-        let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
+        let hot_ref = HotVersionRef::new(epoch, epoch, offset, TransactionId::SYSTEM);
         let mut versions = self.node_versions.write();
         versions.insert(id, VersionIndex::with_initial(hot_ref));
         self.live_node_count.fetch_add(1, Ordering::Relaxed);
@@ -527,7 +527,7 @@ impl LpgStore {
         let (offset, _stored) = arena.alloc_value_with_offset(record)?;
 
         // Create HotVersionRef (using SYSTEM tx for recovery)
-        let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
+        let hot_ref = HotVersionRef::new(epoch, epoch, offset, TransactionId::SYSTEM);
         let mut versions = self.edge_versions.write();
         versions.insert(id, VersionIndex::with_initial(hot_ref));
 

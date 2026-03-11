@@ -105,7 +105,7 @@ impl LpgStore {
         };
 
         // Create HotVersionRef pointing to arena data
-        let hot_ref = HotVersionRef::new(version_epoch, offset, transaction_id);
+        let hot_ref = HotVersionRef::new(version_epoch, epoch, offset, transaction_id);
 
         // Create or update version index
         let mut versions = self.edge_versions.write();
@@ -231,8 +231,8 @@ impl LpgStore {
             VersionRef::Hot(hot_ref) => {
                 let arena = self
                     .arena_allocator
-                    .arena(hot_ref.epoch)
-                    .expect("epoch must exist for hot version ref");
+                    .arena(hot_ref.arena_epoch)
+                    .expect("arena epoch must exist for hot version ref");
                 // SAFETY: The offset was returned by alloc_value_with_offset for an EdgeRecord
                 let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                 Some(*record)
@@ -669,7 +669,7 @@ impl LpgStore {
                 let (offset, _stored) = arena
                     .alloc_value_with_offset(record)
                     .expect("arena allocation failed for edge record");
-                let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
+                let hot_ref = HotVersionRef::new(epoch, epoch, offset, TransactionId::SYSTEM);
                 versions.insert(id, VersionIndex::with_initial(hot_ref));
 
                 forward_batch.push((src, dst, id));

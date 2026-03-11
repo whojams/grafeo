@@ -191,6 +191,24 @@ CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
 - **Cypher temporal functions**: `date()`, `time()`, `duration()`, `datetime()`, extraction functions
 - **SPARQL XSD typed literals**: `xsd:date`, `xsd:time`, `xsd:duration` translation
 
+### Data Management (0.5.16-0.5.19)
+
+- **Graph type enforcement**: full write-path schema validation with node type inheritance, edge endpoint validation, UNIQUE/NOT NULL/CHECK constraints, default values, closed graph type guards
+- **LOAD DATA**: multi-format import (CSV, JSONL, Parquet) via `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET` in GQL, with Cypher-compatible `LOAD CSV` syntax
+- **Memory introspection**: `db.memory_usage()` for hierarchical heap usage breakdown
+- **Named graph persistence**: WAL-logged `CREATE GRAPH`/`DROP GRAPH`, snapshot v2 format, `SHOW GRAPHS`
+- **RDF persistence**: SPARQL INSERT/DELETE/CLEAR/CREATE/DROP now WAL-logged and recovered on restart
+- **Cross-graph transactions**: `USE GRAPH` within active transactions, atomic commit/rollback across graphs
+- **WASM batch import**: `importLpg()` and `importRdf()` for bulk-loading in browser environments
+
+### Transaction Correctness (0.5.19)
+
+- **MVCC dirty read prevention**: uncommitted versions use `EpochId::PENDING`, invisible to other sessions
+- **DELETE rollback restoration**: full undo log for node/edge deletions with label, property, and adjacency recovery
+- **Write-write conflict detection**: end-to-end via `WriteTracker` trait, conflict check at commit time
+- **Session Drop auto-rollback**: active transactions automatically rolled back when sessions go out of scope
+- **Int64/Float64 type coercion**: cross-type comparisons in WHERE clauses
+
 ### Ecosystem (0.5.1)
 
 - **[grafeo-memory](https://github.com/GrafeoDB/grafeo-memory)**: AI memory layer, LLM-driven fact extraction, knowledge graph storage
@@ -217,4 +235,4 @@ Interested in contributing to a specific feature? Check the [GitHub Issues](http
 
 ---
 
-*Last updated: February 2026*
+*Last updated: March 2026*

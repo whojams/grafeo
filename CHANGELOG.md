@@ -2,6 +2,12 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.20] - Unreleased
+
+### Added
+
+- **WASM `memoryUsage()` and `importRows()`**: memory introspection and bulk row import (the DataFrame equivalent) now available in WebAssembly bindings
+
 ## [0.5.19] - 2026-03-11
 
 ### Added

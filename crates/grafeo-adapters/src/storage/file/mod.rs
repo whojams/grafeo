@@ -9,9 +9,9 @@
 //!
 //! | Offset | Size | Contents |
 //! |--------|------|----------|
-//! | 0 | 4 KiB | [`FileHeader`](format::FileHeader): magic `GRAF`, version, page size |
-//! | 4 KiB | 4 KiB | [`DbHeader`](format::DbHeader) slot 0 (H1) |
-//! | 8 KiB | 4 KiB | [`DbHeader`](format::DbHeader) slot 1 (H2) |
+//! | 0 | 4 KiB | [`FileHeader`]: magic `GRAF`, version, page size |
+//! | 4 KiB | 4 KiB | [`DbHeader`] slot 0 (H1) |
+//! | 8 KiB | 4 KiB | [`DbHeader`] slot 1 (H2) |
 //! | 12 KiB+ | variable | Snapshot data payload (bincode-encoded) |
 //!
 //! ## Crash safety

@@ -9,7 +9,7 @@
 //! so you can recover after crashes without losing committed transactions.
 //! The WAL module requires filesystem I/O and is gated behind the `wal` feature.
 //!
-//! The [`file`] module implements a single-file `.grafeo` format with
+//! The [`mod@file`] module implements a single-file `.grafeo` format with
 //! dual-header crash safety and sidecar WAL. Gated behind `grafeo-file`.
 
 #[cfg(feature = "grafeo-file")]

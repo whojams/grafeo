@@ -68,8 +68,8 @@ pub use factorized_filter::{
     FactorizedPredicate, OrPredicate, PropertyPredicate,
 };
 pub use filter::{
-    BinaryFilterOp, ExpressionPredicate, FilterExpression, FilterOperator, ListPredicateKind,
-    Predicate, SessionContext, UnaryFilterOp,
+    BinaryFilterOp, ExpressionPredicate, FilterExpression, FilterOperator, LazyValue,
+    ListPredicateKind, Predicate, SessionContext, UnaryFilterOp,
 };
 pub use horizontal_aggregate::{EntityKind, HorizontalAggregateOperator};
 pub use join::{

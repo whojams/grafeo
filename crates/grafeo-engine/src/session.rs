@@ -3574,13 +3574,17 @@ impl Session {
         transaction_id: Option<TransactionId>,
     ) -> crate::query::Planner {
         use crate::query::Planner;
-        use grafeo_core::execution::operators::SessionContext;
+        use grafeo_core::execution::operators::{LazyValue, SessionContext};
+
+        // Capture store reference for lazy introspection (only computed if info()/schema() called).
+        let info_store = Arc::clone(&store);
+        let schema_store = Arc::clone(&store);
 
         let session_context = SessionContext {
             current_schema: self.current_schema(),
             current_graph: self.current_graph(),
-            db_info: Some(self.build_info_value(&*store)),
-            schema_info: Some(self.build_schema_value(&*store)),
+            db_info: LazyValue::new(move || Self::build_info_value(&*info_store)),
+            schema_info: LazyValue::new(move || Self::build_schema_value(&*schema_store)),
         };
 
         let mut planner = Planner::with_context(
@@ -3602,7 +3606,7 @@ impl Session {
     }
 
     /// Builds a `Value::Map` for the `info()` introspection function.
-    fn build_info_value(&self, store: &dyn GraphStoreMut) -> Value {
+    fn build_info_value(store: &dyn GraphStoreMut) -> Value {
         use grafeo_common::types::PropertyKey;
         use std::collections::BTreeMap;
 
@@ -3624,7 +3628,7 @@ impl Session {
     }
 
     /// Builds a `Value::Map` for the `schema()` introspection function.
-    fn build_schema_value(&self, store: &dyn GraphStoreMut) -> Value {
+    fn build_schema_value(store: &dyn GraphStoreMut) -> Value {
         use grafeo_common::types::PropertyKey;
         use std::collections::BTreeMap;
 

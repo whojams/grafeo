@@ -187,20 +187,61 @@ pub struct ExpressionPredicate {
     session_context: SessionContext,
 }
 
+/// A lazily-computed, cloneable value.
+///
+/// The factory runs at most once (via `OnceLock`). Cloning is cheap because
+/// both the lock and the factory are behind `Arc`.
+#[derive(Clone)]
+pub struct LazyValue {
+    cell: Arc<std::sync::OnceLock<Value>>,
+    factory: Arc<dyn Fn() -> Value + Send + Sync>,
+}
+
+impl LazyValue {
+    /// Creates a new lazy value with the given factory.
+    pub fn new(factory: impl Fn() -> Value + Send + Sync + 'static) -> Self {
+        Self {
+            cell: Arc::new(std::sync::OnceLock::new()),
+            factory: Arc::new(factory),
+        }
+    }
+
+    /// Returns the value, computing it on first access.
+    pub fn get(&self) -> &Value {
+        self.cell.get_or_init(|| (self.factory)())
+    }
+}
+
+impl std::fmt::Debug for LazyValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.cell.get() {
+            Some(v) => write!(f, "LazyValue({v:?})"),
+            None => write!(f, "LazyValue(<not yet computed>)"),
+        }
+    }
+}
+
+impl Default for LazyValue {
+    fn default() -> Self {
+        Self::new(|| Value::Null)
+    }
+}
+
 /// Session-level context passed to the filter evaluator for introspection functions.
 ///
-/// These values are snapshots taken at query start time, so they remain consistent
-/// throughout query evaluation.
+/// Lightweight strings (`current_schema`, `current_graph`) are stored directly.
+/// Expensive introspection maps (`db_info`, `schema_info`) are lazily computed
+/// on first access, so queries that never call `info()` or `schema()` pay zero cost.
 #[derive(Debug, Clone, Default)]
 pub struct SessionContext {
     /// Current session schema name (for `CURRENT_SCHEMA`).
     pub current_schema: Option<String>,
     /// Current session graph name (for `CURRENT_GRAPH`).
     pub current_graph: Option<String>,
-    /// Cached `info()` result as a Value::Map.
-    pub db_info: Option<Value>,
-    /// Cached `schema()` result as a Value::Map.
-    pub schema_info: Option<Value>,
+    /// Lazily-computed `info()` result.
+    pub db_info: LazyValue,
+    /// Lazily-computed `schema()` result.
+    pub schema_info: LazyValue,
 }
 
 /// A filter expression that can be evaluated.
@@ -2956,14 +2997,9 @@ impl ExpressionPredicate {
                 Some(Value::Null)
             }
             // Grafeo extension: info() returns database metadata as a map
-            "info" => Some(self.session_context.db_info.clone().unwrap_or(Value::Null)),
+            "info" => Some(self.session_context.db_info.get().clone()),
             // Grafeo extension: schema() returns schema metadata as a map
-            "schema" => Some(
-                self.session_context
-                    .schema_info
-                    .clone()
-                    .unwrap_or(Value::Null),
-            ),
+            "schema" => Some(self.session_context.schema_info.get().clone()),
             "octet_length" | "byte_length" => {
                 // octet_length(string) - byte length
                 if args.len() != 1 {

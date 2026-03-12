@@ -138,7 +138,8 @@ impl super::Planner {
                     output_types,
                     Arc::clone(&self.store) as Arc<dyn GraphStore>,
                 )
-                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                .with_session_context(self.session_context.clone()),
             );
         }
 
@@ -276,7 +277,8 @@ impl super::Planner {
                 having_var_columns,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
             )
-            .with_transaction_context(self.viewing_epoch, self.transaction_id);
+            .with_transaction_context(self.viewing_epoch, self.transaction_id)
+            .with_session_context(self.session_context.clone());
             operator = Box::new(FilterOperator::new(operator, Box::new(predicate)));
         }
 

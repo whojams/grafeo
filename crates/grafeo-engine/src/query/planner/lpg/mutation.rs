@@ -288,7 +288,8 @@ impl super::Planner {
                         vec![LogicalType::Any],
                         Arc::clone(&self.store) as Arc<dyn GraphStore>,
                     )
-                    .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                    .with_session_context(self.session_context.clone()),
                 );
 
                 (project_op, vec!["__list__".to_string()])
@@ -342,7 +343,8 @@ impl super::Planner {
                     proj_schema,
                     Arc::clone(&self.store) as Arc<dyn GraphStore>,
                 )
-                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                .with_session_context(self.session_context.clone()),
             );
             let list_col = input_columns.len();
             let mut cols = input_columns;

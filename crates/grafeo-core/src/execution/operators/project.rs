@@ -1,6 +1,6 @@
 //! Project operator for selecting and transforming columns.
 
-use super::filter::{ExpressionPredicate, FilterExpression};
+use super::filter::{ExpressionPredicate, FilterExpression, SessionContext};
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
@@ -60,6 +60,8 @@ pub struct ProjectOperator {
     transaction_id: Option<TransactionId>,
     /// Viewing epoch for MVCC-aware property lookups.
     viewing_epoch: Option<EpochId>,
+    /// Session context for introspection functions in expression evaluation.
+    session_context: SessionContext,
 }
 
 impl ProjectOperator {
@@ -77,6 +79,7 @@ impl ProjectOperator {
             store: None,
             transaction_id: None,
             viewing_epoch: None,
+            session_context: SessionContext::default(),
         }
     }
 
@@ -95,6 +98,7 @@ impl ProjectOperator {
             store: Some(store),
             transaction_id: None,
             viewing_epoch: None,
+            session_context: SessionContext::default(),
         }
     }
 
@@ -106,6 +110,12 @@ impl ProjectOperator {
     ) -> Self {
         self.viewing_epoch = Some(epoch);
         self.transaction_id = transaction_id;
+        self
+    }
+
+    /// Sets the session context for introspection functions.
+    pub fn with_session_context(mut self, context: SessionContext) -> Self {
+        self.session_context = context;
         self
     }
 
@@ -270,7 +280,8 @@ impl Operator for ProjectOperator {
                         expr.clone(),
                         variable_columns.clone(),
                         Arc::clone(store),
-                    );
+                    )
+                    .with_session_context(self.session_context.clone());
                     if let (Some(ep), tx_id) = (self.viewing_epoch, self.transaction_id) {
                         evaluator = evaluator.with_transaction_context(ep, tx_id);
                     }

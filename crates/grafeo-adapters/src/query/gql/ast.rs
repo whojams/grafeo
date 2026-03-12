@@ -41,6 +41,24 @@ pub enum TransactionIsolationLevel {
     Serializable,
 }
 
+/// Target for `SESSION RESET` (ISO/IEC 39075 Section 7.2).
+///
+/// The spec allows resetting schema, graph, time zone, and parameters
+/// independently. `All` resets all characteristics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionResetTarget {
+    /// `SESSION RESET [ALL CHARACTERISTICS]`: resets everything.
+    All,
+    /// `SESSION RESET SCHEMA`: resets session schema only (Section 7.2 GR1).
+    Schema,
+    /// `SESSION RESET [PROPERTY] GRAPH`: resets session graph only (Section 7.2 GR2).
+    Graph,
+    /// `SESSION RESET TIME ZONE`: resets time zone (Section 7.2 GR3).
+    TimeZone,
+    /// `SESSION RESET [ALL] PARAMETERS`: resets all session parameters (Section 7.2 GR4).
+    Parameters,
+}
+
 /// Session and transaction commands.
 #[derive(Debug, Clone)]
 pub enum SessionCommand {
@@ -70,12 +88,15 @@ pub enum SessionCommand {
     },
     /// `SESSION SET GRAPH name`
     SessionSetGraph(String),
+    /// `SESSION SET SCHEMA name` (ISO/IEC 39075 Section 7.1 GR1: independent from graph)
+    SessionSetSchema(String),
     /// `SESSION SET TIME ZONE 'tz'`
     SessionSetTimeZone(String),
     /// `SESSION SET PARAMETER $name = value`
     SessionSetParameter(String, Expression),
-    /// `SESSION RESET [ALL]`
-    SessionReset,
+    /// `SESSION RESET [ALL | SCHEMA | GRAPH | TIME ZONE | PARAMETER]`
+    /// (ISO/IEC 39075 Section 7.2: schema and graph can be reset independently)
+    SessionReset(SessionResetTarget),
     /// `SESSION CLOSE`
     SessionClose,
     /// `START TRANSACTION [READ ONLY | READ WRITE] [ISOLATION LEVEL <level>]`
@@ -765,8 +786,10 @@ pub enum SchemaStatement {
     ShowGraphType(String),
     /// SHOW CURRENT GRAPH TYPE: shows the graph type bound to the current graph.
     ShowCurrentGraphType,
-    /// SHOW GRAPHS: lists all named graphs in the database.
+    /// SHOW GRAPHS: lists all named graphs in the database (or in the current schema).
     ShowGraphs,
+    /// SHOW SCHEMAS: lists all schema namespaces.
+    ShowSchemas,
 }
 
 /// A CREATE NODE TYPE statement.

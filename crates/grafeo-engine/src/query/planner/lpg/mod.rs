@@ -99,6 +99,8 @@ pub struct Planner {
     profile_entries: std::cell::RefCell<Vec<crate::query::profile::ProfileEntry>>,
     /// Optional write tracker for recording writes during mutations.
     write_tracker: Option<grafeo_core::execution::operators::SharedWriteTracker>,
+    /// Session context for introspection functions (info, schema, current_schema, etc.).
+    pub(super) session_context: grafeo_core::execution::operators::SessionContext,
 }
 
 impl Planner {
@@ -125,6 +127,7 @@ impl Planner {
             profiling: std::cell::Cell::new(false),
             profile_entries: std::cell::RefCell::new(Vec::new()),
             write_tracker: None,
+            session_context: grafeo_core::execution::operators::SessionContext::default(),
         }
     }
 
@@ -164,6 +167,7 @@ impl Planner {
             profiling: std::cell::Cell::new(false),
             profile_entries: std::cell::RefCell::new(Vec::new()),
             write_tracker,
+            session_context: grafeo_core::execution::operators::SessionContext::default(),
         }
     }
 
@@ -203,6 +207,16 @@ impl Planner {
     #[must_use]
     pub fn with_catalog(mut self, catalog: Arc<crate::catalog::Catalog>) -> Self {
         self.catalog = Some(catalog);
+        self
+    }
+
+    /// Sets the session context for introspection functions.
+    #[must_use]
+    pub fn with_session_context(
+        mut self,
+        context: grafeo_core::execution::operators::SessionContext,
+    ) -> Self {
+        self.session_context = context;
         self
     }
 

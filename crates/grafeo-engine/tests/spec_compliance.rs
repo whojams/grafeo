@@ -8,7 +8,7 @@
 //! cargo test -p grafeo-engine --features full --test spec_compliance
 //! ```
 
-use grafeo_common::types::Value;
+use grafeo_common::types::{PropertyKey, Value};
 use grafeo_engine::GrafeoDB;
 
 // ============================================================================
@@ -647,19 +647,21 @@ mod gql_session_commands {
     fn session_set_schema() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        // SESSION SET SCHEMA maps to graph, graph must exist
-        session.execute("CREATE GRAPH myschema").unwrap();
+        // ISO/IEC 39075 Section 7.1 GR1: SESSION SET SCHEMA sets session schema independently
+        session.execute("CREATE SCHEMA myschema").unwrap();
         let result = session.execute("SESSION SET SCHEMA myschema");
         assert!(result.is_ok());
-        assert_eq!(session.current_graph(), Some("myschema".to_string()));
+        assert_eq!(session.current_schema(), Some("myschema".to_string()));
+        // Graph should remain unaffected
+        assert_eq!(session.current_graph(), None);
     }
 
     #[test]
     fn session_set_schema_nonexistent_errors() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        // SESSION SET SCHEMA should error if graph does not exist
-        let result = session.execute("SESSION SET SCHEMA nosuchgraph");
+        // SESSION SET SCHEMA should error if schema does not exist
+        let result = session.execute("SESSION SET SCHEMA nosuchschema");
         assert!(result.is_err());
     }
 
@@ -670,11 +672,156 @@ mod gql_session_commands {
         session.execute("CREATE GRAPH g1").unwrap();
         session.execute("USE GRAPH g1").unwrap();
         session.execute("SESSION SET TIME ZONE 'EST'").unwrap();
-        // Reset clears everything
+        session.execute("CREATE SCHEMA s1").unwrap();
+        session.execute("SESSION SET SCHEMA s1").unwrap();
+        // Reset clears everything (Section 7.2 GR1+GR2+GR3)
         let result = session.execute("SESSION RESET");
         assert!(result.is_ok());
         assert_eq!(session.current_graph(), None);
+        assert_eq!(session.current_schema(), None);
         assert_eq!(session.time_zone(), None);
+    }
+
+    #[test]
+    fn session_reset_schema_only() {
+        // ISO/IEC 39075 Section 7.2 GR1: SESSION RESET SCHEMA resets schema only
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("CREATE GRAPH g1").unwrap();
+        session.execute("USE GRAPH g1").unwrap();
+        session.execute("CREATE SCHEMA s1").unwrap();
+        session.execute("SESSION SET SCHEMA s1").unwrap();
+        let result = session.execute("SESSION RESET SCHEMA");
+        assert!(result.is_ok());
+        assert_eq!(session.current_schema(), None);
+        // Graph should remain set
+        assert_eq!(session.current_graph(), Some("g1".to_string()));
+    }
+
+    #[test]
+    fn session_reset_graph_only() {
+        // ISO/IEC 39075 Section 7.2 GR2: SESSION RESET GRAPH resets graph only
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("CREATE GRAPH g1").unwrap();
+        session.execute("USE GRAPH g1").unwrap();
+        session.execute("CREATE SCHEMA s1").unwrap();
+        session.execute("SESSION SET SCHEMA s1").unwrap();
+        let result = session.execute("SESSION RESET GRAPH");
+        assert!(result.is_ok());
+        assert_eq!(session.current_graph(), None);
+        // Schema should remain set
+        assert_eq!(session.current_schema(), Some("s1".to_string()));
+    }
+
+    // ========================================================================
+    // QoL introspection functions: CURRENT_SCHEMA, CURRENT_GRAPH, info(), schema()
+    // ========================================================================
+
+    #[test]
+    fn return_current_schema_null_by_default() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("RETURN CURRENT_SCHEMA AS s").unwrap();
+        assert_eq!(result.columns, vec!["s"]);
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0].len(), 1);
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn return_current_schema_after_set() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("CREATE SCHEMA analytics").unwrap();
+        session.execute("SESSION SET SCHEMA analytics").unwrap();
+        let result = session.execute("RETURN CURRENT_SCHEMA AS s").unwrap();
+        assert_eq!(result.rows[0][0], Value::String("analytics".into()));
+    }
+
+    #[test]
+    fn return_current_graph_null_by_default() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("RETURN CURRENT_GRAPH AS g").unwrap();
+        assert_eq!(result.columns, vec!["g"]);
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn return_current_graph_after_use() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("CREATE GRAPH social").unwrap();
+        session.execute("USE GRAPH social").unwrap();
+        let result = session.execute("RETURN CURRENT_GRAPH AS g").unwrap();
+        assert_eq!(result.rows[0][0], Value::String("social".into()));
+    }
+
+    #[test]
+    fn return_info_function() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // Insert some data first
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session
+            .execute("INSERT (:Person {name: 'Gus'})-[:KNOWS]->(:Person {name: 'Vincent'})")
+            .unwrap();
+        let result = session.execute("RETURN info() AS i").unwrap();
+        assert_eq!(result.columns, vec!["i"]);
+        assert_eq!(result.rows.len(), 1);
+        let info = result.rows[0][0]
+            .as_map()
+            .expect("info() should return a map");
+        assert_eq!(
+            info.get(&PropertyKey::from("mode")),
+            Some(&Value::String("lpg".into()))
+        );
+        // Should have 3 nodes (Alix, Gus, Vincent)
+        assert_eq!(
+            info.get(&PropertyKey::from("node_count")),
+            Some(&Value::Int64(3))
+        );
+        // Should have 1 edge (KNOWS)
+        assert_eq!(
+            info.get(&PropertyKey::from("edge_count")),
+            Some(&Value::Int64(1))
+        );
+        assert!(info.get(&PropertyKey::from("version")).is_some());
+    }
+
+    #[test]
+    fn return_schema_function() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+            .unwrap();
+        let result = session.execute("RETURN schema() AS s").unwrap();
+        assert_eq!(result.columns, vec!["s"]);
+        assert_eq!(result.rows.len(), 1);
+        let schema = result.rows[0][0]
+            .as_map()
+            .expect("schema() should return a map");
+        // Labels should include "Person"
+        let labels = schema
+            .get(&PropertyKey::from("labels"))
+            .expect("should have labels");
+        if let Value::List(l) = labels {
+            assert!(l.contains(&Value::String("Person".into())));
+        } else {
+            panic!("labels should be a list");
+        }
+        // Edge types should include "KNOWS"
+        let edge_types = schema
+            .get(&PropertyKey::from("edge_types"))
+            .expect("should have edge_types");
+        if let Value::List(l) = edge_types {
+            assert!(l.contains(&Value::String("KNOWS".into())));
+        } else {
+            panic!("edge_types should be a list");
+        }
     }
 
     #[test]
@@ -849,6 +996,18 @@ mod gql_insert_patterns {
 #[cfg(feature = "cypher")]
 mod cypher_features {
     use super::*;
+
+    #[test]
+    fn count_star() {
+        // ISO/IEC 39075 Section 20.9: COUNT(*) counts all rows
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:Person) RETURN COUNT(*) AS cnt")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.rows[0][0], Value::Int64(4)); // Alix, Gus, Dave, Harm
+    }
 
     #[test]
     fn count_subquery() {
@@ -2268,7 +2427,7 @@ mod sparql_features {
 #[cfg(feature = "gql")]
 mod gql_parser_unit {
     use grafeo_adapters::query::gql;
-    use grafeo_adapters::query::gql::ast::{SessionCommand, Statement};
+    use grafeo_adapters::query::gql::ast::{SessionCommand, SessionResetTarget, Statement};
 
     #[test]
     fn parse_create_graph() {
@@ -2385,10 +2544,10 @@ mod gql_parser_unit {
     fn parse_session_set_schema() {
         let stmt = gql::parse("SESSION SET SCHEMA myschema").unwrap();
         match stmt {
-            Statement::SessionCommand(SessionCommand::SessionSetGraph(name)) => {
+            Statement::SessionCommand(SessionCommand::SessionSetSchema(name)) => {
                 assert_eq!(name, "myschema");
             }
-            other => panic!("Expected SessionSetGraph (schema), got {other:?}"),
+            other => panic!("Expected SessionSetSchema, got {other:?}"),
         }
     }
 
@@ -2408,7 +2567,7 @@ mod gql_parser_unit {
         let stmt = gql::parse("SESSION RESET").unwrap();
         assert!(matches!(
             stmt,
-            Statement::SessionCommand(SessionCommand::SessionReset)
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::All))
         ));
     }
 
@@ -2417,7 +2576,7 @@ mod gql_parser_unit {
         let stmt = gql::parse("SESSION RESET ALL").unwrap();
         assert!(matches!(
             stmt,
-            Statement::SessionCommand(SessionCommand::SessionReset)
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::All))
         ));
     }
 

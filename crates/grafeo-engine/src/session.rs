@@ -124,6 +124,9 @@ pub struct Session {
     cdc_log: Arc<crate::cdc::CdcLog>,
     /// Current graph name (for multi-graph USE GRAPH support). None = default graph.
     current_graph: parking_lot::Mutex<Option<String>>,
+    /// Current schema name (ISO/IEC 39075 Section 4.7.3: independent from session graph).
+    /// None = "not set" (uses default schema).
+    current_schema: parking_lot::Mutex<Option<String>>,
     /// Session time zone override.
     time_zone: parking_lot::Mutex<Option<String>>,
     /// Session-level parameters (SET PARAMETER).
@@ -194,6 +197,7 @@ impl Session {
             #[cfg(feature = "cdc")]
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             current_graph: parking_lot::Mutex::new(None),
+            current_schema: parking_lot::Mutex::new(None),
             time_zone: parking_lot::Mutex::new(None),
             session_params: parking_lot::Mutex::new(std::collections::HashMap::new()),
             viewing_epoch_override: parking_lot::Mutex::new(None),
@@ -262,6 +266,7 @@ impl Session {
             #[cfg(feature = "cdc")]
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             current_graph: parking_lot::Mutex::new(None),
+            current_schema: parking_lot::Mutex::new(None),
             time_zone: parking_lot::Mutex::new(None),
             session_params: parking_lot::Mutex::new(std::collections::HashMap::new()),
             viewing_epoch_override: parking_lot::Mutex::new(None),
@@ -309,6 +314,7 @@ impl Session {
             #[cfg(feature = "cdc")]
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             current_graph: parking_lot::Mutex::new(None),
+            current_schema: parking_lot::Mutex::new(None),
             time_zone: parking_lot::Mutex::new(None),
             session_params: parking_lot::Mutex::new(std::collections::HashMap::new()),
             viewing_epoch_override: parking_lot::Mutex::new(None),
@@ -337,6 +343,47 @@ impl Session {
         self.current_graph.lock().clone()
     }
 
+    /// Sets the current schema for this session (SESSION SET SCHEMA).
+    ///
+    /// Per ISO/IEC 39075 Section 7.1 GR1, this is independent of the session graph.
+    pub fn set_schema(&self, name: &str) {
+        *self.current_schema.lock() = Some(name.to_string());
+    }
+
+    /// Returns the current schema name, if any.
+    ///
+    /// `None` means "not set", which resolves to the default schema.
+    #[must_use]
+    pub fn current_schema(&self) -> Option<String> {
+        self.current_schema.lock().clone()
+    }
+
+    /// Computes the effective storage key for a graph, accounting for schema context.
+    ///
+    /// Per ISO/IEC 39075 Section 17.2, graphs resolve relative to the current schema.
+    /// Uses `/` as separator since it is invalid in GQL identifiers.
+    fn effective_graph_key(&self, graph_name: &str) -> String {
+        let schema = self.current_schema.lock().clone();
+        match schema {
+            Some(s) => format!("{s}/{graph_name}"),
+            None => graph_name.to_string(),
+        }
+    }
+
+    /// Returns the effective storage key for the current graph, accounting for schema.
+    ///
+    /// Combines `current_schema` and `current_graph` into a flat lookup key.
+    fn active_graph_storage_key(&self) -> Option<String> {
+        let graph = self.current_graph.lock().clone();
+        let schema = self.current_schema.lock().clone();
+        match (schema, graph) {
+            (_, None) => None,
+            (_, Some(ref name)) if name.eq_ignore_ascii_case("default") => None,
+            (None, Some(name)) => Some(name),
+            (Some(s), Some(g)) => Some(format!("{s}/{g}")),
+        }
+    }
+
     /// Returns the graph store for the currently active graph.
     ///
     /// If `current_graph` is `None` or `"default"`, returns the session's
@@ -345,10 +392,9 @@ impl Session {
     /// in a [`WalGraphStore`] so mutations are WAL-logged with the correct
     /// graph context.
     fn active_store(&self) -> Arc<dyn GraphStoreMut> {
-        let graph_name = self.current_graph.lock().clone();
-        match graph_name {
+        let key = self.active_graph_storage_key();
+        match key {
             None => Arc::clone(&self.graph_store),
-            Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.graph_store),
             Some(ref name) => match self.store.graph(name) {
                 Some(named_store) => {
                     #[cfg(feature = "wal")]
@@ -372,10 +418,9 @@ impl Session {
     /// Used by direct CRUD methods that need the concrete store type
     /// for versioned operations.
     fn active_lpg_store(&self) -> Arc<LpgStore> {
-        let graph_name = self.current_graph.lock().clone();
-        match graph_name {
+        let key = self.active_graph_storage_key();
+        match key {
             None => Arc::clone(&self.store),
-            Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
             Some(ref name) => self
                 .store
                 .graph(name)
@@ -397,17 +442,15 @@ impl Session {
     }
 
     /// Records the current graph as "touched" if a transaction is active.
+    ///
+    /// Uses the full storage key (schema/graph) so that commit/rollback
+    /// can resolve the correct store via `resolve_store`.
     fn track_graph_touch(&self) {
         if self.current_transaction.lock().is_some() {
-            let graph = self.current_graph.lock().clone();
-            // Normalize: treat Some("default") as None
-            let normalized = match graph {
-                Some(ref name) if name.eq_ignore_ascii_case("default") => None,
-                other => other,
-            };
+            let key = self.active_graph_storage_key();
             let mut touched = self.touched_graphs.lock();
-            if !touched.contains(&normalized) {
-                touched.push(normalized);
+            if !touched.contains(&key) {
+                touched.push(key);
             }
         }
     }
@@ -434,12 +477,33 @@ impl Session {
         self.session_params.lock().get(key).cloned()
     }
 
-    /// Resets all session state to defaults.
+    /// Resets all session state to defaults (ISO/IEC 39075 Section 7.2).
     pub fn reset_session(&self) {
+        *self.current_schema.lock() = None;
         *self.current_graph.lock() = None;
         *self.time_zone.lock() = None;
         self.session_params.lock().clear();
         *self.viewing_epoch_override.lock() = None;
+    }
+
+    /// Resets only the session schema (Section 7.2 GR1).
+    pub fn reset_schema(&self) {
+        *self.current_schema.lock() = None;
+    }
+
+    /// Resets only the session graph (Section 7.2 GR2).
+    pub fn reset_graph(&self) {
+        *self.current_graph.lock() = None;
+    }
+
+    /// Resets only the session time zone (Section 7.2 GR3).
+    pub fn reset_time_zone(&self) {
+        *self.time_zone.lock() = None;
+    }
+
+    /// Resets only session parameters (Section 7.2 GR4).
+    pub fn reset_parameters(&self) {
+        self.session_params.lock().clear();
     }
 
     // --- Time-travel API ---
@@ -508,27 +572,32 @@ impl Session {
                 copy_of,
                 open: _,
             } => {
+                // ISO/IEC 39075 Section 12.4: graphs are created within the current schema
+                let storage_key = self.effective_graph_key(&name);
+
                 // Validate source graph exists for LIKE / AS COPY OF
-                if let Some(ref src) = like_graph
-                    && self.store.graph(src).is_none()
-                {
-                    return Err(Error::Query(QueryError::new(
-                        QueryErrorKind::Semantic,
-                        format!("Source graph '{src}' does not exist"),
-                    )));
+                if let Some(ref src) = like_graph {
+                    let src_key = self.effective_graph_key(src);
+                    if self.store.graph(&src_key).is_none() {
+                        return Err(Error::Query(QueryError::new(
+                            QueryErrorKind::Semantic,
+                            format!("Source graph '{src}' does not exist"),
+                        )));
+                    }
                 }
-                if let Some(ref src) = copy_of
-                    && self.store.graph(src).is_none()
-                {
-                    return Err(Error::Query(QueryError::new(
-                        QueryErrorKind::Semantic,
-                        format!("Source graph '{src}' does not exist"),
-                    )));
+                if let Some(ref src) = copy_of {
+                    let src_key = self.effective_graph_key(src);
+                    if self.store.graph(&src_key).is_none() {
+                        return Err(Error::Query(QueryError::new(
+                            QueryErrorKind::Semantic,
+                            format!("Source graph '{src}' does not exist"),
+                        )));
+                    }
                 }
 
                 let created = self
                     .store
-                    .create_graph(&name)
+                    .create_graph(&storage_key)
                     .map_err(|e| Error::Internal(e.to_string()))?;
                 if !created && !if_not_exists {
                     return Err(Error::Query(QueryError::new(
@@ -540,21 +609,24 @@ impl Session {
                     #[cfg(feature = "wal")]
                     self.log_schema_wal(
                         &grafeo_adapters::storage::wal::WalRecord::CreateNamedGraph {
-                            name: name.clone(),
+                            name: storage_key.clone(),
                         },
                     );
                 }
 
                 // AS COPY OF: copy data from source graph
                 if let Some(ref src) = copy_of {
+                    let src_key = self.effective_graph_key(src);
                     self.store
-                        .copy_graph(Some(src), Some(&name))
+                        .copy_graph(Some(&src_key), Some(&storage_key))
                         .map_err(|e| Error::Internal(e.to_string()))?;
                 }
 
                 // Bind to graph type if specified
                 if let Some(type_name) = typed
-                    && let Err(e) = self.catalog.bind_graph_type(&name, type_name.clone())
+                    && let Err(e) = self
+                        .catalog
+                        .bind_graph_type(&storage_key, type_name.clone())
                 {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
@@ -563,16 +635,18 @@ impl Session {
                 }
 
                 // LIKE: copy graph type binding from source
-                if let Some(ref src) = like_graph
-                    && let Some(src_type) = self.catalog.get_graph_type_binding(src)
-                {
-                    let _ = self.catalog.bind_graph_type(&name, src_type);
+                if let Some(ref src) = like_graph {
+                    let src_key = self.effective_graph_key(src);
+                    if let Some(src_type) = self.catalog.get_graph_type_binding(&src_key) {
+                        let _ = self.catalog.bind_graph_type(&storage_key, src_type);
+                    }
                 }
 
                 Ok(QueryResult::empty())
             }
             SessionCommand::DropGraph { name, if_exists } => {
-                let dropped = self.store.drop_graph(&name);
+                let storage_key = self.effective_graph_key(&name);
+                let dropped = self.store.drop_graph(&storage_key);
                 if !dropped && !if_exists {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
@@ -583,7 +657,7 @@ impl Session {
                     #[cfg(feature = "wal")]
                     self.log_schema_wal(
                         &grafeo_adapters::storage::wal::WalRecord::DropNamedGraph {
-                            name: name.clone(),
+                            name: storage_key.clone(),
                         },
                     );
                     // If this session was using the dropped graph, reset to default
@@ -598,8 +672,11 @@ impl Session {
                 Ok(QueryResult::empty())
             }
             SessionCommand::UseGraph(name) => {
-                // Verify graph exists (default graph is always valid)
-                if !name.eq_ignore_ascii_case("default") && self.store.graph(&name).is_none() {
+                // Verify graph exists (resolve within current schema)
+                let effective_key = self.effective_graph_key(&name);
+                if !name.eq_ignore_ascii_case("default")
+                    && self.store.graph(&effective_key).is_none()
+                {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
                         format!("Graph '{name}' does not exist"),
@@ -611,8 +688,11 @@ impl Session {
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionSetGraph(name) => {
-                // Validate graph exists (same check as USE GRAPH)
-                if !name.eq_ignore_ascii_case("default") && self.store.graph(&name).is_none() {
+                // ISO/IEC 39075 Section 7.1 GR2: set session graph (resolved within current schema)
+                let effective_key = self.effective_graph_key(&name);
+                if !name.eq_ignore_ascii_case("default")
+                    && self.store.graph(&effective_key).is_none()
+                {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
                         format!("Graph '{name}' does not exist"),
@@ -621,6 +701,17 @@ impl Session {
                 self.use_graph(&name);
                 // Track the new graph if in a transaction
                 self.track_graph_touch();
+                Ok(QueryResult::empty())
+            }
+            SessionCommand::SessionSetSchema(name) => {
+                // ISO/IEC 39075 Section 7.1 GR1: set session schema (independent of graph)
+                if !self.catalog.schema_exists(&name) {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        format!("Schema '{name}' does not exist"),
+                    )));
+                }
+                self.set_schema(&name);
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionSetTimeZone(tz) => {
@@ -646,8 +737,15 @@ impl Session {
                     Ok(QueryResult::empty())
                 }
             }
-            SessionCommand::SessionReset => {
-                self.reset_session();
+            SessionCommand::SessionReset(target) => {
+                use grafeo_adapters::query::gql::ast::SessionResetTarget;
+                match target {
+                    SessionResetTarget::All => self.reset_session(),
+                    SessionResetTarget::Schema => self.reset_schema(),
+                    SessionResetTarget::Graph => self.reset_graph(),
+                    SessionResetTarget::TimeZone => self.reset_time_zone(),
+                    SessionResetTarget::Parameters => self.reset_parameters(),
+                }
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionClose => {
@@ -1227,9 +1325,32 @@ impl Session {
                 ))),
             },
             SchemaStatement::DropSchema { name, if_exists } => {
+                // ISO/IEC 39075 Section 12.3: schema must be empty before dropping
+                let prefix = format!("{name}/");
+                let has_graphs = self
+                    .store
+                    .graph_names()
+                    .iter()
+                    .any(|g| g.starts_with(&prefix));
+                if has_graphs {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        format!(
+                            "Schema '{name}' is not empty: drop all graphs in the schema first"
+                        ),
+                    )));
+                }
                 match self.catalog.drop_schema_namespace(&name) {
                     Ok(()) => {
                         wal_log!(self, WalRecord::DropSchema { name: name.clone() });
+                        // If this session was using the dropped schema, reset it
+                        let mut current = self.current_schema.lock();
+                        if current
+                            .as_deref()
+                            .is_some_and(|s| s.eq_ignore_ascii_case(&name))
+                        {
+                            *current = None;
+                        }
                         Ok(QueryResult::status(format!("Dropped schema '{name}'")))
                     }
                     Err(e) if if_exists => {
@@ -1514,6 +1635,9 @@ impl Session {
             SchemaStatement::ShowGraphs => {
                 return self.execute_show_graphs();
             }
+            SchemaStatement::ShowSchemas => {
+                return self.execute_show_schemas();
+            }
         };
 
         // Invalidate all cached query plans after any successful DDL change.
@@ -1788,9 +1912,39 @@ impl Session {
         })
     }
 
-    /// Returns the list of named graphs in the database.
+    /// Returns the list of named graphs visible in the current schema context.
+    ///
+    /// When a session schema is set, only graphs belonging to that schema are
+    /// shown (their compound prefix is stripped). When no schema is set, graphs
+    /// without a schema prefix are shown (the default schema).
     fn execute_show_graphs(&self) -> Result<QueryResult> {
-        let mut names = self.store.graph_names();
+        let schema = self.current_schema.lock().clone();
+        let all_names = self.store.graph_names();
+
+        let mut names: Vec<String> = match &schema {
+            Some(s) => {
+                let prefix = format!("{s}/");
+                all_names
+                    .into_iter()
+                    .filter_map(|n| n.strip_prefix(&prefix).map(String::from))
+                    .collect()
+            }
+            None => all_names.into_iter().filter(|n| !n.contains('/')).collect(),
+        };
+        names.sort();
+
+        let rows: Vec<Vec<Value>> = names.into_iter().map(|n| vec![Value::from(n)]).collect();
+        Ok(QueryResult {
+            columns: vec!["name".to_string()],
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns the list of all schema namespaces.
+    fn execute_show_schemas(&self) -> Result<QueryResult> {
+        let mut names = self.catalog.schema_names();
         names.sort();
         let rows: Vec<Vec<Value>> = names.into_iter().map(|n| vec![Value::from(n)]).collect();
         Ok(QueryResult {
@@ -2885,14 +3039,11 @@ impl Session {
         *self.read_only_tx.lock() = read_only;
 
         // Record the initial graph as "touched" for cross-graph atomicity.
-        let graph = self.current_graph.lock().clone();
-        let normalized = match graph {
-            Some(ref name) if name.eq_ignore_ascii_case("default") => None,
-            other => other,
-        };
+        // Uses the full storage key (schema/graph) for schema-scoped resolution.
+        let key = self.active_graph_storage_key();
         let mut touched = self.touched_graphs.lock();
         touched.clear();
-        touched.push(normalized);
+        touched.push(key);
 
         Ok(())
     }
@@ -3411,6 +3562,14 @@ impl Session {
         transaction_id: Option<TransactionId>,
     ) -> crate::query::Planner {
         use crate::query::Planner;
+        use grafeo_core::execution::operators::SessionContext;
+
+        let session_context = SessionContext {
+            current_schema: self.current_schema(),
+            current_graph: self.current_graph(),
+            db_info: Some(self.build_info_value(&*store)),
+            schema_info: Some(self.build_schema_value(&*store)),
+        };
 
         let mut planner = Planner::with_context(
             Arc::clone(&store),
@@ -3419,7 +3578,8 @@ impl Session {
             viewing_epoch,
         )
         .with_factorized_execution(self.factorized_execution)
-        .with_catalog(Arc::clone(&self.catalog));
+        .with_catalog(Arc::clone(&self.catalog))
+        .with_session_context(session_context);
 
         // Attach the constraint validator for schema enforcement
         let validator =
@@ -3427,6 +3587,62 @@ impl Session {
         planner = planner.with_validator(Arc::new(validator));
 
         planner
+    }
+
+    /// Builds a `Value::Map` for the `info()` introspection function.
+    fn build_info_value(&self, store: &dyn GraphStoreMut) -> Value {
+        use grafeo_common::types::PropertyKey;
+        use std::collections::BTreeMap;
+
+        let mut map = BTreeMap::new();
+        map.insert(PropertyKey::from("mode"), Value::String("lpg".into()));
+        map.insert(
+            PropertyKey::from("node_count"),
+            Value::Int64(store.node_count() as i64),
+        );
+        map.insert(
+            PropertyKey::from("edge_count"),
+            Value::Int64(store.edge_count() as i64),
+        );
+        map.insert(
+            PropertyKey::from("version"),
+            Value::String(env!("CARGO_PKG_VERSION").into()),
+        );
+        Value::Map(map.into())
+    }
+
+    /// Builds a `Value::Map` for the `schema()` introspection function.
+    fn build_schema_value(&self, store: &dyn GraphStoreMut) -> Value {
+        use grafeo_common::types::PropertyKey;
+        use std::collections::BTreeMap;
+
+        let labels: Vec<Value> = store
+            .all_labels()
+            .into_iter()
+            .map(|l| Value::String(l.into()))
+            .collect();
+        let edge_types: Vec<Value> = store
+            .all_edge_types()
+            .into_iter()
+            .map(|t| Value::String(t.into()))
+            .collect();
+        let property_keys: Vec<Value> = store
+            .all_property_keys()
+            .into_iter()
+            .map(|k| Value::String(k.into()))
+            .collect();
+
+        let mut map = BTreeMap::new();
+        map.insert(PropertyKey::from("labels"), Value::List(labels.into()));
+        map.insert(
+            PropertyKey::from("edge_types"),
+            Value::List(edge_types.into()),
+        );
+        map.insert(
+            PropertyKey::from("property_keys"),
+            Value::List(property_keys.into()),
+        );
+        Value::Map(map.into())
     }
 
     /// Creates a node directly (bypassing query execution).

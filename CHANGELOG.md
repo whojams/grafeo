@@ -2,6 +2,17 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.21] - 2026-03-12
+
+### Added
+
+- **Introspection functions**: `RETURN CURRENT_SCHEMA`, `RETURN CURRENT_GRAPH`, `RETURN info()`, `RETURN schema()` for querying session state and database metadata from within GQL
+
+### Fixed
+
+- **`SESSION SET SCHEMA` / `SESSION SET GRAPH` separation** (ISO/IEC 39075 Section 7.1): session schema and session graph are now independent fields per the GQL standard; `SESSION SET SCHEMA` sets the session schema (validating against registered schemas), `SESSION SET GRAPH` sets the session graph (resolved within the current schema), and `SESSION RESET` supports independent targets (`SESSION RESET SCHEMA`, `SESSION RESET GRAPH`, `SESSION RESET TIME ZONE`, `SESSION RESET PARAMETERS`) per Section 7.2; graphs created within a schema are stored with schema-scoped keys for cross-schema isolation; added `SHOW SCHEMAS` command and `DROP SCHEMA` now enforces "schema must be empty" per Section 12.3
+- **`COUNT(*)` parsing** (ISO/IEC 39075 Section 20.9): `COUNT(*)` is now correctly parsed as a zero-argument aggregate counting all rows, rather than failing on the `*` token
+
 ## [0.5.20] - 2026-03-11
 
 ### Added

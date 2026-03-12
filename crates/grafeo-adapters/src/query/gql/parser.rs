@@ -3263,6 +3263,44 @@ impl<'a> Parser<'a> {
                     });
                 }
 
+                // ISO/IEC 39075 Section 17.1 / Section 21: pre-reserved schema/graph references
+                if name.eq_ignore_ascii_case("CURRENT_SCHEMA") {
+                    self.advance();
+                    return Ok(Expression::FunctionCall {
+                        name: "current_schema".to_string(),
+                        args: Vec::new(),
+                        distinct: false,
+                    });
+                }
+                if name.eq_ignore_ascii_case("CURRENT_GRAPH")
+                    || name.eq_ignore_ascii_case("CURRENT_PROPERTY_GRAPH")
+                {
+                    self.advance();
+                    return Ok(Expression::FunctionCall {
+                        name: "current_graph".to_string(),
+                        args: Vec::new(),
+                        distinct: false,
+                    });
+                }
+                if name.eq_ignore_ascii_case("HOME_SCHEMA") {
+                    self.advance();
+                    return Ok(Expression::FunctionCall {
+                        name: "home_schema".to_string(),
+                        args: Vec::new(),
+                        distinct: false,
+                    });
+                }
+                if name.eq_ignore_ascii_case("HOME_GRAPH")
+                    || name.eq_ignore_ascii_case("HOME_PROPERTY_GRAPH")
+                {
+                    self.advance();
+                    return Ok(Expression::FunctionCall {
+                        name: "home_graph".to_string(),
+                        args: Vec::new(),
+                        distinct: false,
+                    });
+                }
+
                 // NULLIF(expr1, expr2) - ISO GQL keyword syntax (Section 20.7)
                 if name.eq_ignore_ascii_case("NULLIF") && self.peek_kind() == TokenKind::LParen {
                     self.advance(); // consume NULLIF
@@ -3534,6 +3572,16 @@ impl<'a> Parser<'a> {
                 } else if self.current.kind == TokenKind::LParen {
                     // Function call
                     self.advance();
+                    // COUNT(*) per ISO/IEC 39075 sec 20.9
+                    if name.eq_ignore_ascii_case("count") && self.current.kind == TokenKind::Star {
+                        self.advance(); // consume *
+                        self.expect(TokenKind::RParen)?;
+                        return Ok(Expression::FunctionCall {
+                            name,
+                            args: Vec::new(),
+                            distinct: false,
+                        });
+                    }
                     // Check for DISTINCT keyword in aggregate functions
                     let distinct = if self.current.kind == TokenKind::Distinct {
                         self.advance();
@@ -5502,6 +5550,10 @@ impl<'a> Parser<'a> {
                         self.advance();
                         Ok(SchemaStatement::ShowGraphs)
                     }
+                    "SCHEMAS" => {
+                        self.advance();
+                        Ok(SchemaStatement::ShowSchemas)
+                    }
                     "GRAPH" => {
                         self.advance();
                         // SHOW GRAPH TYPES or SHOW GRAPH TYPE <name>
@@ -5920,11 +5972,8 @@ impl<'a> Parser<'a> {
             }
             "RESET" => {
                 self.advance(); // consume RESET
-                // Optional ALL (treated same as bare RESET)
-                if self.current.kind == TokenKind::All {
-                    self.advance();
-                }
-                Ok(SessionCommand::SessionReset)
+                // ISO/IEC 39075 Section 7.2: SESSION RESET [ALL CHARACTERISTICS | SCHEMA | GRAPH | TIME ZONE | PARAMETERS]
+                self.parse_session_reset()
             }
             "CLOSE" => {
                 self.advance(); // consume CLOSE
@@ -5974,8 +6023,8 @@ impl<'a> Parser<'a> {
                 }
                 let name = self.get_identifier_name();
                 self.advance();
-                // SESSION SET SCHEMA maps to SessionSetGraph (schema = graph in GQL)
-                Ok(SessionCommand::SessionSetGraph(name))
+                // ISO/IEC 39075 Section 7.1 GR1: session schema is independent from session graph
+                Ok(SessionCommand::SessionSetSchema(name))
             }
             "PARAMETER" => {
                 self.advance(); // consume PARAMETER
@@ -5998,6 +6047,83 @@ impl<'a> Parser<'a> {
                 Ok(SessionCommand::SessionSetParameter(param_name, value))
             }
             _ => Err(self.error("Expected GRAPH, TIME, SCHEMA, or PARAMETER after SESSION SET")),
+        }
+    }
+
+    /// Parses SESSION RESET targets per ISO/IEC 39075 Section 7.2.
+    ///
+    /// `SESSION RESET` (bare) = reset all characteristics.
+    /// `SESSION RESET ALL [CHARACTERISTICS | PARAMETERS]` = reset all.
+    /// `SESSION RESET SCHEMA` = reset session schema only.
+    /// `SESSION RESET [PROPERTY] GRAPH` = reset session graph only.
+    /// `SESSION RESET TIME ZONE` = reset time zone only.
+    /// `SESSION RESET [ALL] PARAMETERS` = reset parameters only.
+    fn parse_session_reset(&mut self) -> Result<SessionCommand> {
+        use SessionResetTarget as T;
+
+        // Bare SESSION RESET (no arguments) = reset all per Section 7.2 SR2b
+        if self.current.kind == TokenKind::Eof {
+            return Ok(SessionCommand::SessionReset(T::All));
+        }
+
+        // ALL [CHARACTERISTICS | PARAMETERS]
+        if self.current.kind == TokenKind::All {
+            self.advance();
+            if self.is_identifier() {
+                let kw = self.get_identifier_name().to_uppercase();
+                if kw == "PARAMETERS" {
+                    self.advance();
+                    return Ok(SessionCommand::SessionReset(T::Parameters));
+                }
+                if kw == "CHARACTERISTICS" {
+                    self.advance();
+                }
+            }
+            return Ok(SessionCommand::SessionReset(T::All));
+        }
+
+        if !self.is_identifier() {
+            return Err(
+                self.error("Expected SCHEMA, GRAPH, TIME, PARAMETERS, or ALL after SESSION RESET")
+            );
+        }
+
+        let kw = self.get_identifier_name().to_uppercase();
+        match kw.as_str() {
+            "SCHEMA" => {
+                self.advance();
+                Ok(SessionCommand::SessionReset(T::Schema))
+            }
+            "GRAPH" | "PROPERTY" => {
+                self.advance();
+                // Skip optional GRAPH after PROPERTY
+                if kw == "PROPERTY"
+                    && self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("GRAPH")
+                {
+                    self.advance();
+                }
+                Ok(SessionCommand::SessionReset(T::Graph))
+            }
+            "TIME" => {
+                self.advance();
+                if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("ZONE") {
+                    self.advance();
+                }
+                Ok(SessionCommand::SessionReset(T::TimeZone))
+            }
+            "PARAMETERS" => {
+                self.advance();
+                Ok(SessionCommand::SessionReset(T::Parameters))
+            }
+            "CHARACTERISTICS" => {
+                self.advance();
+                Ok(SessionCommand::SessionReset(T::All))
+            }
+            _ => {
+                Err(self
+                    .error("Expected SCHEMA, GRAPH, TIME, PARAMETERS, or ALL after SESSION RESET"))
+            }
         }
     }
 
@@ -7885,7 +8011,7 @@ mod tests {
 
     #[test]
     fn test_parse_session_set_schema() {
-        // SESSION SET SCHEMA maps to SessionSetGraph (schema = graph in GQL)
+        // ISO/IEC 39075 Section 7.1 GR1: SESSION SET SCHEMA is independent from SESSION SET GRAPH
         let mut parser = Parser::new("SESSION SET SCHEMA myschema");
         let result = parser.parse();
         assert!(
@@ -7894,10 +8020,10 @@ mod tests {
             result.err()
         );
 
-        if let Statement::SessionCommand(SessionCommand::SessionSetGraph(name)) = result.unwrap() {
+        if let Statement::SessionCommand(SessionCommand::SessionSetSchema(name)) = result.unwrap() {
             assert_eq!(name, "myschema");
         } else {
-            panic!("Expected SessionSetGraph session command (via SCHEMA)");
+            panic!("Expected SessionSetSchema session command");
         }
     }
 
@@ -7922,6 +8048,7 @@ mod tests {
 
     #[test]
     fn test_parse_session_reset() {
+        // Bare SESSION RESET = reset all characteristics (Section 7.2 SR2b)
         let mut parser = Parser::new("SESSION RESET");
         let result = parser.parse();
         assert!(
@@ -7932,13 +8059,12 @@ mod tests {
 
         assert!(matches!(
             result.unwrap(),
-            Statement::SessionCommand(SessionCommand::SessionReset)
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::All))
         ));
     }
 
     #[test]
     fn test_parse_session_reset_all() {
-        // SESSION RESET ALL is treated the same as SESSION RESET
         let mut parser = Parser::new("SESSION RESET ALL");
         let result = parser.parse();
         assert!(
@@ -7949,7 +8075,58 @@ mod tests {
 
         assert!(matches!(
             result.unwrap(),
-            Statement::SessionCommand(SessionCommand::SessionReset)
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::All))
+        ));
+    }
+
+    #[test]
+    fn test_parse_session_reset_schema() {
+        // ISO/IEC 39075 Section 7.2 GR1: reset session schema independently
+        let mut parser = Parser::new("SESSION RESET SCHEMA");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "SESSION RESET SCHEMA should parse: {:?}",
+            result.err()
+        );
+
+        assert!(matches!(
+            result.unwrap(),
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::Schema))
+        ));
+    }
+
+    #[test]
+    fn test_parse_session_reset_graph() {
+        // ISO/IEC 39075 Section 7.2 GR2: reset session graph independently
+        let mut parser = Parser::new("SESSION RESET GRAPH");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "SESSION RESET GRAPH should parse: {:?}",
+            result.err()
+        );
+
+        assert!(matches!(
+            result.unwrap(),
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::Graph))
+        ));
+    }
+
+    #[test]
+    fn test_parse_session_reset_property_graph() {
+        // SESSION RESET PROPERTY GRAPH (Section 7.2)
+        let mut parser = Parser::new("SESSION RESET PROPERTY GRAPH");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "SESSION RESET PROPERTY GRAPH should parse: {:?}",
+            result.err()
+        );
+
+        assert!(matches!(
+            result.unwrap(),
+            Statement::SessionCommand(SessionCommand::SessionReset(SessionResetTarget::Graph))
         ));
     }
 

@@ -395,6 +395,21 @@ impl Catalog {
         }
     }
 
+    /// Checks whether a schema namespace exists.
+    #[must_use]
+    pub fn schema_exists(&self, name: &str) -> bool {
+        self.schema.as_ref().is_some_and(|s| s.schema_exists(name))
+    }
+
+    /// Returns all registered schema namespace names.
+    #[must_use]
+    pub fn schema_names(&self) -> Vec<String> {
+        self.schema
+            .as_ref()
+            .map(|s| s.schema_names())
+            .unwrap_or_default()
+    }
+
     /// Adds a constraint to an existing node type, creating a minimal type if needed.
     pub fn add_constraint_to_type(
         &self,
@@ -1293,6 +1308,21 @@ impl SchemaCatalog {
         } else {
             Err(CatalogError::SchemaNotFound(name.to_string()))
         }
+    }
+
+    /// Checks whether a schema namespace exists.
+    #[must_use]
+    pub fn schema_exists(&self, name: &str) -> bool {
+        self.schemas
+            .read()
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(name))
+    }
+
+    /// Returns all registered schema namespace names.
+    #[must_use]
+    pub fn schema_names(&self) -> Vec<String> {
+        self.schemas.read().clone()
     }
 
     // --- ALTER operations ---

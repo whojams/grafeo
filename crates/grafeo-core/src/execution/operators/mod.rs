@@ -69,7 +69,7 @@ pub use factorized_filter::{
 };
 pub use filter::{
     BinaryFilterOp, ExpressionPredicate, FilterExpression, FilterOperator, ListPredicateKind,
-    Predicate, UnaryFilterOp,
+    Predicate, SessionContext, UnaryFilterOp,
 };
 pub use horizontal_aggregate::{EntityKind, HorizontalAggregateOperator};
 pub use join::{

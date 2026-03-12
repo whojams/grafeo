@@ -183,6 +183,24 @@ pub struct ExpressionPredicate {
     transaction_id: Option<TransactionId>,
     /// Viewing epoch for MVCC-aware lookups.
     viewing_epoch: Option<EpochId>,
+    /// Session context for introspection functions (info, schema, current_schema, etc.).
+    session_context: SessionContext,
+}
+
+/// Session-level context passed to the filter evaluator for introspection functions.
+///
+/// These values are snapshots taken at query start time, so they remain consistent
+/// throughout query evaluation.
+#[derive(Debug, Clone, Default)]
+pub struct SessionContext {
+    /// Current session schema name (for `CURRENT_SCHEMA`).
+    pub current_schema: Option<String>,
+    /// Current session graph name (for `CURRENT_GRAPH`).
+    pub current_graph: Option<String>,
+    /// Cached `info()` result as a Value::Map.
+    pub db_info: Option<Value>,
+    /// Cached `schema()` result as a Value::Map.
+    pub schema_info: Option<Value>,
 }
 
 /// A filter expression that can be evaluated.
@@ -406,6 +424,7 @@ impl ExpressionPredicate {
             store,
             transaction_id: None,
             viewing_epoch: None,
+            session_context: SessionContext::default(),
         }
     }
 
@@ -417,6 +436,12 @@ impl ExpressionPredicate {
     ) -> Self {
         self.viewing_epoch = Some(epoch);
         self.transaction_id = transaction_id;
+        self
+    }
+
+    /// Sets the session context for introspection functions.
+    pub fn with_session_context(mut self, context: SessionContext) -> Self {
+        self.session_context = context;
         self
     }
 
@@ -2913,6 +2938,32 @@ impl ExpressionPredicate {
                 // For embedded databases, returns a default user string
                 Some(Value::String("default".into()))
             }
+            // ISO/IEC 39075 Section 17.1 / Section 21: session schema/graph references
+            "current_schema" => Some(
+                self.session_context
+                    .current_schema
+                    .as_ref()
+                    .map_or(Value::Null, |s| Value::String(s.clone().into())),
+            ),
+            "current_graph" => Some(
+                self.session_context
+                    .current_graph
+                    .as_ref()
+                    .map_or(Value::Null, |g| Value::String(g.clone().into())),
+            ),
+            "home_schema" | "home_graph" => {
+                // Home schema/graph: not configurable yet, returns null
+                Some(Value::Null)
+            }
+            // Grafeo extension: info() returns database metadata as a map
+            "info" => Some(self.session_context.db_info.clone().unwrap_or(Value::Null)),
+            // Grafeo extension: schema() returns schema metadata as a map
+            "schema" => Some(
+                self.session_context
+                    .schema_info
+                    .clone()
+                    .unwrap_or(Value::Null),
+            ),
             "octet_length" | "byte_length" => {
                 // octet_length(string) - byte length
                 if args.len() != 1 {

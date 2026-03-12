@@ -59,18 +59,23 @@ fn default_graph_unchanged_after_named_graph_insert() {
 
 #[test]
 fn session_set_schema_isolates_data() {
+    // ISO/IEC 39075 Section 7.1: SESSION SET SCHEMA sets schema independently.
+    // Graphs created within a schema are isolated from the default schema.
     let db = db();
     let session = db.session();
 
-    session.execute("CREATE GRAPH reports").unwrap();
+    // Create a schema and a graph within it
+    session.execute("CREATE SCHEMA reports").unwrap();
     session.execute("SESSION SET SCHEMA reports").unwrap();
+    session.execute("CREATE GRAPH quarterly").unwrap();
+    session.execute("SESSION SET GRAPH quarterly").unwrap();
 
     session.execute("INSERT (:Report {title: 'Q1'})").unwrap();
 
     let result = session.execute("MATCH (n:Report) RETURN n").unwrap();
     assert_eq!(result.row_count(), 1, "Should see the Report node");
 
-    // Reset session back to default
+    // Reset session back to default (clears both schema and graph)
     session.execute("SESSION RESET").unwrap();
 
     let result = session.execute("MATCH (n) RETURN n").unwrap();

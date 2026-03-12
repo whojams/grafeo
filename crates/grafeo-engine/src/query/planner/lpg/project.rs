@@ -285,7 +285,8 @@ impl super::Planner {
                     output_types,
                     Arc::clone(&self.store) as Arc<dyn GraphStore>,
                 )
-                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                .with_session_context(self.session_context.clone()),
             );
 
             Ok((operator, columns))
@@ -332,7 +333,8 @@ impl super::Planner {
                         output_types,
                         Arc::clone(&self.store) as Arc<dyn GraphStore>,
                     )
-                    .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                    .with_session_context(self.session_context.clone()),
                 );
                 Ok((operator, columns))
             }
@@ -446,7 +448,8 @@ impl super::Planner {
                 output_types,
                 Arc::clone(&self.store) as Arc<dyn GraphStore>,
             )
-            .with_transaction_context(self.viewing_epoch, self.transaction_id),
+            .with_transaction_context(self.viewing_epoch, self.transaction_id)
+            .with_session_context(self.session_context.clone()),
         );
 
         Ok((operator, output_columns))
@@ -628,7 +631,8 @@ impl super::Planner {
                     output_types,
                     Arc::clone(&self.store) as Arc<dyn GraphStore>,
                 )
-                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+                .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                .with_session_context(self.session_context.clone()),
             );
         }
 

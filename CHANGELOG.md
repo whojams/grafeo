@@ -2,13 +2,14 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.21] - Unreleased
+## [0.5.21] - 2026-03-12
 
 First implementation of C# and Dart bindings, single file database completed, snapshot consolidation and test hardening
 
 ### Added
 
-- **C# / .NET bindings** (`crates/bindings/csharp`): full-featured .NET 8 binding wrapping the C FFI layer via source-generated P/Invoke (`LibraryImport`). Includes `GrafeoDB` lifecycle (memory/persistent), GQL + multi-language query execution (sync and async), ACID transactions with auto-rollback, typed node/edge CRUD, vector search (k-NN + MMR), parameterized queries with temporal type support, and a `SafeHandle`-based resource management pattern. 40 xUnit tests across database, query, transaction, and CRUD categories. CI matrix covers Ubuntu, Windows, and macOS.
+- **C# / .NET bindings** (`crates/bindings/csharp`): full-featured .NET 8 binding wrapping the C FFI layer via source-generated P/Invoke (`LibraryImport`). Includes `GrafeoDB` lifecycle (memory/persistent), GQL + multi-language query execution (sync and async), ACID transactions with auto-rollback, typed node/edge CRUD, vector search (k-NN + MMR), parameterized queries with temporal type support, and a `SafeHandle`-based resource management pattern. tests across database, query, transaction, and CRUD categories. CI matrix covers Ubuntu, Windows, and macOS.
+- **Dart bindings** (`crates/bindings/dart`): Dart FFI binding for grafeo-c. Full API coverage including GQL query execution with parameterized queries (temporal type encoding via `$timestamp_us`, `$date`, `$duration` wire format), ACID transactions with commit/rollback, typed node/edge CRUD, vector search (MMR), and database lifecycle management. Uses `NativeFinalizer` for leak prevention, `late final` cached FFI lookups, sealed exception hierarchy matching C status codes, and consistent `malloc` allocator usage. Tests with assertions across database, query, transaction, CRUD, and error categories. CI matrix covers Ubuntu, Windows, and macOS. Based on community PR #138 by @CorvusYe.
 - **Single-file `.grafeo` database format**: new persistence format stores the entire database in a single file with a sidecar WAL directory during operation (DuckDB-style). Features dual-header crash safety with CRC32 checksums, automatic format detection by file extension, and seamless WAL checkpoint merging. Enable with the `grafeo-file` feature flag (included in `storage` and `full` profiles). Use `GrafeoDB::open("mydb.grafeo")` or `db.save("mydb.grafeo")` to create single-file databases.
 - **Exclusive file locking** for `.grafeo` files: prevents multiple processes from opening the same database file simultaneously. Lock is acquired on open and released on close/drop (uses `fs2` for cross-platform advisory locking).
 - **DDL schema persistence in snapshots**: `CREATE NODE TYPE`, `CREATE EDGE TYPE`, `CREATE GRAPH TYPE`, `CREATE PROCEDURE`, and `CREATE SCHEMA` definitions now survive close/reopen cycles and export/import roundtrips. Snapshot format consolidated from v1/v2 to a single v3 format that includes full schema metadata alongside graph data.
@@ -21,7 +22,7 @@ First implementation of C# and Dart bindings, single file database completed, sn
 
 ### Testing
 
-- **Seam tests for spec compliance** (139 new tests): systematic coverage of feature boundaries and negative paths targeting ISO/IEC 39075 sections 4.7.3, 7.1, 7.2, 8, 13, 16, 20.9, and 21; covers session state independence, transaction enforcement, DML edge cases, pattern matching boundaries, aggregate NULL semantics, CASE expressions, type coercion, and cross-graph isolation; uncovered 3 spec deviations (DDL in READ ONLY transactions, SUM on empty sets, CASE ELSE with NULL comparisons)
+- **Seam tests for spec compliance**: systematic coverage of feature boundaries and negative paths targeting ISO/IEC 39075 sections 4.7.3, 7.1, 7.2, 8, 13, 16, 20.9, and 21; covers session state independence, transaction enforcement, DML edge cases, pattern matching boundaries, aggregate NULL semantics, CASE expressions, type coercion, and cross-graph isolation; uncovered 3 spec deviations (DDL in READ ONLY transactions, SUM on empty sets, CASE ELSE with NULL comparisons)
 
 ### Fixed
 

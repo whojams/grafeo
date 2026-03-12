@@ -271,6 +271,7 @@ class TestGraphDataIsolation:
 
     def test_session_set_schema_isolates(self, db):
         """SESSION SET SCHEMA routes queries to named graph."""
+        db.execute("CREATE SCHEMA reports")
         db.execute("CREATE GRAPH reports")
         db.execute("SESSION SET SCHEMA reports")
         db.execute("INSERT (:Report {title: 'Q1'})")

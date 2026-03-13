@@ -1191,6 +1191,14 @@ impl ExpressionPredicate {
         }
     }
 
+    /// Evaluates a binary operator with ISO three-valued logic.
+    ///
+    /// NULL propagation: `NULL = x`, `x = NULL`, `NULL <> x` all yield
+    /// `Value::Null` (UNKNOWN), not `Value::Bool`. AND/OR/XOR follow the
+    /// standard truth tables where FALSE AND UNKNOWN = FALSE, etc.
+    ///
+    /// For structural equality (DISTINCT, GROUP BY), use [`values_equal`]
+    /// directly, which treats NULL == NULL as true.
     fn eval_binary_op(&self, left: &Value, op: BinaryFilterOp, right: &Value) -> Option<Value> {
         match op {
             // Three-valued logic for AND/OR/XOR (ISO/IEC 39075 Section 21)
@@ -1462,6 +1470,11 @@ impl ExpressionPredicate {
         }
     }
 
+    /// Evaluates `left IN right` with three-valued NULL semantics.
+    ///
+    /// - `NULL IN [...]` yields UNKNOWN.
+    /// - If no element matches but the list contains NULLs, yields UNKNOWN.
+    /// - Otherwise yields `true` on first match, `false` if none match.
     fn eval_in_operator(
         &self,
         left: &Value,
@@ -1469,7 +1482,6 @@ impl ExpressionPredicate {
         chunk: &DataChunk,
         row: usize,
     ) -> Option<Value> {
-        // Evaluate the right side - it should be a list
         let right_val = self.eval_expr(right, chunk, row)?;
         match right_val {
             Value::List(items) => {
@@ -3190,6 +3202,11 @@ impl ExpressionPredicate {
         }
     }
 
+    /// Structural equality for DISTINCT, GROUP BY, and list/map comparison.
+    ///
+    /// Treats NULL == NULL as `true` (grouping semantics). For SQL/GQL
+    /// comparison operators, use [`eval_binary_op`] which returns UNKNOWN
+    /// when either operand is NULL.
     fn values_equal(left: &Value, right: &Value) -> bool {
         match (left, right) {
             (Value::Null, Value::Null) => true,

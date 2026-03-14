@@ -68,6 +68,15 @@ pub struct RdfStore {
     /// Object index: object -> triples (optional).
     object_index:
         RwLock<Option<hashbrown::HashMap<Term, Vec<Arc<Triple>>, foldhash::fast::RandomState>>>,
+    /// Subject+Predicate composite index: (subject, predicate) -> triples.
+    sp_index:
+        RwLock<hashbrown::HashMap<(Term, Term), Vec<Arc<Triple>>, foldhash::fast::RandomState>>,
+    /// Predicate+Object composite index: (predicate, object) -> triples.
+    po_index:
+        RwLock<hashbrown::HashMap<(Term, Term), Vec<Arc<Triple>>, foldhash::fast::RandomState>>,
+    /// Object+Subject composite index: (object, subject) -> triples.
+    os_index:
+        RwLock<hashbrown::HashMap<(Term, Term), Vec<Arc<Triple>>, foldhash::fast::RandomState>>,
     /// Transaction buffers for pending operations.
     tx_buffer: RwLock<TransactionBuffer>,
     /// Named graphs, each a separate `RdfStore` partition.
@@ -102,6 +111,18 @@ impl RdfStore {
                 foldhash::fast::RandomState::default(),
             )),
             object_index: RwLock::new(object_index),
+            sp_index: RwLock::new(hashbrown::HashMap::with_capacity_and_hasher(
+                config.initial_capacity,
+                foldhash::fast::RandomState::default(),
+            )),
+            po_index: RwLock::new(hashbrown::HashMap::with_capacity_and_hasher(
+                config.initial_capacity,
+                foldhash::fast::RandomState::default(),
+            )),
+            os_index: RwLock::new(hashbrown::HashMap::with_capacity_and_hasher(
+                config.initial_capacity,
+                foldhash::fast::RandomState::default(),
+            )),
             tx_buffer: RwLock::new(TransactionBuffer::default()),
             named_graphs: RwLock::new(HashMap::new()),
             config,
@@ -153,8 +174,30 @@ impl RdfStore {
                 index
                     .entry(triple.object().clone())
                     .or_default()
-                    .push(triple);
+                    .push(Arc::clone(&triple));
             }
+        }
+
+        // Update composite indexes
+        {
+            let mut sp = self.sp_index.write();
+            sp.entry((triple.subject().clone(), triple.predicate().clone()))
+                .or_default()
+                .push(Arc::clone(&triple));
+        }
+
+        {
+            let mut po = self.po_index.write();
+            po.entry((triple.predicate().clone(), triple.object().clone()))
+                .or_default()
+                .push(Arc::clone(&triple));
+        }
+
+        {
+            let mut os = self.os_index.write();
+            os.entry((triple.object().clone(), triple.subject().clone()))
+                .or_default()
+                .push(triple);
         }
 
         true
@@ -213,12 +256,42 @@ impl RdfStore {
         if self.config.index_objects {
             let mut object_index = self.object_index.write();
             if let Some(ref mut index) = *object_index {
-                for triple in new_triples {
+                for triple in &new_triples {
                     index
                         .entry(triple.object().clone())
                         .or_default()
-                        .push(triple);
+                        .push(Arc::clone(triple));
                 }
+            }
+        }
+
+        // Phase 5: update SP composite index (single lock)
+        {
+            let mut sp = self.sp_index.write();
+            for triple in &new_triples {
+                sp.entry((triple.subject().clone(), triple.predicate().clone()))
+                    .or_default()
+                    .push(Arc::clone(triple));
+            }
+        }
+
+        // Phase 6: update PO composite index (single lock)
+        {
+            let mut po = self.po_index.write();
+            for triple in &new_triples {
+                po.entry((triple.predicate().clone(), triple.object().clone()))
+                    .or_default()
+                    .push(Arc::clone(triple));
+            }
+        }
+
+        // Phase 7: update OS composite index (single lock)
+        {
+            let mut os = self.os_index.write();
+            for triple in new_triples {
+                os.entry((triple.object().clone(), triple.subject().clone()))
+                    .or_default()
+                    .push(triple);
             }
         }
 
@@ -272,6 +345,40 @@ impl RdfStore {
             }
         }
 
+        // Remove from composite indexes
+        {
+            let mut sp = self.sp_index.write();
+            let key = (triple.subject().clone(), triple.predicate().clone());
+            if let Some(vec) = sp.get_mut(&key) {
+                vec.retain(|t| t.as_ref() != triple);
+                if vec.is_empty() {
+                    sp.remove(&key);
+                }
+            }
+        }
+
+        {
+            let mut po = self.po_index.write();
+            let key = (triple.predicate().clone(), triple.object().clone());
+            if let Some(vec) = po.get_mut(&key) {
+                vec.retain(|t| t.as_ref() != triple);
+                if vec.is_empty() {
+                    po.remove(&key);
+                }
+            }
+        }
+
+        {
+            let mut os = self.os_index.write();
+            let key = (triple.object().clone(), triple.subject().clone());
+            if let Some(vec) = os.get_mut(&key) {
+                vec.retain(|t| t.as_ref() != triple);
+                if vec.is_empty() {
+                    os.remove(&key);
+                }
+            }
+        }
+
         true
     }
 
@@ -299,61 +406,71 @@ impl RdfStore {
     }
 
     /// Returns triples matching the given pattern.
+    ///
+    /// Uses composite indexes for 2-bound and 3-bound queries (O(1) lookup),
+    /// single-term indexes for 1-bound queries, and full scan for unbound.
     pub fn find(&self, pattern: &TriplePattern) -> Vec<Arc<Triple>> {
-        // Use the most selective index
         match (&pattern.subject, &pattern.predicate, &pattern.object) {
-            (Some(s), _, _) => {
-                // Use subject index
-                let index = self.subject_index.read();
-                if let Some(triples) = index.get(s) {
+            // 3-bound: use SP composite, filter on O (at most 1 result)
+            (Some(s), Some(p), Some(o)) => {
+                let index = self.sp_index.read();
+                if let Some(triples) = index.get(&(s.clone(), p.clone())) {
                     triples
                         .iter()
-                        .filter(|t| pattern.matches(t))
+                        .filter(|t| t.object() == o)
                         .cloned()
                         .collect()
                 } else {
                     Vec::new()
                 }
             }
-            (None, Some(p), _) => {
-                // Use predicate index
+            // 2-bound: use composite indexes (O(1) lookup, no filtering)
+            (Some(s), Some(p), None) => {
+                let index = self.sp_index.read();
+                index
+                    .get(&(s.clone(), p.clone()))
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            (Some(s), None, Some(o)) => {
+                let index = self.os_index.read();
+                index
+                    .get(&(o.clone(), s.clone()))
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            (None, Some(p), Some(o)) => {
+                let index = self.po_index.read();
+                index
+                    .get(&(p.clone(), o.clone()))
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            // 1-bound: use single-term indexes
+            (Some(s), None, None) => {
+                let index = self.subject_index.read();
+                index.get(s).cloned().unwrap_or_default()
+            }
+            (None, Some(p), None) => {
                 let index = self.predicate_index.read();
-                if let Some(triples) = index.get(p) {
-                    triples
-                        .iter()
-                        .filter(|t| pattern.matches(t))
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                }
+                index.get(p).cloned().unwrap_or_default()
             }
             (None, None, Some(o)) if self.config.index_objects => {
-                // Use object index
                 let index = self.object_index.read();
                 if let Some(ref idx) = *index {
-                    if let Some(triples) = idx.get(o) {
-                        triples
-                            .iter()
-                            .filter(|t| pattern.matches(t))
-                            .cloned()
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
+                    idx.get(o).cloned().unwrap_or_default()
                 } else {
                     Vec::new()
                 }
             }
-            _ => {
-                // Full scan
-                self.triples
-                    .read()
-                    .iter()
-                    .filter(|t| pattern.matches(t))
-                    .cloned()
-                    .collect()
-            }
+            // 0-bound or O-only without object index: full scan
+            _ => self
+                .triples
+                .read()
+                .iter()
+                .filter(|t| pattern.matches(t))
+                .cloned()
+                .collect(),
         }
     }
 

@@ -217,6 +217,19 @@ impl GraphStore for LpgStore {
         LpgStore::is_node_visible_versioned(self, id, epoch, transaction_id)
     }
 
+    fn is_edge_visible_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+        LpgStore::is_edge_visible_at_epoch(self, id, epoch)
+    }
+
+    fn is_edge_visible_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        LpgStore::is_edge_visible_versioned(self, id, epoch, transaction_id)
+    }
+
     fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
         LpgStore::filter_visible_node_ids(self, ids, epoch)
     }

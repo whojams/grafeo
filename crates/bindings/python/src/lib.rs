@@ -34,6 +34,7 @@
 //! | NetworkX | `db.as_networkx().to_networkx()` | Graph visualization, analysis |
 //! | solvOR | `db.as_solvor()` | Operations research algorithms |
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 use pyo3::prelude::*;

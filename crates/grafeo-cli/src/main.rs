@@ -2,6 +2,8 @@
 //!
 //! Provides admin commands, single-shot query execution, and an interactive REPL.
 
+#![deny(unsafe_code)]
+
 mod commands;
 mod output;
 mod repl;

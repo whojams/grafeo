@@ -12,6 +12,8 @@
 //! console.log(result); // [{name: "Alix", age: 30}]
 //! ```
 
+#![forbid(unsafe_code)]
+
 mod types;
 mod utils;
 
@@ -118,6 +120,14 @@ impl Database {
     #[wasm_bindgen(js_name = "edgeCount")]
     pub fn edge_count(&self) -> usize {
         self.inner.edge_count()
+    }
+
+    /// Clears all cached query plans.
+    ///
+    /// Forces re-parsing and re-optimization on next execution.
+    #[wasm_bindgen(js_name = "clearPlanCache")]
+    pub fn clear_plan_cache(&self) {
+        self.inner.clear_plan_cache();
     }
 
     /// Executes a query using a specific query language.

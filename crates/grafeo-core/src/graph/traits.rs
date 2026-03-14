@@ -265,6 +265,26 @@ pub trait GraphStore: Send + Sync {
         self.get_node_versioned(id, epoch, transaction_id).is_some()
     }
 
+    /// Checks if an edge is visible at the given epoch without building the full Edge.
+    ///
+    /// More efficient than `get_edge_at_epoch(...).is_some()` because it skips
+    /// type name resolution and property loading. Override in concrete stores
+    /// for optimal performance.
+    fn is_edge_visible_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+        self.get_edge_at_epoch(id, epoch).is_some()
+    }
+
+    /// Checks if an edge is visible to a specific transaction without building
+    /// the full Edge.
+    fn is_edge_visible_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.get_edge_versioned(id, epoch, transaction_id).is_some()
+    }
+
     /// Filters node IDs to only those visible at the given epoch (batch).
     ///
     /// More efficient than per-node calls because implementations can hold

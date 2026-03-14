@@ -10,6 +10,7 @@
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
+use arcstr::ArcStr;
 use grafeo_common::types::{LogicalType, Value};
 
 use super::accumulator::{AggregateExpr, AggregateFunction, HashableValue};
@@ -622,7 +623,7 @@ enum GroupKeyPart {
     Null,
     Bool(bool),
     Int64(i64),
-    String(String),
+    String(ArcStr),
 }
 
 impl GroupKey {
@@ -639,8 +640,8 @@ impl GroupKey {
                         Value::Bool(b) => GroupKeyPart::Bool(b),
                         Value::Int64(i) => GroupKeyPart::Int64(i),
                         Value::Float64(f) => GroupKeyPart::Int64(f.to_bits() as i64),
-                        Value::String(s) => GroupKeyPart::String(s.to_string()),
-                        _ => GroupKeyPart::String(format!("{v:?}")),
+                        Value::String(s) => GroupKeyPart::String(s.clone()),
+                        _ => GroupKeyPart::String(ArcStr::from(format!("{v:?}"))),
                     })
             })
             .collect();
@@ -655,7 +656,7 @@ impl GroupKey {
                 GroupKeyPart::Null => Value::Null,
                 GroupKeyPart::Bool(b) => Value::Bool(*b),
                 GroupKeyPart::Int64(i) => Value::Int64(*i),
-                GroupKeyPart::String(s) => Value::String(s.clone().into()),
+                GroupKeyPart::String(s) => Value::String(s.clone()),
             })
             .collect()
     }

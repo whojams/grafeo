@@ -16,6 +16,8 @@
 //! - [`statistics`] - Cardinality estimates for the query optimizer
 //! - [`storage`] - Compression: dictionary encoding, bit-packing, delta encoding
 
+#![deny(unsafe_code)]
+
 pub mod cache;
 pub mod execution;
 pub mod graph;

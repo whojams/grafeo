@@ -16,6 +16,8 @@
 //! - [`catalog`] - Schema metadata: labels, property keys, indexes
 //! - [`admin`] - Admin API types for inspection, backup, and maintenance
 
+#![deny(unsafe_code)]
+
 /// The version of the grafeo-engine crate (from Cargo.toml).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -28,6 +30,8 @@ pub mod database;
 #[cfg(feature = "embed")]
 pub mod embedding;
 pub mod memory_usage;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 #[cfg(feature = "algos")]
 pub mod procedures;
 pub mod query;
@@ -44,5 +48,7 @@ pub use config::{Config, ConfigError, DurabilityMode, GraphModel};
 pub use database::GrafeoDB;
 pub use grafeo_core::graph::{GraphStore, GraphStoreMut};
 pub use memory_usage::MemoryUsage;
+#[cfg(feature = "metrics")]
+pub use metrics::{MetricsRegistry, MetricsSnapshot};
 pub use session::Session;
 pub use transaction::{CommitInfo, PreparedCommit};

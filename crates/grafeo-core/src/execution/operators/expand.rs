@@ -158,20 +158,11 @@ impl ExpandOperator {
                 // Filter by visibility if we have epoch context
                 if let Some(epoch) = epoch {
                     if let Some(tx) = transaction_id {
-                        // Transaction-aware visibility
-                        let edge_visible =
-                            self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
-                        let target_visible = self
-                            .store
-                            .get_node_versioned(*target_id, epoch, tx)
-                            .is_some();
-                        edge_visible && target_visible
+                        self.store.is_edge_visible_versioned(*edge_id, epoch, tx)
+                            && self.store.is_node_visible_versioned(*target_id, epoch, tx)
                     } else {
-                        // Pure epoch-based visibility (time-travel)
-                        let edge_visible = self.store.get_edge_at_epoch(*edge_id, epoch).is_some();
-                        let target_visible =
-                            self.store.get_node_at_epoch(*target_id, epoch).is_some();
-                        edge_visible && target_visible
+                        self.store.is_edge_visible_at_epoch(*edge_id, epoch)
+                            && self.store.is_node_visible_at_epoch(*target_id, epoch)
                     }
                 } else {
                     true

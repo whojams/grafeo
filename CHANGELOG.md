@@ -7,6 +7,14 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 ### Added
 
 - **Pretty Print query results**: added a `Display` implementation for `QueryResult` records that now renders as an ASCII table. Replacing the old simple raw `Vec<Vec<Value>>` implementation.
+- **Observability** (`metrics` feature): lock-free `MetricsRegistry` with atomic counters and fixed-bucket histograms for query count, latency, errors, transactions, and per-language tracking; `GrafeoDB::metrics()` returns a serializable snapshot, `reset_metrics()` clears all counters; included in `server` profile, zero overhead when disabled
+- **Edge visibility fast path**: `is_edge_visible_at_epoch()` and `is_edge_visible_versioned()` on `GraphStore` skip full edge construction when only checking MVCC visibility, matching the existing node visibility pattern
+- **Plan cache bindings**: `clear_plan_cache()` exposed in Python, Node.js, C, and WASM bindings
+
+### Changed
+
+- **Unsafe code enforcement**: `#![forbid(unsafe_code)]` on pure-safe crates (grafeo, grafeo-adapters, bindings-common, python, wasm), `#![deny(unsafe_code)]` on crates with targeted unsafe (grafeo-common, grafeo-core, grafeo-engine, grafeo-cli)
+- **GroupKeyPart zero-alloc**: `GroupKeyPart::String` now uses `ArcStr` instead of `String`, eliminating allocations during aggregation group key construction
 
 ## [0.5.21] - 2026-03-13
 

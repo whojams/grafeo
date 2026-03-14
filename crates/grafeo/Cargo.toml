@@ -47,6 +47,7 @@ algos = ["grafeo-engine/algos"]  # Graph algorithms (SSSP, PageRank, etc.)
 rdf = ["grafeo-engine/rdf"]  # RDF triple store
 regex = ["grafeo-engine/regex"]  # Full regex (default for non-WASM)
 regex-lite = ["grafeo-engine/regex-lite"]  # Lightweight regex (for WASM)
+metrics = ["grafeo-engine/metrics"]  # Lock-free query, transaction, and session metrics
 
 # Named profiles (ecosystem-aligned)
 embedded = ["gql", "ai", "algos", "parallel", "regex"]  # Python libs, MCP, in-process (default)

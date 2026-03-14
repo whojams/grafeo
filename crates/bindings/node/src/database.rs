@@ -686,6 +686,15 @@ impl JsGrafeoDB {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
+    /// Clear all cached query plans.
+    ///
+    /// Forces re-parsing and re-optimization on next execution.
+    /// Called automatically after DDL operations, but can be invoked manually.
+    #[napi(js_name = "clearPlanCache")]
+    pub fn clear_plan_cache(&self) {
+        self.inner.read().clear_plan_cache();
+    }
+
     /// Close the database.
     #[napi]
     pub fn close(&self) -> Result<()> {

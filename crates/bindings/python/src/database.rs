@@ -1725,6 +1725,18 @@ impl PyGrafeoDB {
         db.path().map(|p| p.to_string_lossy().to_string())
     }
 
+    /// Clear all cached query plans.
+    ///
+    /// Forces re-parsing and re-optimization of all queries on next execution.
+    /// Called automatically after DDL operations (CREATE INDEX, DROP TYPE, etc.),
+    /// but can be invoked manually after external schema changes.
+    ///
+    /// Example:
+    ///     db.clear_plan_cache()
+    fn clear_plan_cache(&self) {
+        self.inner.read().clear_plan_cache();
+    }
+
     /// Close the database.
     fn close(&self) -> PyResult<()> {
         let db = self.inner.read();

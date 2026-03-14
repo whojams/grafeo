@@ -111,6 +111,9 @@ pub struct GrafeoDB {
     /// External graph store (when using with_store()).
     /// When set, sessions route queries through this store instead of the built-in LpgStore.
     pub(super) external_store: Option<Arc<dyn GraphStoreMut>>,
+    /// Metrics registry shared across all sessions.
+    #[cfg(feature = "metrics")]
+    pub(crate) metrics: Option<Arc<crate::metrics::MetricsRegistry>>,
     /// Persistent graph context for one-shot `execute()` calls.
     /// When set, each call to `session()` pre-configures the session to this graph.
     /// Updated after every one-shot `execute()` to reflect `USE GRAPH` / `SESSION RESET`.
@@ -362,6 +365,8 @@ impl GrafeoDB {
             #[cfg(feature = "grafeo-file")]
             file_manager,
             external_store: None,
+            #[cfg(feature = "metrics")]
+            metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
         })
     }
@@ -431,6 +436,8 @@ impl GrafeoDB {
             #[cfg(feature = "grafeo-file")]
             file_manager: None,
             external_store: Some(store),
+            #[cfg(feature = "metrics")]
+            metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
         })
     }
@@ -896,6 +903,13 @@ impl GrafeoDB {
         #[cfg(feature = "cdc")]
         session.set_cdc_log(Arc::clone(&self.cdc_log));
 
+        #[cfg(feature = "metrics")]
+        {
+            if let Some(ref m) = self.metrics {
+                session.set_metrics(Arc::clone(m));
+            }
+        }
+
         // Propagate persistent graph context to the new session
         if let Some(ref graph) = *self.current_graph.read() {
             session.use_graph(graph);
@@ -947,6 +961,26 @@ impl GrafeoDB {
     #[must_use]
     pub fn memory_limit(&self) -> Option<usize> {
         self.config.memory_limit
+    }
+
+    /// Returns a point-in-time snapshot of all metrics.
+    ///
+    /// If the `metrics` feature is disabled or the registry is not
+    /// initialized, returns a default (all-zero) snapshot.
+    #[cfg(feature = "metrics")]
+    #[must_use]
+    pub fn metrics(&self) -> crate::metrics::MetricsSnapshot {
+        self.metrics
+            .as_ref()
+            .map_or_else(crate::metrics::MetricsSnapshot::default, |m| m.snapshot())
+    }
+
+    /// Resets all metrics counters and histograms to zero.
+    #[cfg(feature = "metrics")]
+    pub fn reset_metrics(&self) {
+        if let Some(ref m) = self.metrics {
+            m.reset();
+        }
     }
 
     /// Returns the underlying (default) store.

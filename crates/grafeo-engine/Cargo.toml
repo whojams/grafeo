@@ -80,7 +80,7 @@ storage = ["wal", "grafeo-file", "spill", "mmap"]  # Persistent storage (WAL, si
 # Named profiles (ecosystem-aligned)
 embedded = ["gql", "ai", "algos", "parallel", "regex", "jsonl-import"]  # Python libs, MCP, in-process
 browser = ["gql", "regex-lite"]  # WASM / grafeo-web
-server = ["full"]  # grafeo-server
+server = ["full", "metrics"]  # grafeo-server
 full = ["languages", "ai", "rdf", "parallel", "algos", "storage", "jsonl-import", "parquet-import"]
 
 # Data import
@@ -92,6 +92,7 @@ vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search
 text-index = ["grafeo-core/text-index"]  # BM25 inverted index for full-text search
 hybrid-search = ["grafeo-core/hybrid-search", "text-index", "vector-index"]  # Combined text + vector search
 cdc = []  # Change data capture with history API
+metrics = []  # Lock-free query, transaction, and session metrics
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 
 # Testing utilities (zero overhead when disabled)

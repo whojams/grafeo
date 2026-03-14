@@ -144,6 +144,9 @@ pub struct Session {
     /// `None` represents the default graph. Populated at `BEGIN` time and on each
     /// `USE GRAPH` / `SESSION SET GRAPH` switch within a transaction.
     touched_graphs: parking_lot::Mutex<Vec<Option<String>>>,
+    /// Shared metrics registry (populated when the `metrics` feature is enabled).
+    #[cfg(feature = "metrics")]
+    pub(crate) metrics: Option<Arc<crate::metrics::MetricsRegistry>>,
 }
 
 /// Per-graph savepoint snapshot, capturing the store state at the time of the savepoint.
@@ -204,6 +207,8 @@ impl Session {
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
             touched_graphs: parking_lot::Mutex::new(Vec::new()),
+            #[cfg(feature = "metrics")]
+            metrics: None,
         }
     }
 
@@ -231,6 +236,12 @@ impl Session {
     #[cfg(feature = "cdc")]
     pub(crate) fn set_cdc_log(&mut self, cdc_log: Arc<crate::cdc::CdcLog>) {
         self.cdc_log = cdc_log;
+    }
+
+    /// Sets the metrics registry for this session (shared with the database).
+    #[cfg(feature = "metrics")]
+    pub(crate) fn set_metrics(&mut self, metrics: Arc<crate::metrics::MetricsRegistry>) {
+        self.metrics = Some(metrics);
     }
 
     /// Creates a new session with RDF store and adaptive configuration.
@@ -273,6 +284,8 @@ impl Session {
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
             touched_graphs: parking_lot::Mutex::new(Vec::new()),
+            #[cfg(feature = "metrics")]
+            metrics: None,
         }
     }
 
@@ -321,6 +334,8 @@ impl Session {
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
             touched_graphs: parking_lot::Mutex::new(Vec::new()),
+            #[cfg(feature = "metrics")]
+            metrics: None,
         })
     }
 
@@ -2074,6 +2089,9 @@ impl Session {
     pub fn execute(&self, query: &str) -> Result<QueryResult> {
         self.require_lpg("GQL")?;
 
+        #[cfg(feature = "metrics")]
+        use crate::metrics::record_metric;
+
         use crate::query::{
             Executor, binder::Binder, cache::CacheKey, optimizer::Optimizer,
             processor::QueryLanguage, translators::gql,
@@ -2180,7 +2198,7 @@ impl Session {
 
         let has_mutations = optimized_plan.root.has_mutations();
 
-        self.with_auto_commit(has_mutations, || {
+        let result = self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
@@ -2205,7 +2223,35 @@ impl Session {
             result.rows_scanned = Some(rows_scanned);
 
             Ok(result)
-        })
+        });
+
+        // Record metrics for this query execution.
+        #[cfg(feature = "metrics")]
+        {
+            record_metric!(self.metrics, query_count, inc);
+            if let Some(ref reg) = self.metrics {
+                reg.query_count_by_language.increment("gql");
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+                record_metric!(self.metrics, query_latency, observe elapsed_ms);
+            }
+            match &result {
+                Ok(r) => {
+                    let returned = r.rows.len() as u64;
+                    record_metric!(self.metrics, rows_returned, add returned);
+                    if let Some(scanned) = r.rows_scanned {
+                        record_metric!(self.metrics, rows_scanned, add scanned);
+                    }
+                }
+                Err(_) => {
+                    record_metric!(self.metrics, query_errors, inc);
+                }
+            }
+        }
+
+        result
     }
 
     /// Executes a GQL query with visibility at the specified epoch.
@@ -3057,6 +3103,11 @@ impl Session {
         touched.clear();
         touched.push(key);
 
+        #[cfg(feature = "metrics")]
+        {
+            crate::metrics::record_metric!(self.metrics, tx_active, inc);
+        }
+
         Ok(())
     }
 
@@ -3108,6 +3159,11 @@ impl Session {
                 *self.read_only_tx.lock() = false;
                 self.savepoints.lock().clear();
                 self.touched_graphs.lock().clear();
+                #[cfg(feature = "metrics")]
+                {
+                    crate::metrics::record_metric!(self.metrics, tx_active, dec);
+                    crate::metrics::record_metric!(self.metrics, tx_conflicts, inc);
+                }
                 return Err(e);
             }
         };
@@ -3151,6 +3207,12 @@ impl Session {
                 }
                 self.transaction_manager.gc();
             }
+        }
+
+        #[cfg(feature = "metrics")]
+        {
+            crate::metrics::record_metric!(self.metrics, tx_active, dec);
+            crate::metrics::record_metric!(self.metrics, tx_committed, inc);
         }
 
         Ok(())
@@ -3223,7 +3285,15 @@ impl Session {
         self.touched_graphs.lock().clear();
 
         // Mark transaction as aborted in the manager
-        self.transaction_manager.abort(transaction_id)
+        let result = self.transaction_manager.abort(transaction_id);
+
+        #[cfg(feature = "metrics")]
+        if result.is_ok() {
+            crate::metrics::record_metric!(self.metrics, tx_active, dec);
+            crate::metrics::record_metric!(self.metrics, tx_rolled_back, inc);
+        }
+
+        result
     }
 
     /// Creates a named savepoint within the current transaction.

@@ -15,6 +15,8 @@
 //! - [`mvcc`] - Version chains for snapshot isolation
 //! - [`utils`] - Hashing, error types, and other helpers
 
+#![deny(unsafe_code)]
+
 pub mod collections;
 pub mod fmt;
 pub mod memory;

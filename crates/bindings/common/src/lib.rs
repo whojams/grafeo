@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Shared abstractions for Grafeo language bindings.
 //!
 //! This crate provides language-agnostic implementations of common binding

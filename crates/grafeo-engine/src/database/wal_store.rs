@@ -283,6 +283,20 @@ impl GraphStore for WalGraphStore {
             .is_node_visible_versioned(id, epoch, transaction_id)
     }
 
+    fn is_edge_visible_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+        self.inner.is_edge_visible_at_epoch(id, epoch)
+    }
+
+    fn is_edge_visible_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.inner
+            .is_edge_visible_versioned(id, epoch, transaction_id)
+    }
+
     fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
         self.inner.filter_visible_node_ids(ids, epoch)
     }

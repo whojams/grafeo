@@ -766,4 +766,68 @@ impl LpgStore {
         let id_to_type = self.id_to_edge_type.read();
         id_to_type.get(record.type_id as usize).cloned()
     }
+
+    // --- Visibility checks (no type resolution or property loading) ---
+
+    /// Checks if an edge is visible at the given epoch.
+    ///
+    /// Only checks the version chain, skips type resolution and property loading.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn is_edge_visible_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+        let edges = self.edges.read();
+        edges
+            .get(&id)
+            .is_some_and(|chain| chain.visible_at(epoch).is_some_and(|r| !r.is_deleted()))
+    }
+
+    /// Checks if an edge is visible at the given epoch.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn is_edge_visible_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+        let versions = self.edge_versions.read();
+        versions.get(&id).is_some_and(|index| {
+            index.visible_at(epoch).is_some_and(|vref| {
+                self.read_edge_record(&vref)
+                    .is_some_and(|r| !r.is_deleted())
+            })
+        })
+    }
+
+    /// Checks if an edge is visible to a specific transaction.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn is_edge_visible_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let edges = self.edges.read();
+        edges.get(&id).is_some_and(|chain| {
+            chain
+                .visible_to(epoch, transaction_id)
+                .is_some_and(|r| !r.is_deleted())
+        })
+    }
+
+    /// Checks if an edge is visible to a specific transaction.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn is_edge_visible_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let versions = self.edge_versions.read();
+        versions.get(&id).is_some_and(|index| {
+            index.visible_to(epoch, transaction_id).is_some_and(|vref| {
+                self.read_edge_record(&vref)
+                    .is_some_and(|r| !r.is_deleted())
+            })
+        })
+    }
 }

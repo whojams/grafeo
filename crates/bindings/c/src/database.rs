@@ -1399,6 +1399,17 @@ pub extern "C" fn grafeo_free_transaction(tx: *mut GrafeoTransaction) {
 // Admin
 // =========================================================================
 
+/// Clear all cached query plans.
+///
+/// Forces re-parsing and re-optimization on next execution.
+/// Called automatically after DDL operations, but can be invoked manually.
+#[unsafe(no_mangle)]
+pub extern "C" fn grafeo_clear_plan_cache(db: *mut GrafeoDatabase) -> GrafeoStatus {
+    let db = db_ref!(db);
+    db.inner.read().clear_plan_cache();
+    GrafeoStatus::Ok
+}
+
 /// Get database info as a JSON string. Caller must free with `grafeo_free_string`.
 #[unsafe(no_mangle)]
 pub extern "C" fn grafeo_info(db: *mut GrafeoDatabase) -> *mut c_char {

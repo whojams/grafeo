@@ -38,6 +38,8 @@
 //! # Ok::<(), grafeo_common::utils::error::Error>(())
 //! ```
 //!
+#![forbid(unsafe_code)]
+
 //! ## Performance Features
 //!
 //! Enable platform-optimized memory allocators for 10-20% faster allocations:

@@ -1344,8 +1344,8 @@ impl SparqlTranslator {
                     // so treat it as matching "COUNT" for HAVING rewriting.
                     for agg in aggregates {
                         let agg_name = format!("{:?}", agg.function).to_uppercase();
-                        let matches_name = agg_name == upper
-                            || (upper == "COUNT" && agg_name == "COUNTNONNULL");
+                        let matches_name =
+                            agg_name == upper || (upper == "COUNT" && agg_name == "COUNTNONNULL");
                         if matches_name && agg.alias.is_some() {
                             return LogicalExpression::Variable(
                                 agg.alias.clone().expect("alias checked by is_some guard"),

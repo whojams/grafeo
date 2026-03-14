@@ -201,6 +201,7 @@ impl RdfPlanner {
             LogicalOperator::MoveGraph(move_op) => self.plan_move_graph(move_op),
             LogicalOperator::AddGraph(add) => self.plan_add_graph(add),
             LogicalOperator::Bind(bind) => self.plan_bind(bind),
+            LogicalOperator::MultiWayJoin(mwj) => self.plan_multi_way_join(mwj),
             LogicalOperator::Empty => {
                 let op: Box<dyn Operator> = Box::new(SingleRowOperator::new());
                 Ok((op, vec![]))
@@ -727,6 +728,54 @@ impl RdfPlanner {
             &right_columns,
             schema,
         ))
+    }
+
+    /// Plans a multi-way join as cascading pairwise hash joins.
+    ///
+    /// Sorts inputs by estimated cardinality (smallest first) to minimize
+    /// intermediate result sizes, then folds them left-to-right.
+    fn plan_multi_way_join(
+        &self,
+        mwj: &crate::query::plan::MultiWayJoinOp,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        use crate::query::planner::common;
+
+        if mwj.inputs.is_empty() {
+            return Err(Error::Internal(
+                "MultiWayJoin requires at least one input".to_string(),
+            ));
+        }
+
+        // Plan all inputs and estimate cardinalities
+        let mut planned: Vec<(Box<dyn Operator>, Vec<String>, f64)> = Vec::new();
+        for input in &mwj.inputs {
+            let (op, cols) = self.plan_operator(input)?;
+            let card = estimate_operator_cardinality(input, &self.store).unwrap_or(1000.0);
+            planned.push((op, cols, card));
+        }
+
+        // Sort by cardinality (smallest first) so we build on smaller inputs
+        planned.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Fold left-to-right with pairwise hash joins
+        let (mut current_op, mut current_cols, mut current_card) = planned.remove(0);
+        for (right_op, right_cols, right_card) in planned {
+            let cardinalities = Some((current_card, right_card));
+            let (joined_op, joined_cols) = common::build_inner_join(
+                current_op,
+                right_op,
+                &current_cols,
+                &right_cols,
+                derive_rdf_schema,
+                cardinalities,
+            );
+            // Rough estimate for cascaded join output
+            current_card = (current_card * right_card * 0.1).max(1.0);
+            current_op = joined_op;
+            current_cols = joined_cols;
+        }
+
+        Ok((current_op, current_cols))
     }
 
     /// Plans a UNION operator.

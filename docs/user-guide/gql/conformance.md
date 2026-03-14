@@ -5,6 +5,10 @@ declaring which features are supported, partially supported or not yet implement
 
 Grafeo targets **minimum conformance** plus a broad set of optional features.
 
+A machine-readable version of this compliance matrix is available as
+[`gql-dialect.json`](../../gql-dialect.json) for tool integration (e.g. [GraphGlot](https://graphglot.com/)).
+Regenerate it with `python scripts/gql-conformance.py dialect`.
+
 ## Minimum Conformance (Section 24.2)
 
 Per the standard, minimum conformance requires:

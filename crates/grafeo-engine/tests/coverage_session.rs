@@ -672,18 +672,11 @@ mod cdc_tests {
 fn setup_questioned_edge() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
-    let alix = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Alix".into()))],
-    );
-    let gus = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Gus".into()))],
-    );
-    let vincent = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Vincent".into()))],
-    );
+    let alix =
+        session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
+    let gus = session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
+    let vincent =
+        session.create_node_with_props(&["Person"], [("name", Value::String("Vincent".into()))]);
 
     session.create_edge(alix, gus, "KNOWS");
     let _ = vincent;
@@ -743,18 +736,11 @@ fn test_questioned_edge_with_target_label_filter() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let alix = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Alix".into()))],
-    );
-    let amsterdam = session.create_node_with_props(
-        &["City"],
-        [("name", Value::String("Amsterdam".into()))],
-    );
-    let gus = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Gus".into()))],
-    );
+    let alix =
+        session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
+    let amsterdam =
+        session.create_node_with_props(&["City"], [("name", Value::String("Amsterdam".into()))]);
+    let gus = session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
 
     // Alix -> Amsterdam (LIVES_IN) and Alix -> Gus (KNOWS)
     session.create_edge(alix, amsterdam, "LIVES_IN");
@@ -797,7 +783,9 @@ fn test_questioned_edge_combined_with_optional_match() {
 
     // Add a City node that only Alix lives in
     session
-        .execute("MATCH (a:Person {name: 'Alix'}) INSERT (a)-[:LIVES_IN]->(:City {name: 'Amsterdam'})")
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}) INSERT (a)-[:LIVES_IN]->(:City {name: 'Amsterdam'})",
+        )
         .unwrap();
 
     // Combine OPTIONAL MATCH with a questioned edge in the first MATCH

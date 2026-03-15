@@ -527,18 +527,11 @@ fn create_partial_network() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    let alix = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Alix".into()))],
-    );
-    let gus = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Gus".into()))],
-    );
-    let vincent = session.create_node_with_props(
-        &["Person"],
-        [("name", Value::String("Vincent".into()))],
-    );
+    let alix =
+        session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
+    let gus = session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
+    let vincent =
+        session.create_node_with_props(&["Person"], [("name", Value::String("Vincent".into()))]);
 
     // Alix knows Gus, but Vincent knows nobody
     session.create_edge(alix, gus, "KNOWS");
@@ -608,7 +601,11 @@ fn test_left_join_shorthand() {
         )
         .unwrap();
 
-    assert_eq!(result.row_count(), 3, "LEFT JOIN (without OUTER) should work identically");
+    assert_eq!(
+        result.row_count(),
+        3,
+        "LEFT JOIN (without OUTER) should work identically"
+    );
 }
 
 #[test]
@@ -627,7 +624,11 @@ fn test_optional_match_syntax() {
         )
         .unwrap();
 
-    assert_eq!(result.row_count(), 3, "OPTIONAL MATCH should work like LEFT JOIN");
+    assert_eq!(
+        result.row_count(),
+        3,
+        "OPTIONAL MATCH should work like LEFT JOIN"
+    );
 }
 
 #[test]

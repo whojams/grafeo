@@ -425,18 +425,50 @@ impl MetricsRegistry {
         );
 
         // Query latency histogram
-        Self::write_histogram(&mut out, "grafeo_query_latency_ms", "Query latency in milliseconds.", &self.query_latency);
+        Self::write_histogram(
+            &mut out,
+            "grafeo_query_latency_ms",
+            "Query latency in milliseconds.",
+            &self.query_latency,
+        );
 
         // Per-language counters
         let lang = self.query_count_by_language.snapshot();
-        let _ = writeln!(out, "# HELP grafeo_query_count_by_language Queries executed per language.");
+        let _ = writeln!(
+            out,
+            "# HELP grafeo_query_count_by_language Queries executed per language."
+        );
         let _ = writeln!(out, "# TYPE grafeo_query_count_by_language counter");
-        let _ = writeln!(out, "grafeo_query_count_by_language{{language=\"gql\"}} {}", lang.gql);
-        let _ = writeln!(out, "grafeo_query_count_by_language{{language=\"cypher\"}} {}", lang.cypher);
-        let _ = writeln!(out, "grafeo_query_count_by_language{{language=\"sparql\"}} {}", lang.sparql);
-        let _ = writeln!(out, "grafeo_query_count_by_language{{language=\"gremlin\"}} {}", lang.gremlin);
-        let _ = writeln!(out, "grafeo_query_count_by_language{{language=\"graphql\"}} {}", lang.graphql);
-        let _ = writeln!(out, "grafeo_query_count_by_language{{language=\"sql_pgq\"}} {}", lang.sql_pgq);
+        let _ = writeln!(
+            out,
+            "grafeo_query_count_by_language{{language=\"gql\"}} {}",
+            lang.gql
+        );
+        let _ = writeln!(
+            out,
+            "grafeo_query_count_by_language{{language=\"cypher\"}} {}",
+            lang.cypher
+        );
+        let _ = writeln!(
+            out,
+            "grafeo_query_count_by_language{{language=\"sparql\"}} {}",
+            lang.sparql
+        );
+        let _ = writeln!(
+            out,
+            "grafeo_query_count_by_language{{language=\"gremlin\"}} {}",
+            lang.gremlin
+        );
+        let _ = writeln!(
+            out,
+            "grafeo_query_count_by_language{{language=\"graphql\"}} {}",
+            lang.graphql
+        );
+        let _ = writeln!(
+            out,
+            "grafeo_query_count_by_language{{language=\"sql_pgq\"}} {}",
+            lang.sql_pgq
+        );
 
         // Transaction metrics
         gauge!(
@@ -459,7 +491,12 @@ impl MetricsRegistry {
             "Write-write conflicts detected.",
             self.tx_conflicts.load(Ordering::Relaxed)
         );
-        Self::write_histogram(&mut out, "grafeo_tx_duration_ms", "Transaction duration in milliseconds.", &self.tx_duration);
+        Self::write_histogram(
+            &mut out,
+            "grafeo_tx_duration_ms",
+            "Transaction duration in milliseconds.",
+            &self.tx_duration,
+        );
 
         // Session metrics
         gauge!(

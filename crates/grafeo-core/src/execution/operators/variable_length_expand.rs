@@ -27,6 +27,7 @@ pub enum PathMode {
 ///
 /// For each input row containing a source node, this operator produces
 /// output rows for each neighbor reachable within the hop range.
+#[allow(clippy::struct_excessive_bools)]
 pub struct VariableLengthExpandOperator {
     /// The store to traverse.
     store: Arc<dyn GraphStore>,

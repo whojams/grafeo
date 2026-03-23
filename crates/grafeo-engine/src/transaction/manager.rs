@@ -115,6 +115,8 @@ pub struct TransactionManager {
     next_transaction_id: AtomicU64,
     /// Current epoch.
     current_epoch: AtomicU64,
+    /// Number of currently active transactions (for fast-path conflict skip).
+    active_count: AtomicU64,
     /// Active transactions.
     transactions: RwLock<FxHashMap<TransactionId, TransactionInfo>>,
     /// Committed transaction epochs (for conflict detection).
@@ -131,6 +133,7 @@ impl TransactionManager {
             // TransactionId::INVALID = u64::MAX, TransactionId::SYSTEM = 1, user transactions start at 2
             next_transaction_id: AtomicU64::new(2),
             current_epoch: AtomicU64::new(0),
+            active_count: AtomicU64::new(0),
             transactions: RwLock::new(FxHashMap::default()),
             committed_epochs: RwLock::new(FxHashMap::default()),
         }
@@ -149,6 +152,7 @@ impl TransactionManager {
 
         let info = TransactionInfo::new(epoch, isolation_level);
         self.transactions.write().insert(transaction_id, info);
+        self.active_count.fetch_add(1, Ordering::Relaxed);
         transaction_id
     }
 
@@ -192,14 +196,18 @@ impl TransactionManager {
         // First-writer-wins: reject if another active transaction already
         // wrote to the same entity. This prevents interleaved PENDING
         // entries in VersionLogs that cannot be rolled back per-transaction.
-        for (other_tx, other_info) in txns.iter() {
-            if *other_tx != transaction_id
-                && other_info.state == TransactionState::Active
-                && other_info.write_set.contains(&entity)
-            {
-                return Err(Error::Transaction(TransactionError::WriteConflict(
-                    format!("Write-write conflict on entity {entity:?}"),
-                )));
+        // Skip the scan when only one transaction is active (common case for
+        // auto-commit): there is nobody to conflict with.
+        if self.active_count.load(Ordering::Relaxed) > 1 {
+            for (other_tx, other_info) in txns.iter() {
+                if *other_tx != transaction_id
+                    && other_info.state == TransactionState::Active
+                    && other_info.write_set.contains(&entity)
+                {
+                    return Err(Error::Transaction(TransactionError::WriteConflict(
+                        format!("Write-write conflict on entity {entity:?}"),
+                    )));
+                }
             }
         }
 
@@ -358,6 +366,7 @@ impl TransactionManager {
         if let Some(info) = txns.get_mut(&transaction_id) {
             info.state = TransactionState::Committed;
         }
+        self.active_count.fetch_sub(1, Ordering::Relaxed);
 
         // Record commit epoch (need to drop read lock first)
         drop(committed);
@@ -389,6 +398,7 @@ impl TransactionManager {
         }
 
         info.state = TransactionState::Aborted;
+        self.active_count.fetch_sub(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -434,6 +444,7 @@ impl TransactionManager {
         for info in txns.values_mut() {
             if info.state == TransactionState::Active {
                 info.state = TransactionState::Aborted;
+                self.active_count.fetch_sub(1, Ordering::Relaxed);
             }
         }
     }

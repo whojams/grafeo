@@ -70,7 +70,7 @@ impl LpgStore {
 
     /// Sets a node property at a specific epoch (for snapshot/WAL recovery).
     ///
-    /// Unlike [`LPGStore::set_node_property`], this does not update property indexes
+    /// Unlike [`LpgStore::set_node_property`], this does not update property indexes
     /// or text indexes, and uses the provided epoch instead of `current_epoch()`.
     #[cfg(feature = "temporal")]
     pub fn set_node_property_at_epoch(&self, id: NodeId, key: &str, value: Value, epoch: EpochId) {

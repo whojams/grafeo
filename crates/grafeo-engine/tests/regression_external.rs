@@ -769,7 +769,7 @@ mod merge_null_node_reference {
         // OPTIONAL MATCH that matches nothing produces NULL for n
         let result = s.execute(
             "OPTIONAL MATCH (n:NonExistent) \
-             MERGE (n)-[:R]->(:Target {name: 'Alix'})",
+             MERGE (n)-[:R]->(m:Target {name: 'Alix'})",
         );
         assert!(
             result.is_err(),

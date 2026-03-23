@@ -70,7 +70,7 @@ impl LpgStore {
 
     /// Sets a node property at a specific epoch (for snapshot/WAL recovery).
     ///
-    /// Unlike [`set_node_property`], this does not update property indexes
+    /// Unlike [`LPGStore::set_node_property`], this does not update property indexes
     /// or text indexes, and uses the provided epoch instead of `current_epoch()`.
     #[cfg(feature = "temporal")]
     pub fn set_node_property_at_epoch(&self, id: NodeId, key: &str, value: Value, epoch: EpochId) {
@@ -575,13 +575,44 @@ impl LpgStore {
                 }
             }
 
-            // Remove PENDING entries from affected label version logs
+            // Remove PENDING entries from affected label version logs and
+            // reconcile label_index to match the restored state.
             if !label_nodes.is_empty() {
                 let mut labels = self.node_labels.write();
+                let mut index = self.label_index.write();
+
                 for node_id in &label_nodes {
+                    // Get the label set BEFORE removing PENDING (the transactional state)
+                    let tx_labels = labels
+                        .get(node_id)
+                        .and_then(|log| log.latest())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    // Remove PENDING entries to restore pre-transaction state
                     if let Some(log) = labels.get_mut(node_id) {
                         log.remove_pending();
-                        // Don't remove empty logs here: the node might still exist
+                    }
+
+                    // Get the restored (pre-transaction) label set
+                    let restored_labels = labels
+                        .get(node_id)
+                        .and_then(|log| log.latest())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    // Reconcile label_index: remove labels that were added by the
+                    // transaction, re-add labels that were removed by the transaction.
+                    for label_id in &tx_labels {
+                        if !restored_labels.contains(label_id) && (*label_id as usize) < index.len()
+                        {
+                            index[*label_id as usize].remove(node_id);
+                        }
+                    }
+                    for label_id in &restored_labels {
+                        if !tx_labels.contains(label_id) && (*label_id as usize) < index.len() {
+                            index[*label_id as usize].insert(*node_id, ());
+                        }
                     }
                 }
             }
@@ -767,12 +798,39 @@ impl LpgStore {
                 }
             }
 
-            // Pop PENDING entries from label version logs
+            // Pop PENDING entries from label version logs and reconcile label_index
             if !label_counts.is_empty() {
                 let mut labels = self.node_labels.write();
+                let mut index = self.label_index.write();
+
                 for (node_id, count) in &label_counts {
+                    let tx_labels = labels
+                        .get(node_id)
+                        .and_then(|log| log.latest())
+                        .cloned()
+                        .unwrap_or_default();
+
                     if let Some(version_log) = labels.get_mut(node_id) {
                         version_log.pop_n_pending(*count);
+                    }
+
+                    let restored_labels = labels
+                        .get(node_id)
+                        .and_then(|log| log.latest())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    // Reconcile label_index
+                    for label_id in &tx_labels {
+                        if !restored_labels.contains(label_id) && (*label_id as usize) < index.len()
+                        {
+                            index[*label_id as usize].remove(node_id);
+                        }
+                    }
+                    for label_id in &restored_labels {
+                        if !tx_labels.contains(label_id) && (*label_id as usize) < index.len() {
+                            index[*label_id as usize].insert(*node_id, ());
+                        }
                     }
                 }
             }

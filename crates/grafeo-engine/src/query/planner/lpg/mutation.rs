@@ -230,7 +230,17 @@ impl super::Planner {
         &self,
         left_join: &LeftJoinOp,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        let (left_op, left_columns) = self.plan_operator(&left_join.left)?;
+        // Handle Empty left input (OPTIONAL MATCH as first clause):
+        // substitute a SingleRowOperator so the left side produces one row.
+        let (left_op, left_columns): (Box<dyn Operator>, Vec<String>) =
+            if matches!(left_join.left.as_ref(), LogicalOperator::Empty) {
+                let single_row: Box<dyn Operator> = Box::new(
+                    grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
+                );
+                (single_row, Vec::new())
+            } else {
+                self.plan_operator(&left_join.left)?
+            };
         let (right_op, right_columns) = self.plan_operator(&left_join.right)?;
         let schema_fn = |cols: &[String]| self.derive_schema_from_columns(cols);
         Ok(super::common::build_left_join(

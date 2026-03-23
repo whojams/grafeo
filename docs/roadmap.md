@@ -2,7 +2,7 @@
 
 Grafeo is a high-performance, embeddable graph database written in Rust. This roadmap shows where the project has been, where it is now and where it's going. Priorities may shift based on community feedback and real-world usage.
 
-For detailed release notes, see the [CHANGELOG](../CHANGELOG.md).
+For detailed release notes, see the [CHANGELOG](changelog.md).
 
 ---
 

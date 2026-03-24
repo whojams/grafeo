@@ -357,6 +357,17 @@ impl Session {
         }
     }
 
+    /// Computes the effective storage key for a type, accounting for schema context.
+    ///
+    /// Mirrors `effective_graph_key()`: types resolve relative to the current schema.
+    fn effective_type_key(&self, type_name: &str) -> String {
+        let schema = self.current_schema.lock().clone();
+        match schema {
+            Some(s) => format!("{s}/{type_name}"),
+            None => type_name.to_string(),
+        }
+    }
+
     /// Returns the effective storage key for the current graph, accounting for schema.
     ///
     /// Combines `current_schema` and `current_graph` into a flat lookup key.
@@ -828,6 +839,7 @@ impl Session {
 
         let result = match cmd {
             SchemaStatement::CreateNodeType(stmt) => {
+                let effective_name = self.effective_type_key(&stmt.name);
                 #[cfg(feature = "wal")]
                 let props_for_wal: Vec<(String, String, bool)> = stmt
                     .properties
@@ -835,7 +847,7 @@ impl Session {
                     .map(|p| (p.name.clone(), p.data_type.clone(), p.nullable))
                     .collect();
                 let def = NodeTypeDefinition {
-                    name: stmt.name.clone(),
+                    name: effective_name.clone(),
                     properties: stmt
                         .properties
                         .iter()
@@ -853,7 +865,7 @@ impl Session {
                     parent_types: stmt.parent_types.clone(),
                 };
                 let result = if stmt.or_replace {
-                    let _ = self.catalog.drop_node_type(&stmt.name);
+                    let _ = self.catalog.drop_node_type(&effective_name);
                     self.catalog.register_node_type(def)
                 } else {
                     self.catalog.register_node_type(def)
@@ -863,7 +875,7 @@ impl Session {
                         wal_log!(
                             self,
                             WalRecord::CreateNodeType {
-                                name: stmt.name.clone(),
+                                name: effective_name.clone(),
                                 properties: props_for_wal,
                                 constraints: Vec::new(),
                             }
@@ -884,6 +896,7 @@ impl Session {
                 }
             }
             SchemaStatement::CreateEdgeType(stmt) => {
+                let effective_name = self.effective_type_key(&stmt.name);
                 #[cfg(feature = "wal")]
                 let props_for_wal: Vec<(String, String, bool)> = stmt
                     .properties
@@ -891,7 +904,7 @@ impl Session {
                     .map(|p| (p.name.clone(), p.data_type.clone(), p.nullable))
                     .collect();
                 let def = EdgeTypeDefinition {
-                    name: stmt.name.clone(),
+                    name: effective_name.clone(),
                     properties: stmt
                         .properties
                         .iter()
@@ -910,7 +923,7 @@ impl Session {
                     target_node_types: stmt.target_node_types.clone(),
                 };
                 let result = if stmt.or_replace {
-                    let _ = self.catalog.drop_edge_type_def(&stmt.name);
+                    let _ = self.catalog.drop_edge_type_def(&effective_name);
                     self.catalog.register_edge_type_def(def)
                 } else {
                     self.catalog.register_edge_type_def(def)
@@ -920,7 +933,7 @@ impl Session {
                         wal_log!(
                             self,
                             WalRecord::CreateEdgeType {
-                                name: stmt.name.clone(),
+                                name: effective_name.clone(),
                                 properties: props_for_wal,
                                 constraints: Vec::new(),
                             }
@@ -963,9 +976,15 @@ impl Session {
                 )))
             }
             SchemaStatement::DropNodeType { name, if_exists } => {
-                match self.catalog.drop_node_type(&name) {
+                let effective_name = self.effective_type_key(&name);
+                match self.catalog.drop_node_type(&effective_name) {
                     Ok(()) => {
-                        wal_log!(self, WalRecord::DropNodeType { name: name.clone() });
+                        wal_log!(
+                            self,
+                            WalRecord::DropNodeType {
+                                name: effective_name
+                            }
+                        );
                         Ok(QueryResult::status(format!("Dropped node type '{name}'")))
                     }
                     Err(e) if if_exists => {
@@ -979,9 +998,15 @@ impl Session {
                 }
             }
             SchemaStatement::DropEdgeType { name, if_exists } => {
-                match self.catalog.drop_edge_type_def(&name) {
+                let effective_name = self.effective_type_key(&name);
+                match self.catalog.drop_edge_type_def(&effective_name) {
                     Ok(()) => {
-                        wal_log!(self, WalRecord::DropEdgeType { name: name.clone() });
+                        wal_log!(
+                            self,
+                            WalRecord::DropEdgeType {
+                                name: effective_name
+                            }
+                        );
                         Ok(QueryResult::status(format!("Dropped edge type '{name}'")))
                     }
                     Err(e) if if_exists => {
@@ -1136,6 +1161,8 @@ impl Session {
                 use crate::catalog::GraphTypeDefinition;
                 use grafeo_adapters::query::gql::ast::InlineElementType;
 
+                let effective_name = self.effective_type_key(&stmt.name);
+
                 // GG04: LIKE clause copies type from existing graph
                 let (mut node_types, mut edge_types, open) =
                     if let Some(ref like_graph) = stmt.like_graph {
@@ -1165,7 +1192,18 @@ impl Session {
                             }
                         }
                     } else {
-                        (stmt.node_types.clone(), stmt.edge_types.clone(), stmt.open)
+                        // Prefix element type names with schema for consistency
+                        let nt = stmt
+                            .node_types
+                            .iter()
+                            .map(|n| self.effective_type_key(n))
+                            .collect();
+                        let et = stmt
+                            .edge_types
+                            .iter()
+                            .map(|n| self.effective_type_key(n))
+                            .collect();
+                        (nt, et, stmt.open)
                     };
 
                 // GG03: Register inline element types and add their names
@@ -1177,8 +1215,9 @@ impl Session {
                             key_labels,
                             ..
                         } => {
+                            let inline_effective = self.effective_type_key(name);
                             let def = NodeTypeDefinition {
-                                name: name.clone(),
+                                name: inline_effective.clone(),
                                 properties: properties
                                     .iter()
                                     .map(|p| TypedProperty {
@@ -1200,13 +1239,13 @@ impl Session {
                                     .map(|p| (p.name.clone(), p.data_type.clone(), p.nullable))
                                     .collect();
                                 self.log_schema_wal(&WalRecord::CreateNodeType {
-                                    name: name.clone(),
+                                    name: inline_effective.clone(),
                                     properties: props_for_wal,
                                     constraints: Vec::new(),
                                 });
                             }
-                            if !node_types.contains(name) {
-                                node_types.push(name.clone());
+                            if !node_types.contains(&inline_effective) {
+                                node_types.push(inline_effective);
                             }
                         }
                         InlineElementType::Edge {
@@ -1216,8 +1255,9 @@ impl Session {
                             target_node_types,
                             ..
                         } => {
+                            let inline_effective = self.effective_type_key(name);
                             let def = EdgeTypeDefinition {
-                                name: name.clone(),
+                                name: inline_effective.clone(),
                                 properties: properties
                                     .iter()
                                     .map(|p| TypedProperty {
@@ -1239,27 +1279,27 @@ impl Session {
                                     .map(|p| (p.name.clone(), p.data_type.clone(), p.nullable))
                                     .collect();
                                 self.log_schema_wal(&WalRecord::CreateEdgeType {
-                                    name: name.clone(),
+                                    name: inline_effective.clone(),
                                     properties: props_for_wal,
                                     constraints: Vec::new(),
                                 });
                             }
-                            if !edge_types.contains(name) {
-                                edge_types.push(name.clone());
+                            if !edge_types.contains(&inline_effective) {
+                                edge_types.push(inline_effective);
                             }
                         }
                     }
                 }
 
                 let def = GraphTypeDefinition {
-                    name: stmt.name.clone(),
+                    name: effective_name.clone(),
                     allowed_node_types: node_types.clone(),
                     allowed_edge_types: edge_types.clone(),
                     open,
                 };
                 let result = if stmt.or_replace {
                     // Drop existing first, ignore error if not found
-                    let _ = self.catalog.drop_graph_type(&stmt.name);
+                    let _ = self.catalog.drop_graph_type(&effective_name);
                     self.catalog.register_graph_type(def)
                 } else {
                     self.catalog.register_graph_type(def)
@@ -1269,7 +1309,7 @@ impl Session {
                         wal_log!(
                             self,
                             WalRecord::CreateGraphType {
-                                name: stmt.name.clone(),
+                                name: effective_name.clone(),
                                 node_types,
                                 edge_types,
                                 open,
@@ -1291,9 +1331,15 @@ impl Session {
                 }
             }
             SchemaStatement::DropGraphType { name, if_exists } => {
-                match self.catalog.drop_graph_type(&name) {
+                let effective_name = self.effective_type_key(&name);
+                match self.catalog.drop_graph_type(&effective_name) {
                     Ok(()) => {
-                        wal_log!(self, WalRecord::DropGraphType { name: name.clone() });
+                        wal_log!(
+                            self,
+                            WalRecord::DropGraphType {
+                                name: effective_name
+                            }
+                        );
                         Ok(QueryResult::status(format!("Dropped graph type '{name}'")))
                     }
                     Err(e) if if_exists => {
@@ -1331,12 +1377,25 @@ impl Session {
                     .graph_names()
                     .iter()
                     .any(|g| g.starts_with(&prefix));
-                if has_graphs {
+                let has_types = self
+                    .catalog
+                    .all_node_type_names()
+                    .iter()
+                    .any(|n| n.starts_with(&prefix))
+                    || self
+                        .catalog
+                        .all_edge_type_names()
+                        .iter()
+                        .any(|n| n.starts_with(&prefix))
+                    || self
+                        .catalog
+                        .all_graph_type_names()
+                        .iter()
+                        .any(|n| n.starts_with(&prefix));
+                if has_graphs || has_types {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
-                        format!(
-                            "Schema '{name}' is not empty: drop all graphs in the schema first"
-                        ),
+                        format!("Schema '{name}' is not empty: drop all graphs and types first"),
                     )));
                 }
                 match self.catalog.drop_schema_namespace(&name) {
@@ -1364,6 +1423,7 @@ impl Session {
             }
             SchemaStatement::AlterNodeType(stmt) => {
                 use grafeo_adapters::query::gql::ast::TypeAlteration;
+                let effective_name = self.effective_type_key(&stmt.name);
                 let mut wal_alts = Vec::new();
                 for alt in &stmt.alterations {
                     match alt {
@@ -1378,7 +1438,7 @@ impl Session {
                                     .map(|s| parse_default_literal(s)),
                             };
                             self.catalog
-                                .alter_node_type_add_property(&stmt.name, typed)
+                                .alter_node_type_add_property(&effective_name, typed)
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1394,7 +1454,7 @@ impl Session {
                         }
                         TypeAlteration::DropProperty(name) => {
                             self.catalog
-                                .alter_node_type_drop_property(&stmt.name, name)
+                                .alter_node_type_drop_property(&effective_name, name)
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1408,7 +1468,7 @@ impl Session {
                 wal_log!(
                     self,
                     WalRecord::AlterNodeType {
-                        name: stmt.name.clone(),
+                        name: effective_name,
                         alterations: wal_alts,
                     }
                 );
@@ -1419,6 +1479,7 @@ impl Session {
             }
             SchemaStatement::AlterEdgeType(stmt) => {
                 use grafeo_adapters::query::gql::ast::TypeAlteration;
+                let effective_name = self.effective_type_key(&stmt.name);
                 let mut wal_alts = Vec::new();
                 for alt in &stmt.alterations {
                     match alt {
@@ -1433,7 +1494,7 @@ impl Session {
                                     .map(|s| parse_default_literal(s)),
                             };
                             self.catalog
-                                .alter_edge_type_add_property(&stmt.name, typed)
+                                .alter_edge_type_add_property(&effective_name, typed)
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1449,7 +1510,7 @@ impl Session {
                         }
                         TypeAlteration::DropProperty(name) => {
                             self.catalog
-                                .alter_edge_type_drop_property(&stmt.name, name)
+                                .alter_edge_type_drop_property(&effective_name, name)
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1463,7 +1524,7 @@ impl Session {
                 wal_log!(
                     self,
                     WalRecord::AlterEdgeType {
-                        name: stmt.name.clone(),
+                        name: effective_name,
                         alterations: wal_alts,
                     }
                 );
@@ -1474,12 +1535,13 @@ impl Session {
             }
             SchemaStatement::AlterGraphType(stmt) => {
                 use grafeo_adapters::query::gql::ast::GraphTypeAlteration;
+                let effective_name = self.effective_type_key(&stmt.name);
                 let mut wal_alts = Vec::new();
                 for alt in &stmt.alterations {
                     match alt {
                         GraphTypeAlteration::AddNodeType(name) => {
                             self.catalog
-                                .alter_graph_type_add_node_type(&stmt.name, name.clone())
+                                .alter_graph_type_add_node_type(&effective_name, name.clone())
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1490,7 +1552,7 @@ impl Session {
                         }
                         GraphTypeAlteration::DropNodeType(name) => {
                             self.catalog
-                                .alter_graph_type_drop_node_type(&stmt.name, name)
+                                .alter_graph_type_drop_node_type(&effective_name, name)
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1501,7 +1563,7 @@ impl Session {
                         }
                         GraphTypeAlteration::AddEdgeType(name) => {
                             self.catalog
-                                .alter_graph_type_add_edge_type(&stmt.name, name.clone())
+                                .alter_graph_type_add_edge_type(&effective_name, name.clone())
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1512,7 +1574,7 @@ impl Session {
                         }
                         GraphTypeAlteration::DropEdgeType(name) => {
                             self.catalog
-                                .alter_graph_type_drop_edge_type(&stmt.name, name)
+                                .alter_graph_type_drop_edge_type(&effective_name, name)
                                 .map_err(|e| {
                                     Error::Query(QueryError::new(
                                         QueryErrorKind::Semantic,
@@ -1526,7 +1588,7 @@ impl Session {
                 wal_log!(
                     self,
                     WalRecord::AlterGraphType {
-                        name: stmt.name.clone(),
+                        name: effective_name,
                         alterations: wal_alts,
                     }
                 );
@@ -1803,7 +1865,7 @@ impl Session {
         })
     }
 
-    /// Returns a table of all registered node types.
+    /// Returns a table of all registered node types in the current schema.
     fn execute_show_node_types(&self) -> Result<QueryResult> {
         let columns = vec![
             "name".to_string(),
@@ -1811,11 +1873,26 @@ impl Session {
             "constraints".to_string(),
             "parents".to_string(),
         ];
-        let type_names = self.catalog.all_node_type_names();
+        let schema = self.current_schema.lock().clone();
+        let all_names = self.catalog.all_node_type_names();
+        let type_names: Vec<String> = match &schema {
+            Some(s) => {
+                let prefix = format!("{s}/");
+                all_names
+                    .into_iter()
+                    .filter_map(|n| n.strip_prefix(&prefix).map(String::from))
+                    .collect()
+            }
+            None => all_names.into_iter().filter(|n| !n.contains('/')).collect(),
+        };
         let rows: Vec<Vec<Value>> = type_names
             .into_iter()
             .filter_map(|name| {
-                let def = self.catalog.get_node_type(&name)?;
+                let lookup = match &schema {
+                    Some(s) => format!("{s}/{name}"),
+                    None => name.clone(),
+                };
+                let def = self.catalog.get_node_type(&lookup)?;
                 let props: Vec<String> = def
                     .properties
                     .iter()
@@ -1843,7 +1920,7 @@ impl Session {
         })
     }
 
-    /// Returns a table of all registered edge types.
+    /// Returns a table of all registered edge types in the current schema.
     fn execute_show_edge_types(&self) -> Result<QueryResult> {
         let columns = vec![
             "name".to_string(),
@@ -1851,11 +1928,26 @@ impl Session {
             "source_types".to_string(),
             "target_types".to_string(),
         ];
-        let type_names = self.catalog.all_edge_type_names();
+        let schema = self.current_schema.lock().clone();
+        let all_names = self.catalog.all_edge_type_names();
+        let type_names: Vec<String> = match &schema {
+            Some(s) => {
+                let prefix = format!("{s}/");
+                all_names
+                    .into_iter()
+                    .filter_map(|n| n.strip_prefix(&prefix).map(String::from))
+                    .collect()
+            }
+            None => all_names.into_iter().filter(|n| !n.contains('/')).collect(),
+        };
         let rows: Vec<Vec<Value>> = type_names
             .into_iter()
             .filter_map(|name| {
-                let def = self.catalog.get_edge_type_def(&name)?;
+                let lookup = match &schema {
+                    Some(s) => format!("{s}/{name}"),
+                    None => name.clone(),
+                };
+                let def = self.catalog.get_edge_type_def(&lookup)?;
                 let props: Vec<String> = def
                     .properties
                     .iter()
@@ -1882,7 +1974,7 @@ impl Session {
         })
     }
 
-    /// Returns a table of all registered graph types.
+    /// Returns a table of all registered graph types in the current schema.
     fn execute_show_graph_types(&self) -> Result<QueryResult> {
         let columns = vec![
             "name".to_string(),
@@ -1890,16 +1982,40 @@ impl Session {
             "node_types".to_string(),
             "edge_types".to_string(),
         ];
-        let type_names = self.catalog.all_graph_type_names();
+        let schema = self.current_schema.lock().clone();
+        let all_names = self.catalog.all_graph_type_names();
+        let type_names: Vec<String> = match &schema {
+            Some(s) => {
+                let prefix = format!("{s}/");
+                all_names
+                    .into_iter()
+                    .filter_map(|n| n.strip_prefix(&prefix).map(String::from))
+                    .collect()
+            }
+            None => all_names.into_iter().filter(|n| !n.contains('/')).collect(),
+        };
         let rows: Vec<Vec<Value>> = type_names
             .into_iter()
             .filter_map(|name| {
-                let def = self.catalog.get_graph_type_def(&name)?;
+                let lookup = match &schema {
+                    Some(s) => format!("{s}/{name}"),
+                    None => name.clone(),
+                };
+                let def = self.catalog.get_graph_type_def(&lookup)?;
+                // Strip schema prefix from allowed type names for display
+                let strip = |n: &String| -> String {
+                    match &schema {
+                        Some(s) => n.strip_prefix(&format!("{s}/")).unwrap_or(n).to_string(),
+                        None => n.clone(),
+                    }
+                };
+                let node_types: Vec<String> = def.allowed_node_types.iter().map(strip).collect();
+                let edge_types: Vec<String> = def.allowed_edge_types.iter().map(strip).collect();
                 Some(vec![
                     Value::from(name),
                     Value::from(def.open),
-                    Value::from(def.allowed_node_types.join(", ")),
-                    Value::from(def.allowed_edge_types.join(", ")),
+                    Value::from(node_types.join(", ")),
+                    Value::from(edge_types.join(", ")),
                 ])
             })
             .collect();

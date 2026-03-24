@@ -6,6 +6,7 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ### Fixed
 
+- **Schema isolation for types**: `SHOW GRAPH TYPES`, `SHOW NODE TYPES` and `SHOW EDGE TYPES` now respect `SESSION SET SCHEMA`, returning only types belonging to the current schema. `CREATE`, `DROP` and `ALTER` type commands also scope to the active schema. `DROP SCHEMA` now rejects non-empty schemas that still contain types (#167)
 - **Temporal feature benchmark regression**: optimized `VersionLog::at()` with a last-entry fast path (O(1) for current-epoch reads instead of O(log N) binary search), eliminated double HashMap lookup in `TransactionManager::record_write`, and added current-epoch shortcuts in `get_node_at_epoch`/`get_edge_at_epoch` to use `latest()` instead of epoch-based lookup. Reduces temporal feature overhead from ~16% to ~6% on read benchmarks.
 
 ## [0.5.24] - 2026-03-24

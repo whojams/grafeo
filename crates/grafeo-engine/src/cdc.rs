@@ -39,13 +39,15 @@ pub enum ChangeKind {
     Delete,
 }
 
-/// A unique identifier for a graph entity (node or edge).
+/// A unique identifier for a graph entity (node, edge, or RDF triple).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EntityId {
     /// A node identifier.
     Node(NodeId),
     /// An edge identifier.
     Edge(EdgeId),
+    /// An RDF triple, identified by a content hash of its terms.
+    Triple(u64),
 }
 
 impl From<NodeId> for EntityId {
@@ -67,6 +69,7 @@ impl EntityId {
         match self {
             Self::Node(id) => id.as_u64(),
             Self::Edge(id) => id.as_u64(),
+            Self::Triple(h) => *h,
         }
     }
 
@@ -75,9 +78,16 @@ impl EntityId {
     pub fn is_node(&self) -> bool {
         matches!(self, Self::Node(_))
     }
+
+    /// Returns `true` if this is an RDF triple identifier.
+    #[must_use]
+    pub fn is_triple(&self) -> bool {
+        matches!(self, Self::Triple(_))
+    }
 }
 
-/// A recorded change event with before/after property snapshots.
+/// A recorded change event with before/after property snapshots, or an RDF
+/// triple insert/delete.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChangeEvent {
     /// The entity that was changed.
@@ -88,9 +98,9 @@ pub struct ChangeEvent {
     pub epoch: EpochId,
     /// Wall-clock timestamp (milliseconds since Unix epoch).
     pub timestamp: u64,
-    /// Properties before the change (None for Create).
+    /// Properties before the change (None for Create and for triple events).
     pub before: Option<HashMap<String, Value>>,
-    /// Properties after the change (None for Delete).
+    /// Properties after the change (None for Delete and for triple events).
     pub after: Option<HashMap<String, Value>>,
     /// Node labels. Present only on node Create events.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,6 +114,19 @@ pub struct ChangeEvent {
     /// Edge destination node ID. Present only on edge Create events.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dst_id: Option<u64>,
+    /// RDF triple subject (N-Triples encoded). Present only on triple events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triple_subject: Option<String>,
+    /// RDF triple predicate (N-Triples encoded). Present only on triple events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triple_predicate: Option<String>,
+    /// RDF triple object (N-Triples encoded). Present only on triple events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triple_object: Option<String>,
+    /// Named graph containing the triple. `None` means the default graph.
+    /// Present only on triple events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triple_graph: Option<String>,
 }
 
 /// The CDC log that records entity mutations.
@@ -151,6 +174,10 @@ impl CdcLog {
             edge_type: None,
             src_id: None,
             dst_id: None,
+            triple_subject: None,
+            triple_predicate: None,
+            triple_object: None,
+            triple_graph: None,
         });
     }
 
@@ -175,6 +202,71 @@ impl CdcLog {
             edge_type: Some(edge_type),
             src_id: Some(src_id),
             dst_id: Some(dst_id),
+            triple_subject: None,
+            triple_predicate: None,
+            triple_object: None,
+            triple_graph: None,
+        });
+    }
+
+    /// Records an RDF triple insertion.
+    ///
+    /// The terms must be N-Triples encoded (e.g. `<http://example.org/s>`,
+    /// `"hello"`, `"42"^^<http://www.w3.org/2001/XMLSchema#integer>`).
+    pub fn record_triple_insert(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        graph: Option<&str>,
+        epoch: EpochId,
+    ) {
+        let id = triple_hash(subject, predicate, object, graph);
+        self.record(ChangeEvent {
+            entity_id: EntityId::Triple(id),
+            kind: ChangeKind::Create,
+            epoch,
+            timestamp: now_millis(),
+            before: None,
+            after: None,
+            labels: None,
+            edge_type: None,
+            src_id: None,
+            dst_id: None,
+            triple_subject: Some(subject.to_string()),
+            triple_predicate: Some(predicate.to_string()),
+            triple_object: Some(object.to_string()),
+            triple_graph: graph.map(ToString::to_string),
+        });
+    }
+
+    /// Records an RDF triple deletion.
+    ///
+    /// The terms must be N-Triples encoded.
+    pub fn record_triple_delete(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        graph: Option<&str>,
+        epoch: EpochId,
+    ) {
+        let id = triple_hash(subject, predicate, object, graph);
+        self.record(ChangeEvent {
+            entity_id: EntityId::Triple(id),
+            kind: ChangeKind::Delete,
+            epoch,
+            timestamp: now_millis(),
+            before: None,
+            after: None,
+            labels: None,
+            edge_type: None,
+            src_id: None,
+            dst_id: None,
+            triple_subject: Some(subject.to_string()),
+            triple_predicate: Some(predicate.to_string()),
+            triple_object: Some(object.to_string()),
+            triple_graph: graph.map(ToString::to_string),
         });
     }
 
@@ -206,6 +298,10 @@ impl CdcLog {
             edge_type: None,
             src_id: None,
             dst_id: None,
+            triple_subject: None,
+            triple_predicate: None,
+            triple_object: None,
+            triple_graph: None,
         });
     }
 
@@ -227,6 +323,10 @@ impl CdcLog {
             edge_type: None,
             src_id: None,
             dst_id: None,
+            triple_subject: None,
+            triple_predicate: None,
+            triple_object: None,
+            triple_graph: None,
         });
     }
 
@@ -283,6 +383,20 @@ impl Default for CdcLog {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Computes a stable-within-process content hash for an RDF triple.
+///
+/// Used as the raw `u64` in `EntityId::Triple` so the CDC log can key events
+/// by triple content without storing a separate ID registry.
+fn triple_hash(subject: &str, predicate: &str, object: &str, graph: Option<&str>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    subject.hash(&mut h);
+    predicate.hash(&mut h);
+    object.hash(&mut h);
+    graph.hash(&mut h);
+    h.finish()
 }
 
 fn now_millis() -> u64 {

@@ -89,6 +89,9 @@ impl Session {
             .with_transaction_id(*self.current_transaction.lock());
         #[cfg(feature = "wal")]
         let planner = planner.with_wal(self.wal.clone());
+        #[cfg(feature = "cdc")]
+        let planner =
+            planner.with_cdc_log(Some(Arc::clone(&self.cdc_log)), self.store.current_epoch());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -181,6 +184,9 @@ impl Session {
             .with_transaction_id(*self.current_transaction.lock());
         #[cfg(feature = "wal")]
         let planner = planner.with_wal(self.wal.clone());
+        #[cfg(feature = "cdc")]
+        let planner =
+            planner.with_cdc_log(Some(Arc::clone(&self.cdc_log)), self.store.current_epoch());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -235,6 +241,9 @@ impl Session {
             .with_transaction_id(*self.current_transaction.lock());
         #[cfg(feature = "wal")]
         let planner = planner.with_wal(self.wal.clone());
+        #[cfg(feature = "cdc")]
+        let planner =
+            planner.with_cdc_log(Some(Arc::clone(&self.cdc_log)), self.store.current_epoch());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         let executor = Executor::with_columns(physical_plan.columns.clone())

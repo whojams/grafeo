@@ -4,6 +4,11 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.25] - Unreleased
 
+### Added
+
+- **RDF CDC bridge** (`cdc` + `rdf` features): SPARQL `INSERT DATA`, `DELETE DATA`, and `DELETE/INSERT WHERE` mutations now emit `ChangeEvent` records to the CDC log alongside LPG mutations. Triple events carry N-Triples-encoded subject/predicate/object/graph terms and appear in `changes_between()` and `history()` with `EntityId::Triple`. Enables `GET /changes` and `POST /sync` to surface RDF mutations to offline-first clients
+- **CDC structural metadata**: `ChangeEvent` now carries `labels` on node Create events and `edge_type`/`src_id`/`dst_id` on edge Create events, giving sync clients the full information needed to replay creates on a remote database
+
 ### Fixed
 
 - **Schema isolation for types**: `SHOW GRAPH TYPES`, `SHOW NODE TYPES` and `SHOW EDGE TYPES` now respect `SESSION SET SCHEMA`, returning only types belonging to the current schema. `CREATE`, `DROP` and `ALTER` type commands also scope to the active schema. `DROP SCHEMA` now rejects non-empty schemas that still contain types (#167)

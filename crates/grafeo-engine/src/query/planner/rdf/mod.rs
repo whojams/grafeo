@@ -51,13 +51,62 @@ fn term_to_wal(term: &Term) -> String {
     term.to_string()
 }
 
-/// Converts logical plans with RDF operators to physical operators.
-///
-/// This planner produces push-based operators that process data in chunks
-/// (morsels) for cache efficiency and parallelism compatibility.
+/// Records a triple insertion to the CDC log if one is configured.
+#[cfg(feature = "cdc")]
+fn record_cdc_triple_insert(
+    cdc_log: &Option<Arc<crate::cdc::CdcLog>>,
+    subject: &Term,
+    predicate: &Term,
+    object: &Term,
+    graph: Option<&str>,
+    epoch: grafeo_common::types::EpochId,
+) {
+    if let Some(log) = cdc_log {
+        log.record_triple_insert(
+            &subject.to_string(),
+            &predicate.to_string(),
+            &object.to_string(),
+            graph,
+            epoch,
+        );
+    }
+}
+
+/// Records a triple deletion to the CDC log if one is configured.
+#[cfg(feature = "cdc")]
+fn record_cdc_triple_delete(
+    cdc_log: &Option<Arc<crate::cdc::CdcLog>>,
+    subject: &Term,
+    predicate: &Term,
+    object: &Term,
+    graph: Option<&str>,
+    epoch: grafeo_common::types::EpochId,
+) {
+    if let Some(log) = cdc_log {
+        log.record_triple_delete(
+            &subject.to_string(),
+            &predicate.to_string(),
+            &object.to_string(),
+            graph,
+            epoch,
+        );
+    }
+}
+
 /// Type alias for the WAL used by the RDF planner.
 #[cfg(feature = "wal")]
 type RdfWal = grafeo_adapters::storage::wal::LpgWal;
+
+/// Groups the variable-substitution operands for pattern-based mutation operators.
+///
+/// Used to keep `RdfInsertPatternOperator::new` and `RdfDeletePatternOperator::new`
+/// within the 7-argument clippy limit.
+struct TripleOperands {
+    subject: TripleComponent,
+    predicate: TripleComponent,
+    object: TripleComponent,
+    column_map: HashMap<String, usize>,
+}
 
 /// Converts logical plans with RDF operators to physical operators.
 ///
@@ -77,6 +126,12 @@ pub struct RdfPlanner {
     /// Optional WAL for logging RDF mutations.
     #[cfg(feature = "wal")]
     wal: Option<Arc<RdfWal>>,
+    /// Optional CDC log for recording RDF triple mutations.
+    #[cfg(feature = "cdc")]
+    cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+    /// Epoch to stamp CDC events with (snapshot at plan time).
+    #[cfg(feature = "cdc")]
+    cdc_epoch: grafeo_common::types::EpochId,
 }
 
 impl RdfPlanner {
@@ -91,6 +146,10 @@ impl RdfPlanner {
             profile_entries: std::cell::RefCell::new(Vec::new()),
             #[cfg(feature = "wal")]
             wal: None,
+            #[cfg(feature = "cdc")]
+            cdc_log: None,
+            #[cfg(feature = "cdc")]
+            cdc_epoch: grafeo_common::types::EpochId(0),
         }
     }
 
@@ -113,6 +172,19 @@ impl RdfPlanner {
     #[must_use]
     pub fn with_wal(mut self, wal: Option<Arc<RdfWal>>) -> Self {
         self.wal = wal;
+        self
+    }
+
+    /// Sets the CDC log and epoch for recording RDF triple mutations.
+    #[cfg(feature = "cdc")]
+    #[must_use]
+    pub fn with_cdc_log(
+        mut self,
+        cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+        epoch: grafeo_common::types::EpochId,
+    ) -> Self {
+        self.cdc_log = cdc_log;
+        self.cdc_epoch = epoch;
         self
     }
 
@@ -839,12 +911,18 @@ impl RdfPlanner {
                 let operator = Box::new(RdfInsertPatternOperator::new(
                     Arc::clone(&self.store),
                     input_op,
-                    insert.subject.clone(),
-                    insert.predicate.clone(),
-                    insert.object.clone(),
-                    column_map,
+                    TripleOperands {
+                        subject: insert.subject.clone(),
+                        predicate: insert.predicate.clone(),
+                        object: insert.object.clone(),
+                        column_map,
+                    },
                     #[cfg(feature = "wal")]
                     self.wal.clone(),
+                    #[cfg(feature = "cdc")]
+                    self.cdc_log.clone(),
+                    #[cfg(feature = "cdc")]
+                    self.cdc_epoch,
                 ));
 
                 return Ok((operator, Vec::new()));
@@ -864,6 +942,10 @@ impl RdfPlanner {
             self.transaction_id,
             #[cfg(feature = "wal")]
             self.wal.clone(),
+            #[cfg(feature = "cdc")]
+            self.cdc_log.clone(),
+            #[cfg(feature = "cdc")]
+            self.cdc_epoch,
         ));
 
         // Insert operations don't output columns
@@ -923,12 +1005,18 @@ impl RdfPlanner {
                 let operator = Box::new(RdfDeletePatternOperator::new(
                     Arc::clone(&self.store),
                     input_op,
-                    delete.subject.clone(),
-                    delete.predicate.clone(),
-                    delete.object.clone(),
-                    column_map,
+                    TripleOperands {
+                        subject: delete.subject.clone(),
+                        predicate: delete.predicate.clone(),
+                        object: delete.object.clone(),
+                        column_map,
+                    },
                     #[cfg(feature = "wal")]
                     self.wal.clone(),
+                    #[cfg(feature = "cdc")]
+                    self.cdc_log.clone(),
+                    #[cfg(feature = "cdc")]
+                    self.cdc_epoch,
                 ));
 
                 return Ok((operator, Vec::new()));
@@ -948,6 +1036,10 @@ impl RdfPlanner {
             self.transaction_id,
             #[cfg(feature = "wal")]
             self.wal.clone(),
+            #[cfg(feature = "cdc")]
+            self.cdc_log.clone(),
+            #[cfg(feature = "cdc")]
+            self.cdc_epoch,
         ));
 
         Ok((operator, Vec::new()))
@@ -1048,6 +1140,10 @@ impl RdfPlanner {
             modify.delete_templates.clone(),
             modify.insert_templates.clone(),
             column_map,
+            #[cfg(feature = "cdc")]
+            self.cdc_log.clone(),
+            #[cfg(feature = "cdc")]
+            self.cdc_epoch,
         ));
 
         Ok((operator, Vec::new()))
@@ -1067,6 +1163,10 @@ struct RdfInsertTripleOperator {
     inserted: bool,
     #[cfg(feature = "wal")]
     wal: Option<Arc<RdfWal>>,
+    #[cfg(feature = "cdc")]
+    cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+    #[cfg(feature = "cdc")]
+    cdc_epoch: grafeo_common::types::EpochId,
 }
 
 impl RdfInsertTripleOperator {
@@ -1076,6 +1176,8 @@ impl RdfInsertTripleOperator {
         graph_name: Option<String>,
         transaction_id: Option<TransactionId>,
         #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+        #[cfg(feature = "cdc")] cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+        #[cfg(feature = "cdc")] cdc_epoch: grafeo_common::types::EpochId,
     ) -> Self {
         Self {
             store,
@@ -1085,6 +1187,10 @@ impl RdfInsertTripleOperator {
             inserted: false,
             #[cfg(feature = "wal")]
             wal,
+            #[cfg(feature = "cdc")]
+            cdc_log,
+            #[cfg(feature = "cdc")]
+            cdc_epoch,
         }
     }
 }
@@ -1119,6 +1225,16 @@ impl Operator for RdfInsertTripleOperator {
             },
         );
 
+        #[cfg(feature = "cdc")]
+        record_cdc_triple_insert(
+            &self.cdc_log,
+            self.triple.subject(),
+            self.triple.predicate(),
+            self.triple.object(),
+            self.graph_name.as_deref(),
+            self.cdc_epoch,
+        );
+
         self.inserted = true;
 
         // Return an empty result (INSERT doesn't produce rows)
@@ -1150,28 +1266,35 @@ struct RdfInsertPatternOperator {
     done: bool,
     #[cfg(feature = "wal")]
     wal: Option<Arc<RdfWal>>,
+    #[cfg(feature = "cdc")]
+    cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+    #[cfg(feature = "cdc")]
+    cdc_epoch: grafeo_common::types::EpochId,
 }
 
 impl RdfInsertPatternOperator {
     fn new(
         store: Arc<RdfStore>,
         input: Box<dyn Operator>,
-        subject: TripleComponent,
-        predicate: TripleComponent,
-        object: TripleComponent,
-        column_map: HashMap<String, usize>,
+        operands: TripleOperands,
         #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+        #[cfg(feature = "cdc")] cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+        #[cfg(feature = "cdc")] cdc_epoch: grafeo_common::types::EpochId,
     ) -> Self {
         Self {
             store,
             input,
-            subject,
-            predicate,
-            object,
-            column_map,
+            subject: operands.subject,
+            predicate: operands.predicate,
+            object: operands.object,
+            column_map: operands.column_map,
             done: false,
             #[cfg(feature = "wal")]
             wal,
+            #[cfg(feature = "cdc")]
+            cdc_log,
+            #[cfg(feature = "cdc")]
+            cdc_epoch,
         }
     }
 
@@ -1283,6 +1406,18 @@ impl Operator for RdfInsertPatternOperator {
             );
         }
 
+        #[cfg(feature = "cdc")]
+        for triple in &triples_to_insert {
+            record_cdc_triple_insert(
+                &self.cdc_log,
+                triple.subject(),
+                triple.predicate(),
+                triple.object(),
+                None,
+                self.cdc_epoch,
+            );
+        }
+
         self.done = true;
         Ok(None)
     }
@@ -1310,6 +1445,10 @@ struct RdfDeleteTripleOperator {
     deleted: bool,
     #[cfg(feature = "wal")]
     wal: Option<Arc<RdfWal>>,
+    #[cfg(feature = "cdc")]
+    cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+    #[cfg(feature = "cdc")]
+    cdc_epoch: grafeo_common::types::EpochId,
 }
 
 impl RdfDeleteTripleOperator {
@@ -1319,6 +1458,8 @@ impl RdfDeleteTripleOperator {
         graph_name: Option<String>,
         transaction_id: Option<TransactionId>,
         #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+        #[cfg(feature = "cdc")] cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+        #[cfg(feature = "cdc")] cdc_epoch: grafeo_common::types::EpochId,
     ) -> Self {
         Self {
             store,
@@ -1328,6 +1469,10 @@ impl RdfDeleteTripleOperator {
             deleted: false,
             #[cfg(feature = "wal")]
             wal,
+            #[cfg(feature = "cdc")]
+            cdc_log,
+            #[cfg(feature = "cdc")]
+            cdc_epoch,
         }
     }
 }
@@ -1362,6 +1507,16 @@ impl Operator for RdfDeleteTripleOperator {
             },
         );
 
+        #[cfg(feature = "cdc")]
+        record_cdc_triple_delete(
+            &self.cdc_log,
+            self.triple.subject(),
+            self.triple.predicate(),
+            self.triple.object(),
+            self.graph_name.as_deref(),
+            self.cdc_epoch,
+        );
+
         self.deleted = true;
 
         // Return an empty result (DELETE doesn't produce rows)
@@ -1393,28 +1548,35 @@ struct RdfDeletePatternOperator {
     done: bool,
     #[cfg(feature = "wal")]
     wal: Option<Arc<RdfWal>>,
+    #[cfg(feature = "cdc")]
+    cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+    #[cfg(feature = "cdc")]
+    cdc_epoch: grafeo_common::types::EpochId,
 }
 
 impl RdfDeletePatternOperator {
     fn new(
         store: Arc<RdfStore>,
         input: Box<dyn Operator>,
-        subject: TripleComponent,
-        predicate: TripleComponent,
-        object: TripleComponent,
-        column_map: HashMap<String, usize>,
+        operands: TripleOperands,
         #[cfg(feature = "wal")] wal: Option<Arc<RdfWal>>,
+        #[cfg(feature = "cdc")] cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+        #[cfg(feature = "cdc")] cdc_epoch: grafeo_common::types::EpochId,
     ) -> Self {
         Self {
             store,
             input,
-            subject,
-            predicate,
-            object,
-            column_map,
+            subject: operands.subject,
+            predicate: operands.predicate,
+            object: operands.object,
+            column_map: operands.column_map,
             done: false,
             #[cfg(feature = "wal")]
             wal,
+            #[cfg(feature = "cdc")]
+            cdc_log,
+            #[cfg(feature = "cdc")]
+            cdc_epoch,
         }
     }
 
@@ -1523,6 +1685,18 @@ impl Operator for RdfDeletePatternOperator {
                     object: term_to_wal(triple.object()),
                     graph: None,
                 },
+            );
+        }
+
+        #[cfg(feature = "cdc")]
+        for triple in &triples_to_delete {
+            record_cdc_triple_delete(
+                &self.cdc_log,
+                triple.subject(),
+                triple.predicate(),
+                triple.object(),
+                None,
+                self.cdc_epoch,
             );
         }
 
@@ -1925,6 +2099,10 @@ struct RdfModifyOperator {
     insert_templates: Vec<TripleTemplate>,
     column_map: HashMap<String, usize>,
     done: bool,
+    #[cfg(feature = "cdc")]
+    cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+    #[cfg(feature = "cdc")]
+    cdc_epoch: grafeo_common::types::EpochId,
 }
 
 impl RdfModifyOperator {
@@ -1934,6 +2112,8 @@ impl RdfModifyOperator {
         delete_templates: Vec<TripleTemplate>,
         insert_templates: Vec<TripleTemplate>,
         column_map: HashMap<String, usize>,
+        #[cfg(feature = "cdc")] cdc_log: Option<Arc<crate::cdc::CdcLog>>,
+        #[cfg(feature = "cdc")] cdc_epoch: grafeo_common::types::EpochId,
     ) -> Self {
         Self {
             store,
@@ -1942,6 +2122,10 @@ impl RdfModifyOperator {
             insert_templates,
             column_map,
             done: false,
+            #[cfg(feature = "cdc")]
+            cdc_log,
+            #[cfg(feature = "cdc")]
+            cdc_epoch,
         }
     }
 
@@ -2033,6 +2217,15 @@ impl Operator for RdfModifyOperator {
 
                 if let (Some(s), Some(p), Some(o)) = (subject, predicate, object) {
                     let triple = Triple::new(s, p, o);
+                    #[cfg(feature = "cdc")]
+                    record_cdc_triple_delete(
+                        &self.cdc_log,
+                        triple.subject(),
+                        triple.predicate(),
+                        triple.object(),
+                        None,
+                        self.cdc_epoch,
+                    );
                     self.store.remove(&triple);
                 }
             }
@@ -2047,6 +2240,15 @@ impl Operator for RdfModifyOperator {
 
                 if let (Some(s), Some(p), Some(o)) = (subject, predicate, object) {
                     let triple = Triple::new(s, p, o);
+                    #[cfg(feature = "cdc")]
+                    record_cdc_triple_insert(
+                        &self.cdc_log,
+                        triple.subject(),
+                        triple.predicate(),
+                        triple.object(),
+                        None,
+                        self.cdc_epoch,
+                    );
                     self.store.insert(triple);
                 }
             }

@@ -346,3 +346,189 @@ impl Default for ComponentResultBuilder {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use grafeo_common::types::{EdgeId, NodeId};
+
+    use super::*;
+
+    // ---- Control ----
+
+    #[test]
+    fn control_is_continue() {
+        assert!(Control::<()>::Continue.is_continue());
+        assert!(!Control::<()>::Prune.is_continue());
+        assert!(!Control::Break(42).is_continue());
+    }
+
+    #[test]
+    fn control_is_break() {
+        assert!(Control::Break("stop").is_break());
+        assert!(!Control::<()>::Continue.is_break());
+        assert!(!Control::<()>::Prune.is_break());
+    }
+
+    #[test]
+    fn control_is_prune() {
+        assert!(Control::<()>::Prune.is_prune());
+        assert!(!Control::<()>::Continue.is_prune());
+        assert!(!Control::Break(0u8).is_prune());
+    }
+
+    #[test]
+    fn control_break_value() {
+        assert_eq!(Control::Break(99u32).break_value(), Some(99u32));
+        assert_eq!(Control::<u32>::Continue.break_value(), None);
+        assert_eq!(Control::<u32>::Prune.break_value(), None);
+    }
+
+    #[test]
+    fn control_default_is_continue() {
+        let c: Control<()> = Default::default();
+        assert!(c.is_continue());
+    }
+
+    // ---- TraversalEvent ----
+
+    #[test]
+    fn traversal_event_discover_source_and_target() {
+        let n = NodeId(7);
+        let ev = TraversalEvent::Discover(n);
+        assert_eq!(ev.source(), Some(n));
+        assert_eq!(ev.target(), Some(n));
+    }
+
+    #[test]
+    fn traversal_event_finish_source_and_target() {
+        let n = NodeId(3);
+        let ev = TraversalEvent::Finish(n);
+        assert_eq!(ev.source(), Some(n));
+        assert_eq!(ev.target(), Some(n));
+    }
+
+    #[test]
+    fn traversal_event_tree_edge() {
+        let src = NodeId(1);
+        let dst = NodeId(2);
+        let edge = EdgeId(10);
+        let ev = TraversalEvent::TreeEdge {
+            source: src,
+            target: dst,
+            edge,
+        };
+        assert_eq!(ev.source(), Some(src));
+        assert_eq!(ev.target(), Some(dst));
+    }
+
+    #[test]
+    fn traversal_event_non_tree_edge() {
+        let src = NodeId(1);
+        let dst = NodeId(3);
+        let edge = EdgeId(20);
+        let ev = TraversalEvent::NonTreeEdge {
+            source: src,
+            target: dst,
+            edge,
+        };
+        assert_eq!(ev.source(), Some(src));
+        assert_eq!(ev.target(), Some(dst));
+    }
+
+    #[test]
+    fn traversal_event_back_edge() {
+        let src = NodeId(5);
+        let dst = NodeId(1);
+        let edge = EdgeId(30);
+        let ev = TraversalEvent::BackEdge {
+            source: src,
+            target: dst,
+            edge,
+        };
+        assert_eq!(ev.source(), Some(src));
+        assert_eq!(ev.target(), Some(dst));
+    }
+
+    // ---- MinScored ----
+
+    #[test]
+    fn min_scored_ordering_is_reversed() {
+        // Lower score = higher priority in BinaryHeap (min-heap)
+        let a = MinScored::new(1.0f64, "a");
+        let b = MinScored::new(5.0f64, "b");
+        assert!(a > b, "lower score should sort as Greater for min-heap");
+    }
+
+    #[test]
+    fn min_scored_equal_scores() {
+        let a = MinScored::new(3.0f64, "x");
+        let b = MinScored::new(3.0f64, "y");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn min_scored_accessors() {
+        let ms = MinScored::new(42.0f64, NodeId(7));
+        assert_eq!(*ms.score(), 42.0);
+        assert_eq!(*ms.value(), NodeId(7));
+        assert_eq!(ms.into_value(), NodeId(7));
+    }
+
+    // ---- DistanceMap ----
+
+    #[test]
+    fn distance_map_contains_via_default_impl() {
+        let mut map: std::collections::HashMap<NodeId, f64> = std::collections::HashMap::new();
+        let n = NodeId(1);
+        assert!(!map.contains(n));
+        map.insert(n, 1.5);
+        assert!(map.contains(n));
+    }
+
+    // ---- NodeValueResultBuilder ----
+
+    #[test]
+    fn node_value_result_builder_basic() {
+        let mut b = NodeValueResultBuilder::with_capacity("score", 2);
+        b.push(NodeId(1), Value::Float64(0.9));
+        b.push(NodeId(2), Value::Float64(0.5));
+        let result = b.build();
+        assert_eq!(result.columns, vec!["node_id", "score"]);
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn node_value_result_builder_empty() {
+        let b = NodeValueResultBuilder::with_capacity("val", 0);
+        let result = b.build();
+        assert!(result.rows.is_empty());
+    }
+
+    // ---- ComponentResultBuilder ----
+
+    #[test]
+    fn component_result_builder_basic() {
+        let mut b = ComponentResultBuilder::new();
+        b.push(NodeId(10), 0);
+        b.push(NodeId(20), 1);
+        b.push(NodeId(30), 0);
+        let result = b.build();
+        assert_eq!(result.columns, vec!["node_id", "component_id"]);
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn component_result_builder_with_capacity() {
+        let mut b = ComponentResultBuilder::with_capacity(5);
+        b.push(NodeId(1), 0);
+        let result = b.build();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn component_result_builder_default() {
+        let b: ComponentResultBuilder = Default::default();
+        let result = b.build();
+        assert!(result.rows.is_empty());
+    }
+}

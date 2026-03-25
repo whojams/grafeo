@@ -26,3 +26,28 @@ pub trait MemoryReporter {
         0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FixedReporter(usize);
+
+    impl MemoryReporter for FixedReporter {
+        fn heap_memory_bytes(&self) -> usize {
+            self.0
+        }
+    }
+
+    #[test]
+    fn item_count_default_returns_zero() {
+        let r = FixedReporter(64);
+        assert_eq!(r.item_count(), 0);
+    }
+
+    #[test]
+    fn heap_memory_bytes_delegates_to_impl() {
+        let r = FixedReporter(1024);
+        assert_eq!(r.heap_memory_bytes(), 1024);
+    }
+}

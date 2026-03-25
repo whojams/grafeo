@@ -596,6 +596,7 @@ fn test_optional_match_null_when_missing() {
 // OPTIONAL MATCH WHERE pushdown: right-side predicates become join conditions
 // ============================================================================
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_where_right_side_preserves_left() {
     // WHERE on right-side variable should not filter out left rows.
@@ -632,6 +633,7 @@ fn test_optional_match_where_right_side_preserves_left() {
     assert_eq!(result.rows[2][1], Value::Null);
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_where_left_side_filters_correctly() {
     // WHERE on left-side variable should filter left rows normally.
@@ -654,6 +656,7 @@ fn test_optional_match_where_left_side_filters_correctly() {
     assert_eq!(result.rows[1][0], Value::String("Gus".into()));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_where_mixed_predicates() {
     // WHERE with both left-side and right-side predicates.
@@ -680,6 +683,7 @@ fn test_optional_match_where_mixed_predicates() {
     assert_eq!(result.rows[1][1], Value::String("TechCorp".into()));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_where_right_property_no_match() {
     // WHERE right-side predicate that no right-side row satisfies.
@@ -708,6 +712,7 @@ fn test_optional_match_where_right_property_no_match() {
     }
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_where_cross_side_predicate() {
     // WHERE predicate referencing both left and right side variables.
@@ -778,6 +783,7 @@ fn test_optional_match_gql_where_pushdown() {
     assert_eq!(result.rows[2][1], Value::Null);
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_chained_optional_matches() {
     // Two independent OPTIONAL MATCHHes.
@@ -800,6 +806,7 @@ fn test_chained_optional_matches() {
     assert_eq!(result.rows[0][2], Value::Null);
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_is_null_check() {
     // Verify IS NULL works with OPTIONAL MATCH NULL values.
@@ -826,6 +833,7 @@ fn test_optional_match_is_null_check() {
 // OPTIONAL MATCH Phase 4: Chained OPTIONAL MATCH
 // ============================================================================
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_chained_independent_optional_matches_mixed() {
     // Two independent OPTIONAL MATCHHes where one matches and one does not.
@@ -848,6 +856,7 @@ fn test_chained_independent_optional_matches_mixed() {
     assert_eq!(result.rows[0][2], Value::Null);
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_chained_dependent_optional_matches() {
     // Dependent optionals: second OPTIONAL depends on result of first.
@@ -871,6 +880,7 @@ fn test_chained_dependent_optional_matches() {
     assert_eq!(result.rows[0][2], Value::Null);
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_chained_dependent_optional_partial_match() {
     // Alix-KNOWS->Gus and Alix-KNOWS->Harm.
@@ -901,6 +911,7 @@ fn test_chained_dependent_optional_partial_match() {
     assert_eq!(result.rows[1][2], Value::Null);
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_with_node_label_filter() {
     // OPTIONAL MATCH with label on optional side node.
@@ -931,6 +942,7 @@ fn test_optional_match_with_node_label_filter() {
     assert_eq!(result.rows[0][1], Value::String("Gus".into()));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_with_vle() {
     // OPTIONAL MATCH with variable-length path.
@@ -976,6 +988,7 @@ fn test_optional_match_with_vle() {
     assert!(names.contains(&"Harm".to_owned()));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_with_vle_no_path() {
     // OPTIONAL MATCH with VLE where no path exists: should produce NULL.
@@ -1028,6 +1041,7 @@ fn test_chained_independent_optional_gql() {
 // OPTIONAL MATCH Phase 5: NULL Semantics
 // ============================================================================
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_is_not_null() {
     // IS NOT NULL should correctly identify non-NULL optional values.
@@ -1055,6 +1069,7 @@ fn test_optional_match_is_not_null() {
     assert_eq!(result.rows[2][1], Value::Bool(false));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_coalesce() {
     // COALESCE should return the first non-NULL argument.
@@ -1076,6 +1091,7 @@ fn test_optional_match_coalesce() {
     assert_eq!(result.rows[2][1], Value::String("unemployed".into()));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_case_when() {
     // CASE WHEN with NULL from OPTIONAL MATCH.
@@ -1098,6 +1114,7 @@ fn test_optional_match_case_when() {
     assert_eq!(result.rows[2][1], Value::String("none".into()));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_count_star_vs_count_expr() {
     // COUNT(*) should count all rows (including NULLs from OPTIONAL MATCH).
@@ -1120,6 +1137,7 @@ fn test_optional_match_count_star_vs_count_expr() {
     assert_eq!(result.rows[0][1], Value::Int64(2));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_collect_skips_nulls() {
     // COLLECT should omit NULL values from the result list.
@@ -1152,6 +1170,7 @@ fn test_optional_match_collect_skips_nulls() {
     }
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_sum_skips_nulls() {
     // SUM should skip NULL values from OPTIONAL MATCH.
@@ -1177,6 +1196,7 @@ fn test_optional_match_sum_skips_nulls() {
     assert_eq!(result.rows[0][0], Value::Int64(200));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_count_per_group() {
     // COUNT with GROUP BY from OPTIONAL MATCH.
@@ -1204,6 +1224,7 @@ fn test_optional_match_count_per_group() {
     assert_eq!(result.rows[2][1], Value::Int64(0));
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_boolean_null_comparison() {
     // Comparing NULL to a value should produce NULL (falsy), not true or false.
@@ -1246,6 +1267,7 @@ fn test_optional_match_boolean_null_comparison() {
 // OPTIONAL MATCH WHERE cross-side predicates (Area 3a regression)
 // ============================================================================
 
+#[cfg(feature = "cypher")]
 #[test]
 fn test_optional_match_where_cross_predicate_preserves_null_rows() {
     // WHERE referencing both a left-side and right-side variable (cross-predicate).
@@ -1324,6 +1346,7 @@ fn test_optional_match_where_cross_predicate_preserves_null_rows() {
 // CALL PROCEDURE: covers plan_call_procedure, plan_static_result
 // ============================================================================
 
+#[cfg(feature = "algos")]
 #[test]
 fn test_call_list_procedures() {
     let db = create_social_network();
@@ -1335,6 +1358,7 @@ fn test_call_list_procedures() {
     assert!(!result.rows.is_empty());
 }
 
+#[cfg(feature = "algos")]
 #[test]
 fn test_call_degree_centrality() {
     let db = create_social_network();
@@ -1346,6 +1370,7 @@ fn test_call_degree_centrality() {
     assert!(!result.rows.is_empty());
 }
 
+#[cfg(feature = "algos")]
 #[test]
 fn test_call_procedure_with_yield() {
     let db = create_social_network();
@@ -1612,6 +1637,7 @@ fn test_traits_create_with_props_convenience() {
 mod cypher_mutations {
     use super::*;
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_merge_relationship_creates() {
         let db = create_social_network();
@@ -1628,6 +1654,7 @@ mod cypher_mutations {
         assert_eq!(db.edge_count(), edges_before + 1);
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_merge_relationship_matches() {
         let db = create_social_network();
@@ -1644,6 +1671,7 @@ mod cypher_mutations {
         assert_eq!(db.edge_count(), edges_before);
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_merge_relationship_on_create() {
         let db = create_social_network();
@@ -1667,6 +1695,7 @@ mod cypher_mutations {
         assert_eq!(result.rows[0][0], Value::Int64(2025));
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_delete_without_detach_connected_node() {
         let db = create_social_network();
@@ -1679,6 +1708,7 @@ mod cypher_mutations {
         );
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_unwind_standalone_create() {
         let db = GrafeoDB::new_in_memory();
@@ -1700,6 +1730,7 @@ mod cypher_mutations {
         assert_eq!(result.rows[1][0], Value::String("Gus".into()));
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_set_map_replace() {
         let db = GrafeoDB::new_in_memory();
@@ -1722,6 +1753,7 @@ mod cypher_mutations {
         assert_eq!(result.rows[0][2], Value::Null);
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_set_map_merge() {
         let db = GrafeoDB::new_in_memory();
@@ -1744,6 +1776,7 @@ mod cypher_mutations {
         assert_eq!(result.rows[0][2], Value::String("blue".into()));
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_foreach_set_property() {
         let db = create_social_network();
@@ -1763,6 +1796,7 @@ mod cypher_mutations {
         assert_eq!(result.rows.len(), 3);
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_multi_pattern_shared_vars() {
         let db = create_social_network();
@@ -1782,6 +1816,7 @@ mod cypher_mutations {
         }
     }
 
+    #[cfg(feature = "cypher")]
     #[test]
     fn test_multi_pattern_no_shared_vars() {
         let db = GrafeoDB::new_in_memory();

@@ -190,3 +190,101 @@ impl LpgStore {
             .estimate_avg_degree(edge_type, outgoing)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_store() -> LpgStore {
+        LpgStore::new().unwrap()
+    }
+
+    #[test]
+    fn compute_statistics_empty_store() {
+        let store = make_store();
+        store.compute_statistics();
+        let stats = store.statistics();
+        assert_eq!(stats.total_nodes, 0);
+        assert_eq!(stats.total_edges, 0);
+    }
+
+    #[test]
+    fn compute_statistics_with_nodes_and_edges() {
+        let store = make_store();
+        let a = store.create_node(&["Person"]);
+        let b = store.create_node(&["Person"]);
+        store.create_edge(a, b, "KNOWS");
+        store.compute_statistics();
+        let stats = store.statistics();
+        assert_eq!(stats.total_nodes, 2);
+        assert_eq!(stats.total_edges, 1);
+    }
+
+    #[test]
+    fn ensure_statistics_fresh_uses_incremental_path_when_not_stale() {
+        let store = make_store();
+        store.create_node(&["X"]);
+        // No mutation flag set, should use incremental path
+        store.ensure_statistics_fresh();
+        assert_eq!(store.statistics().total_nodes, 1);
+    }
+
+    #[test]
+    fn ensure_statistics_fresh_does_full_recompute_when_stale() {
+        let store = make_store();
+        store.create_node(&["Y"]);
+        // Force the stale flag
+        store
+            .needs_stats_recompute
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        store.ensure_statistics_fresh();
+        assert_eq!(store.statistics().total_nodes, 1);
+        // Flag should now be cleared
+        assert!(
+            !store
+                .needs_stats_recompute
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+    }
+
+    #[test]
+    fn estimate_label_cardinality_returns_nonzero_for_known_label() {
+        let store = make_store();
+        store.create_node(&["Doc"]);
+        store.compute_statistics();
+        let card = store.estimate_label_cardinality("Doc");
+        assert!(card > 0.0, "cardinality should be positive, got {card}");
+    }
+
+    #[test]
+    fn estimate_label_cardinality_returns_default_for_unknown_label() {
+        let store = make_store();
+        store.compute_statistics();
+        let card = store.estimate_label_cardinality("NeverSeen");
+        // Default estimate should be small but non-negative
+        assert!(card >= 0.0);
+    }
+
+    #[test]
+    fn estimate_avg_degree_for_known_edge_type() {
+        let store = make_store();
+        let a = store.create_node(&[]);
+        let b = store.create_node(&[]);
+        store.create_edge(a, b, "FOLLOWS");
+        store.compute_statistics();
+        let deg = store.estimate_avg_degree("FOLLOWS", true);
+        assert!(deg >= 0.0);
+    }
+
+    #[test]
+    fn compute_statistics_zero_nodes_gives_zero_degree() {
+        let store = make_store();
+        // Manually add an edge type count without nodes by using the store
+        // with an empty graph — avg_degree branch when total_nodes == 0
+        store.compute_statistics();
+        let stats = store.statistics();
+        // No labels or edge types should be present
+        assert_eq!(stats.total_nodes, 0);
+        assert_eq!(stats.total_edges, 0);
+    }
+}

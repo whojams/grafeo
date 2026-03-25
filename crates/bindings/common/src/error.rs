@@ -50,7 +50,9 @@ pub fn error_message(err: &Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind};
+    use grafeo_common::utils::error::{
+        Error, QueryError, QueryErrorKind, StorageError, TransactionError,
+    };
 
     use super::*;
 
@@ -70,5 +72,40 @@ mod tests {
     fn classifies_internal() {
         let err = Error::Internal("oops".into());
         assert_eq!(classify_error(&err), ErrorCategory::Internal);
+    }
+
+    #[test]
+    fn classifies_transaction_error() {
+        let err = Error::Transaction(TransactionError::Conflict);
+        assert_eq!(classify_error(&err), ErrorCategory::Transaction);
+    }
+
+    #[test]
+    fn classifies_storage_error() {
+        let err = Error::Storage(StorageError::Full);
+        assert_eq!(classify_error(&err), ErrorCategory::Storage);
+    }
+
+    #[test]
+    fn classifies_io_error() {
+        let err = Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
+        assert_eq!(classify_error(&err), ErrorCategory::Io);
+    }
+
+    #[test]
+    fn classifies_serialization_error() {
+        let err = Error::Serialization("bad bytes".into());
+        assert_eq!(classify_error(&err), ErrorCategory::Serialization);
+    }
+
+    #[test]
+    fn error_message_is_non_empty() {
+        let err = Error::Internal("something broke".into());
+        let msg = error_message(&err);
+        assert!(!msg.is_empty());
+        assert!(msg.contains("something broke"));
     }
 }

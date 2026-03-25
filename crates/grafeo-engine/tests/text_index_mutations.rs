@@ -3,6 +3,8 @@
 //! These verify that text indexes are automatically kept in sync
 //! when nodes are created, updated, or deleted.
 
+#![cfg(feature = "text-index")]
+
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 

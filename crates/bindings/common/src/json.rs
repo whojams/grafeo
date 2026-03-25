@@ -210,4 +210,113 @@ mod tests {
         let params = serde_json::json!([1, 2, 3]);
         assert!(json_params_to_map(Some(&params)).is_err());
     }
+
+    #[test]
+    fn roundtrip_bytes() {
+        let v = Value::Bytes(Arc::new([1u8, 2, 3, 255]));
+        let json = value_to_json(&v);
+        // Bytes encode as array of integers
+        assert!(json.is_array());
+        assert_eq!(json[0], serde_json::json!(1u8));
+        assert_eq!(json[3], serde_json::json!(255u8));
+    }
+
+    #[test]
+    fn roundtrip_vector() {
+        let v = Value::Vector(Arc::new([0.1f32, 0.2, 0.3]));
+        let json = value_to_json(&v);
+        assert!(json.is_array());
+        assert_eq!(json.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn roundtrip_path() {
+        let v = Value::Path {
+            nodes: Arc::new([Value::Int64(1), Value::Int64(2)]),
+            edges: Arc::new([Value::String("e".into())]),
+        };
+        let json = value_to_json(&v);
+        assert!(json.get("$path").is_some());
+    }
+
+    #[test]
+    fn roundtrip_date() {
+        let d = grafeo_common::types::Date::parse("2024-01-15").unwrap();
+        let v = Value::Date(d);
+        let json = value_to_json(&v);
+        let back = json_to_value(&json);
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn roundtrip_time() {
+        let t = grafeo_common::types::Time::parse("14:30:00").unwrap();
+        let v = Value::Time(t);
+        let json = value_to_json(&v);
+        let back = json_to_value(&json);
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn roundtrip_duration() {
+        let d = grafeo_common::types::Duration::parse("PT1H30M").unwrap();
+        let v = Value::Duration(d);
+        let json = value_to_json(&v);
+        let back = json_to_value(&json);
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn roundtrip_zoned_datetime() {
+        let zdt = grafeo_common::types::ZonedDatetime::parse("2024-01-15T14:30:00+01:00").unwrap();
+        let v = Value::ZonedDatetime(zdt);
+        let json = value_to_json(&v);
+        let back = json_to_value(&json);
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn value_to_json_gcounter() {
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("node-a".to_string(), 10u64);
+        counts.insert("node-b".to_string(), 5u64);
+        let v = Value::GCounter(Arc::new(counts));
+        let json = value_to_json(&v);
+        let gcounter = json.get("$gcounter").expect("should have $gcounter key");
+        assert!(gcounter.is_object());
+        assert_eq!(gcounter["node-a"], serde_json::json!(10u64));
+        assert_eq!(gcounter["node-b"], serde_json::json!(5u64));
+    }
+
+    #[test]
+    fn value_to_json_oncounter() {
+        let mut pos = std::collections::HashMap::new();
+        pos.insert("r1".to_string(), 8u64);
+        let mut neg = std::collections::HashMap::new();
+        neg.insert("r1".to_string(), 3u64);
+        let v = Value::OnCounter {
+            pos: Arc::new(pos),
+            neg: Arc::new(neg),
+        };
+        let json = value_to_json(&v);
+        let on = json.get("$pncounter").expect("should have $pncounter key");
+        assert_eq!(on["pos"]["r1"], serde_json::json!(8u64));
+        assert_eq!(on["neg"]["r1"], serde_json::json!(3u64));
+    }
+
+    #[test]
+    fn json_to_value_invalid_date_falls_through_to_map() {
+        // $date with non-parseable string falls through to plain Map
+        let json = serde_json::json!({ "$date": "not-a-date" });
+        let v = json_to_value(&json);
+        assert!(matches!(v, Value::Map(_)));
+    }
+
+    #[test]
+    fn json_float_becomes_float64() {
+        // f64 value that does not fit in i64
+        let json = serde_json::json!(1.5e300f64);
+        let v = json_to_value(&json);
+        assert!(matches!(v, Value::Float64(_)));
+    }
 }

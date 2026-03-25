@@ -230,4 +230,71 @@ mod tests {
         assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
     }
+
+    #[test]
+    fn test_pressure_level_description() {
+        assert_eq!(PressureLevel::Normal.description(), "Normal operation");
+        assert_eq!(PressureLevel::Moderate.description(), "Proactive eviction");
+        assert_eq!(
+            PressureLevel::High.description(),
+            "Aggressive eviction/spilling"
+        );
+        assert_eq!(
+            PressureLevel::Critical.description(),
+            "Blocking allocations"
+        );
+    }
+
+    #[test]
+    fn test_pressure_level_display() {
+        assert_eq!(PressureLevel::Normal.to_string(), "Normal");
+        assert_eq!(PressureLevel::Moderate.to_string(), "Moderate");
+        assert_eq!(PressureLevel::High.to_string(), "High");
+        assert_eq!(PressureLevel::Critical.to_string(), "Critical");
+    }
+
+    #[test]
+    fn test_buffer_stats_zero_budget() {
+        let stats = BufferStats {
+            budget: 0,
+            total_allocated: 0,
+            ..Default::default()
+        };
+        assert_eq!(stats.utilization(), 0.0);
+        assert_eq!(stats.utilization_percent(), 0.0);
+    }
+
+    #[test]
+    fn test_buffer_stats_default() {
+        let stats = BufferStats::default();
+        assert_eq!(stats.budget, 0);
+        assert_eq!(stats.total_allocated, 0);
+        assert_eq!(stats.pressure_level, PressureLevel::Normal);
+        assert_eq!(stats.consumer_count, 0);
+    }
+
+    #[test]
+    fn test_buffer_stats_available_saturates() {
+        let stats = BufferStats {
+            budget: 100,
+            total_allocated: 150,
+            ..Default::default()
+        };
+        assert_eq!(stats.available(), 0);
+    }
+
+    #[test]
+    fn test_buffer_stats_display_contains_budget() {
+        let stats = BufferStats {
+            budget: 1024,
+            total_allocated: 512,
+            region_allocated: [128, 128, 128, 128],
+            pressure_level: PressureLevel::Normal,
+            consumer_count: 1,
+        };
+        let s = stats.to_string();
+        assert!(s.contains("Budget"));
+        assert!(s.contains("Pressure"));
+        assert!(s.contains("Normal"));
+    }
 }

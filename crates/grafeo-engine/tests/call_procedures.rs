@@ -2,6 +2,8 @@
 //!
 //! Tests CALL statement parsing + execution across GQL, Cypher, and SQL/PGQ.
 
+#![cfg(feature = "algos")]
+
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 

@@ -379,6 +379,7 @@ fn test_translator_errors_not_internal() {
     }
 }
 
+#[cfg(feature = "algos")]
 #[test]
 fn test_gql_unknown_procedure_error_code() {
     let db = GrafeoDB::new_in_memory();
@@ -393,6 +394,7 @@ fn test_gql_unknown_procedure_error_code() {
     );
 }
 
+#[cfg(feature = "algos")]
 #[test]
 fn test_gql_yield_nonexistent_column_error() {
     let db = GrafeoDB::new_in_memory();

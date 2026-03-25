@@ -54,6 +54,7 @@ fn gql_connections() {
     assert!(r.is_ok(), "GQL connections failed: {:?}", r.err());
 }
 
+#[cfg(feature = "cypher")]
 #[test]
 fn cypher_count_star() {
     let db = setup_db();

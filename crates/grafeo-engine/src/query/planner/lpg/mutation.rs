@@ -1060,18 +1060,28 @@ impl super::Planner {
             .properties
             .iter()
             .map(|(name, expr)| {
-                let source = self
-                    .expression_to_property_source(expr, &columns)
-                    .unwrap_or_else(|_| {
+                let source = match self.expression_to_property_source(expr, &columns) {
+                    Ok(s) => s,
+                    Err(_) => {
                         // Fallback: try constant folding for complex expressions
-                        Self::try_fold_expression(expr).map_or(
-                            PropertySource::Constant(Value::Null),
-                            PropertySource::Constant,
-                        )
-                    });
-                (name.clone(), source)
+                        // (e.g., vector([1,2,3]), date('2024-01-01')).
+                        Self::try_fold_expression(expr).map_or_else(
+                            || {
+                                // Expression references a variable not in scope or is
+                                // otherwise unsupported. Return error instead of silently
+                                // writing NULL.
+                                Err(Error::Internal(format!(
+                                    "Cannot resolve SET expression for property '{name}': \
+                                     variable not in scope or unsupported expression"
+                                )))
+                            },
+                            |v| Ok(PropertySource::Constant(v)),
+                        )?
+                    }
+                };
+                Ok((name.clone(), source))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         // Output schema preserves input types (Any for pass-through columns).
         let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Any).collect();

@@ -27,6 +27,10 @@ All notable changes to Grafeo, for future reference (and enjoyment).
   - GG:SS01/GG:GE01: `SELECT ... FROM ... MATCH` statement
   - GG02/GG22: brace-delimited graph type patterns with variable names
   - Per-pattern path search prefix `p = ANY SHORTEST (...)`
+- **EXISTS/COUNT subquery end-node labels ignored**: the fast-path evaluator extracted `end_labels` at plan time but never checked them at runtime, silently accepting edges to nodes with wrong labels. Both `ExistsSubquery` and `CountSubquery` now verify the other endpoint's labels.
+- **Complex EXISTS inside OR predicates**: `WHERE EXISTS { multi-hop } OR property > value` errored because the semi-join rewrite only handled AND trees. OR branches are now split into semi-join + filter, unioned, and deduplicated.
+- **SQL/PGQ GROUP BY drops non-aggregate columns**: `SELECT col, COUNT(*) ... GROUP BY col` silently omitted `col` from the aggregate output. Non-aggregate SELECT items are now always passed through as group-by keys.
+- **C API: typed entity access** (#177): `grafeo_result_nodes_json()` and `grafeo_result_edges_json()` return JSON arrays with explicit `element_type`, `id`, `labels`/`type`, and `properties` fields, eliminating ambiguity between nodes, edges, and user maps.
 
 ## [0.5.25] - 2026-03-25
 

@@ -273,6 +273,68 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
 
             Ok(obj)
         }
+        Value::GCounter(counts) => {
+            let mut obj = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_object writes to our out-pointer
+            check_napi(unsafe { sys::napi_create_object(env, &raw mut obj) })?;
+            let mut replicas = std::ptr::null_mut();
+            check_napi(unsafe { sys::napi_create_object(env, &raw mut replicas) })?;
+            let mut total: u64 = 0;
+            for (replica, count) in counts.iter() {
+                total += count;
+                let mut val = std::ptr::null_mut();
+                let count_f64 = *count as f64;
+                // SAFETY: env is valid; napi_create_double writes to our out-pointer
+                check_napi(unsafe { sys::napi_create_double(env, count_f64, &raw mut val) })?;
+                let key = CString::new(replica.as_str())
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                // SAFETY: env, replicas, key, and val are valid
+                check_napi(unsafe {
+                    sys::napi_set_named_property(env, replicas, key.as_ptr(), val)
+                })?;
+            }
+            let gcounter_key = CString::new("$gcounter").expect("static string has no null bytes");
+            // SAFETY: env, obj, and replicas are valid
+            check_napi(unsafe {
+                sys::napi_set_named_property(env, obj, gcounter_key.as_ptr(), replicas)
+            })?;
+            let mut total_val = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_double writes to our out-pointer
+            check_napi(unsafe { sys::napi_create_double(env, total as f64, &raw mut total_val) })?;
+            let value_key = CString::new("$value").expect("static string has no null bytes");
+            // SAFETY: env, obj, and total_val are valid
+            check_napi(unsafe {
+                sys::napi_set_named_property(env, obj, value_key.as_ptr(), total_val)
+            })?;
+            Ok(obj)
+        }
+        Value::OnCounter { pos, neg } => {
+            let mut obj = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_object writes to our out-pointer
+            check_napi(unsafe { sys::napi_create_object(env, &raw mut obj) })?;
+            let pos_sum: i64 = pos.values().copied().map(|v| v as i64).sum();
+            let neg_sum: i64 = neg.values().copied().map(|v| v as i64).sum();
+            let pncounter_key =
+                CString::new("$pncounter").expect("static string has no null bytes");
+            let mut true_val = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_get_boolean writes to our out-pointer
+            check_napi(unsafe { sys::napi_get_boolean(env, true, &raw mut true_val) })?;
+            // SAFETY: env, obj, and true_val are valid
+            check_napi(unsafe {
+                sys::napi_set_named_property(env, obj, pncounter_key.as_ptr(), true_val)
+            })?;
+            let mut net_val = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_double writes to our out-pointer
+            check_napi(unsafe {
+                sys::napi_create_double(env, (pos_sum - neg_sum) as f64, &raw mut net_val)
+            })?;
+            let value_key = CString::new("$value").expect("static string has no null bytes");
+            // SAFETY: env, obj, and net_val are valid
+            check_napi(unsafe {
+                sys::napi_set_named_property(env, obj, value_key.as_ptr(), net_val)
+            })?;
+            Ok(obj)
+        }
     }
 }
 

@@ -537,6 +537,15 @@ fn hash_key(key: &[Value]) -> u64 {
                 nodes.len().hash(&mut hasher);
                 edges.len().hash(&mut hasher);
             }
+            Value::GCounter(counts) => {
+                15u8.hash(&mut hasher);
+                counts.len().hash(&mut hasher);
+            }
+            Value::OnCounter { pos, neg } => {
+                16u8.hash(&mut hasher);
+                pos.len().hash(&mut hasher);
+                neg.len().hash(&mut hasher);
+            }
         }
     }
 

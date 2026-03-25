@@ -3779,6 +3779,15 @@ fn value_to_string(value: &Value) -> String {
         Value::Path { nodes, edges } => {
             format!("<path: {} nodes, {} edges>", nodes.len(), edges.len())
         }
+        Value::GCounter(counts) => {
+            let total: u64 = counts.values().sum();
+            format!("GCounter({total})")
+        }
+        Value::OnCounter { pos, neg } => {
+            let pos_sum: i64 = pos.values().copied().map(|v| v as i64).sum();
+            let neg_sum: i64 = neg.values().copied().map(|v| v as i64).sum();
+            format!("OnCounter({})", pos_sum - neg_sum)
+        }
     }
 }
 

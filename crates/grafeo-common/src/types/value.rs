@@ -64,6 +64,12 @@ impl AsRef<str> for PropertyKey {
     }
 }
 
+impl std::borrow::Borrow<str> for PropertyKey {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A dynamically-typed property value.
 ///
 /// Nodes and edges can have properties of various types - this enum holds
@@ -140,6 +146,30 @@ pub enum Value {
         nodes: Arc<[Value]>,
         /// Edges along the path, connecting consecutive nodes.
         edges: Arc<[Value]>,
+    },
+
+    /// Grow-only counter (GCounter) for conflict-free distributed counting.
+    ///
+    /// Stores per-replica contribution counts. The logical value is the sum
+    /// of all entries. Merge is per-replica max, making it commutative and
+    /// idempotent.
+    ///
+    /// Key: replica ID string. Value: that replica's running total (grows
+    /// monotonically).
+    GCounter(Arc<std::collections::HashMap<String, u64>>),
+
+    /// Positive-negative counter (ON-Counter) for distributed increment and
+    /// decrement.
+    ///
+    /// Two grow-only maps track positive and negative contributions
+    /// independently. The logical value is `sum(pos) − sum(neg)`. Merge is
+    /// per-replica max on each map independently.
+    OnCounter {
+        /// Per-replica positive contributions (increments).
+        pos: Arc<std::collections::HashMap<String, u64>>,
+        /// Per-replica negative contributions (decrements, stored as positive
+        /// magnitudes).
+        neg: Arc<std::collections::HashMap<String, u64>>,
     },
 }
 
@@ -327,6 +357,8 @@ impl Value {
             Value::Map(_) => "MAP",
             Value::Vector(_) => "VECTOR",
             Value::Path { .. } => "PATH",
+            Value::GCounter(_) => "GCOUNTER",
+            Value::OnCounter { .. } => "PNCOUNTER",
         }
     }
 
@@ -374,6 +406,15 @@ impl fmt::Debug for Value {
             ),
             Value::Path { nodes, edges } => {
                 write!(f, "Path({} nodes, {} edges)", nodes.len(), edges.len())
+            }
+            Value::GCounter(counts) => {
+                let total: u64 = counts.values().sum();
+                write!(f, "GCounter(total={total}, replicas={})", counts.len())
+            }
+            Value::OnCounter { pos, neg } => {
+                let pos_sum: i64 = pos.values().copied().map(|v| v as i64).sum();
+                let neg_sum: i64 = neg.values().copied().map(|v| v as i64).sum();
+                write!(f, "OnCounter(net={})", pos_sum - neg_sum)
             }
         }
     }
@@ -439,6 +480,15 @@ impl fmt::Display for Value {
                     write!(f, "({node})")?;
                 }
                 write!(f, ">")
+            }
+            Value::GCounter(counts) => {
+                let total: u64 = counts.values().sum();
+                write!(f, "GCounter({total})")
+            }
+            Value::OnCounter { pos, neg } => {
+                let pos_sum: i64 = pos.values().copied().map(|v| v as i64).sum();
+                let neg_sum: i64 = neg.values().copied().map(|v| v as i64).sum();
+                write!(f, "OnCounter({})", pos_sum - neg_sum)
             }
         }
     }
@@ -719,7 +769,9 @@ impl TryFrom<&Value> for OrderableValue {
             | Value::List(_)
             | Value::Map(_)
             | Value::Vector(_)
-            | Value::Path { .. } => Err(()),
+            | Value::Path { .. }
+            | Value::GCounter(_)
+            | Value::OnCounter { .. } => Err(()),
         }
     }
 }
@@ -911,6 +963,32 @@ fn hash_value<H: Hasher>(value: &Value, state: &mut H) {
             edges.len().hash(state);
             for v in edges.iter() {
                 hash_value(v, state);
+            }
+        }
+        Value::GCounter(counts) => {
+            // Sort keys for deterministic hash order.
+            let mut pairs: Vec<_> = counts.iter().collect();
+            pairs.sort_by_key(|(k, _)| k.as_str());
+            pairs.len().hash(state);
+            for (k, v) in pairs {
+                k.hash(state);
+                v.hash(state);
+            }
+        }
+        Value::OnCounter { pos, neg } => {
+            let mut pos_pairs: Vec<_> = pos.iter().collect();
+            pos_pairs.sort_by_key(|(k, _)| k.as_str());
+            pos_pairs.len().hash(state);
+            for (k, v) in pos_pairs {
+                k.hash(state);
+                v.hash(state);
+            }
+            let mut neg_pairs: Vec<_> = neg.iter().collect();
+            neg_pairs.sort_by_key(|(k, _)| k.as_str());
+            neg_pairs.len().hash(state);
+            for (k, v) in neg_pairs {
+                k.hash(state);
+                v.hash(state);
             }
         }
     }

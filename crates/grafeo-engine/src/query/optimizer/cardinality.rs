@@ -268,6 +268,21 @@ impl EquiDepthHistogram {
 }
 
 /// Counts distinct values in a sorted slice.
+/// Counts the number of top-level AND conjuncts in an expression.
+///
+/// For `(A AND B) AND (C AND D)` returns 4; for a single non-AND expression
+/// returns 1. Used to estimate selectivity of multi-predicate join conditions.
+fn count_and_conjuncts(expr: &LogicalExpression) -> usize {
+    match expr {
+        LogicalExpression::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } => count_and_conjuncts(left) + count_and_conjuncts(right),
+        _ => 1,
+    }
+}
+
 fn count_distinct(sorted_values: &[f64]) -> u64 {
     if sorted_values.is_empty() {
         return 0;
@@ -859,12 +874,24 @@ impl CardinalityEstimator {
     /// A left outer join preserves all left rows, so the output is at least
     /// `left_cardinality`. When the right side matches, the output may be
     /// larger (one left row can match multiple right rows).
+    ///
+    /// When the join carries a cross-side condition (null-safe predicates),
+    /// each AND-conjunct reduces the selectivity estimate.
     fn estimate_left_join(&self, lj: &LeftJoinOp) -> f64 {
         let left_card = self.estimate(&lj.left);
         let right_card = self.estimate(&lj.right);
 
+        // Adjust selectivity based on the number of AND conjuncts in the
+        // cross-side condition: each equality reduces match probability.
+        let condition_selectivity = if let Some(cond) = &lj.condition {
+            let n = count_and_conjuncts(cond);
+            self.default_selectivity.powi(n as i32)
+        } else {
+            self.default_selectivity
+        };
+
         // Estimate as inner join cardinality, but guaranteed at least left_card
-        let inner_estimate = left_card * right_card * self.default_selectivity;
+        let inner_estimate = left_card * right_card * condition_selectivity;
         inner_estimate.max(left_card).max(1.0)
     }
 

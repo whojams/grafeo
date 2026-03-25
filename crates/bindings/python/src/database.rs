@@ -509,11 +509,10 @@ impl PyGrafeoDB {
         // Fetch the node back to get the full representation
         if let Some(node) = db.get_node(id) {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = node.properties.into_iter().collect();
             Ok(PyNode::new(id, labels, properties))
         } else {
             Err(PyGrafeoError::Database("Failed to create node".into()).into())
@@ -552,11 +551,10 @@ impl PyGrafeoDB {
 
         // Fetch the edge back to get the full representation
         if let Some(edge) = db.get_edge(id) {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = edge.properties.into_iter().collect();
             Ok(PyEdge::new(
                 id,
                 edge.edge_type.to_string(),
@@ -576,11 +574,10 @@ impl PyGrafeoDB {
 
         if let Some(node) = db.get_node(node_id) {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = node.properties.into_iter().collect();
             Ok(Some(PyNode::new(node_id, labels, properties)))
         } else {
             Ok(None)
@@ -593,11 +590,10 @@ impl PyGrafeoDB {
         let edge_id = EdgeId(id);
 
         if let Some(edge) = db.get_edge(edge_id) {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = edge.properties.into_iter().collect();
             Ok(Some(PyEdge::new(
                 edge_id,
                 edge.edge_type.to_string(),
@@ -623,11 +619,10 @@ impl PyGrafeoDB {
 
         if let Some(node) = db.get_node_at_epoch(node_id, epoch_id) {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = node.properties.into_iter().collect();
             Ok(Some(PyNode::new(node_id, labels, properties)))
         } else {
             Ok(None)
@@ -646,11 +641,10 @@ impl PyGrafeoDB {
         let epoch_id = grafeo_common::types::EpochId::new(epoch);
 
         if let Some(edge) = db.get_edge_at_epoch(edge_id, epoch_id) {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = edge.properties.into_iter().collect();
             Ok(Some(PyEdge::new(
                 edge_id,
                 edge.edge_type.to_string(),
@@ -676,11 +670,10 @@ impl PyGrafeoDB {
         let mut result = Vec::with_capacity(history.len());
         for (created, deleted, node) in history {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = node.properties.into_iter().collect();
             result.push((
                 created.as_u64(),
                 deleted.map(|d| d.as_u64()),
@@ -700,11 +693,10 @@ impl PyGrafeoDB {
         let history = db.get_edge_history(edge_id);
         let mut result = Vec::with_capacity(history.len());
         for (created, deleted, edge) in history {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties: HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            > = edge.properties.into_iter().collect();
             result.push((
                 created.as_u64(),
                 deleted.map(|d| d.as_u64()),

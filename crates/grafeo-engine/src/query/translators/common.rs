@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::query::plan::{
     AggregateFunction, BinaryOp, CountExpr, DistinctOp, FilterOp, LeftJoinOp, LimitOp,
-    LogicalExpression, LogicalOperator, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp,
+    LogicalExpression, LogicalOperator, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, UnaryOp,
 };
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
@@ -321,6 +321,10 @@ pub(crate) struct ClassifiedPredicates {
     /// Predicates whose referenced variables all exist on the right side:
     /// pushed as a pre-filter on the right input of the LeftJoin.
     pub right_filters: Vec<LogicalExpression>,
+    /// Predicates referencing variables from both sides: stored as null-safe
+    /// join conditions. Applied as `(right_var IS NULL) OR predicate` so that
+    /// NULL-padded rows (unmatched optional side) are preserved.
+    pub cross_filters: Vec<LogicalExpression>,
 }
 
 /// Classifies WHERE predicates for correct OPTIONAL MATCH semantics.
@@ -340,6 +344,7 @@ pub(crate) fn classify_optional_predicates(
     let conjuncts = split_conjuncts(predicate);
     let mut post_filters = Vec::new();
     let mut right_filters = Vec::new();
+    let mut cross_filters = Vec::new();
 
     for conjunct in conjuncts {
         let mut referenced = HashSet::new();
@@ -353,6 +358,9 @@ pub(crate) fn classify_optional_predicates(
         let has_right_only_var = referenced
             .iter()
             .any(|v| right_vars.contains(v) && !left_vars.contains(v));
+        let has_left_only_var = referenced
+            .iter()
+            .any(|v| left_vars.contains(v) && !right_vars.contains(v));
         let all_in_right = referenced.iter().all(|v| right_vars.contains(v));
 
         if referenced.is_empty() {
@@ -362,8 +370,12 @@ pub(crate) fn classify_optional_predicates(
             // References at least one right-only variable, and all referenced
             // variables exist on the right side: push as pre-filter on right input.
             right_filters.push(conjunct);
+        } else if has_left_only_var && has_right_only_var {
+            // True cross-side: references at least one left-only AND one right-only
+            // variable. Store for null-safe join condition wrapping.
+            cross_filters.push(conjunct);
         } else {
-            // Left-only, shared-only, or cross-side: post-filter above the join.
+            // Left-only or shared-only: post-filter above the join.
             post_filters.push(conjunct);
         }
     }
@@ -371,6 +383,7 @@ pub(crate) fn classify_optional_predicates(
     ClassifiedPredicates {
         post_filters,
         right_filters,
+        cross_filters,
     }
 }
 
@@ -501,10 +514,66 @@ pub(crate) fn build_left_join_with_predicates(
         wrap_filter(right, right_pred)
     };
 
+    // Build null-safe condition for cross-side predicates.
+    // For each cross predicate P referencing right-only variable R, wrap it as:
+    //   (R IS NULL) OR P
+    // This preserves NULL-padded rows (unmatched optional side) while evaluating P
+    // correctly when the right side matched.
+    let cross_condition = if classified.cross_filters.is_empty() {
+        None
+    } else {
+        // Collect all right-only variable names for the IS NULL sentinel.
+        let right_only_vars: Vec<String> = right_vars
+            .iter()
+            .filter(|v| !left_vars.contains(*v))
+            .cloned()
+            .collect();
+
+        let null_safe: Vec<LogicalExpression> = classified
+            .cross_filters
+            .into_iter()
+            .map(|pred| {
+                // Pick the first right-only variable referenced in this predicate
+                // as the NULL sentinel. Falling back to the first right-only var
+                // overall is safe: if the right side produced no row, all right
+                // columns are NULL so any of them serves as the sentinel.
+                let mut pred_vars = HashSet::new();
+                collect_expression_variables(&pred, &mut pred_vars);
+                let sentinel = pred_vars
+                    .iter()
+                    .find(|v| right_vars.contains(*v) && !left_vars.contains(*v))
+                    .or_else(|| right_only_vars.first())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let is_null = LogicalExpression::Unary {
+                    op: UnaryOp::IsNull,
+                    operand: Box::new(LogicalExpression::Variable(sentinel)),
+                };
+                LogicalExpression::Binary {
+                    left: Box::new(is_null),
+                    op: BinaryOp::Or,
+                    right: Box::new(pred),
+                }
+            })
+            .collect();
+
+        Some(
+            null_safe
+                .into_iter()
+                .reduce(|acc, expr| LogicalExpression::Binary {
+                    left: Box::new(acc),
+                    op: BinaryOp::And,
+                    right: Box::new(expr),
+                })
+                .expect("non-empty cross_filters"),
+        )
+    };
+
     let join = LogicalOperator::LeftJoin(LeftJoinOp {
         left: Box::new(left),
         right: Box::new(filtered_right),
-        condition: None,
+        condition: cross_condition,
     });
 
     // Combine remaining post-filters

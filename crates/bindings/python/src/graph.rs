@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
 
 use crate::types::PyValue;
 
@@ -18,7 +18,7 @@ use crate::types::PyValue;
 pub struct PyNode {
     pub(crate) id: NodeId,
     pub(crate) labels: Vec<String>,
-    pub(crate) properties: HashMap<String, Value>,
+    pub(crate) properties: HashMap<PropertyKey, Value>,
 }
 
 #[pymethods]
@@ -48,7 +48,7 @@ impl PyNode {
     fn properties(&self, py: Python<'_>) -> Py<PyAny> {
         let dict = pyo3::types::PyDict::new(py);
         for (k, v) in &self.properties {
-            dict.set_item(k, PyValue::to_py(v, py))
+            dict.set_item(k.as_str(), PyValue::to_py(v, py))
                 .expect("dict.set_item only fails on memory exhaustion");
         }
         dict.unbind().into_any()
@@ -86,7 +86,7 @@ impl PyNode {
 
 impl PyNode {
     /// Creates a new Python node wrapper (used internally).
-    pub fn new(id: NodeId, labels: Vec<String>, properties: HashMap<String, Value>) -> Self {
+    pub fn new(id: NodeId, labels: Vec<String>, properties: HashMap<PropertyKey, Value>) -> Self {
         Self {
             id,
             labels,
@@ -107,7 +107,7 @@ pub struct PyEdge {
     pub(crate) edge_type: String,
     pub(crate) source_id: NodeId,
     pub(crate) target_id: NodeId,
-    pub(crate) properties: HashMap<String, Value>,
+    pub(crate) properties: HashMap<PropertyKey, Value>,
 }
 
 #[pymethods]
@@ -149,7 +149,7 @@ impl PyEdge {
     fn properties(&self, py: Python<'_>) -> Py<PyAny> {
         let dict = pyo3::types::PyDict::new(py);
         for (k, v) in &self.properties {
-            dict.set_item(k, PyValue::to_py(v, py))
+            dict.set_item(k.as_str(), PyValue::to_py(v, py))
                 .expect("dict.set_item only fails on memory exhaustion");
         }
         dict.unbind().into_any()
@@ -187,7 +187,7 @@ impl PyEdge {
         edge_type: String,
         source_id: NodeId,
         target_id: NodeId,
-        properties: HashMap<String, Value>,
+        properties: HashMap<PropertyKey, Value>,
     ) -> Self {
         Self {
             id,

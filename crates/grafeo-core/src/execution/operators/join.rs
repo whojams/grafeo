@@ -105,7 +105,8 @@ impl HashKey {
                 HashKey::Composite(items.iter().map(HashKey::from_value).collect())
             }
             Value::Map(map) => {
-                let mut keys: Vec<_> = map
+                // BTreeMap::iter() visits entries in ascending key order, so no sort needed.
+                let keys: Vec<_> = map
                     .iter()
                     .map(|(k, v)| {
                         HashKey::Composite(vec![
@@ -114,7 +115,6 @@ impl HashKey {
                         ])
                     })
                     .collect();
-                keys.sort();
                 HashKey::Composite(keys)
             }
             Value::Vector(v) => {
@@ -129,6 +129,15 @@ impl HashKey {
                 let mut parts: Vec<_> = nodes.iter().map(HashKey::from_value).collect();
                 parts.extend(edges.iter().map(HashKey::from_value));
                 HashKey::Composite(parts)
+            }
+            // CRDT counters are opaque keys; hash by total logical value.
+            Value::GCounter(counts) => {
+                HashKey::Int64(counts.values().copied().map(|v| v as i64).sum())
+            }
+            Value::OnCounter { pos, neg } => {
+                let p: i64 = pos.values().copied().map(|v| v as i64).sum();
+                let n: i64 = neg.values().copied().map(|v| v as i64).sum();
+                HashKey::Int64(p - n)
             }
         }
     }

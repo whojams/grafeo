@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use grafeo_engine::database::QueryResult;
 
 /// A node extracted from query results (language-agnostic).
@@ -18,7 +18,9 @@ pub struct RawNode {
     /// Labels attached to this node.
     pub labels: Vec<String>,
     /// User-visible properties (metadata keys starting with `_` are stripped).
-    pub properties: HashMap<String, Value>,
+    ///
+    /// Keys are interned [`PropertyKey`]s (cheap to clone via `ArcStr`).
+    pub properties: HashMap<PropertyKey, Value>,
 }
 
 /// An edge extracted from query results (language-agnostic).
@@ -33,7 +35,9 @@ pub struct RawEdge {
     /// Target node ID.
     pub target_id: NodeId,
     /// User-visible properties (metadata keys starting with `_` are stripped).
-    pub properties: HashMap<String, Value>,
+    ///
+    /// Keys are interned [`PropertyKey`]s (cheap to clone via `ArcStr`).
+    pub properties: HashMap<PropertyKey, Value>,
 }
 
 /// Scans all values in a [`QueryResult`] for maps that look like resolved nodes
@@ -56,7 +60,7 @@ pub fn extract_entities(result: &QueryResult) -> (Vec<RawNode>, Vec<RawEdge>) {
             if let Value::Map(map) = value {
                 // Check for node: has _id and _labels
                 if let (Some(Value::Int64(id)), Some(Value::List(labels))) =
-                    (map.get(&"_id".into()), map.get(&"_labels".into()))
+                    (map.get("_id"), map.get("_labels"))
                 {
                     let node_id = NodeId(*id as u64);
                     if seen_node_ids.insert(node_id) {
@@ -70,10 +74,10 @@ pub fn extract_entities(result: &QueryResult) -> (Vec<RawNode>, Vec<RawEdge>) {
                                 }
                             })
                             .collect();
-                        let properties: HashMap<String, Value> = map
+                        let properties: HashMap<PropertyKey, Value> = map
                             .iter()
                             .filter(|(k, _)| !k.as_str().starts_with('_'))
-                            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                            .map(|(k, v)| (k.clone(), v.clone()))
                             .collect();
                         nodes.push(RawNode {
                             id: node_id,
@@ -89,17 +93,17 @@ pub fn extract_entities(result: &QueryResult) -> (Vec<RawNode>, Vec<RawEdge>) {
                     Some(Value::Int64(src)),
                     Some(Value::Int64(dst)),
                 ) = (
-                    map.get(&"_id".into()),
-                    map.get(&"_type".into()),
-                    map.get(&"_source".into()),
-                    map.get(&"_target".into()),
+                    map.get("_id"),
+                    map.get("_type"),
+                    map.get("_source"),
+                    map.get("_target"),
                 ) {
                     let edge_id = EdgeId(*id as u64);
                     if seen_edge_ids.insert(edge_id) {
-                        let properties: HashMap<String, Value> = map
+                        let properties: HashMap<PropertyKey, Value> = map
                             .iter()
                             .filter(|(k, _)| !k.as_str().starts_with('_'))
-                            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                            .map(|(k, v)| (k.clone(), v.clone()))
                             .collect();
                         edges.push(RawEdge {
                             id: edge_id,

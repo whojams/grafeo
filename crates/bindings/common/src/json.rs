@@ -112,6 +112,29 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
                 }
             })
         }
+        Value::GCounter(counts) => {
+            let obj: serde_json::Map<String, serde_json::Value> = counts
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+                .collect();
+            serde_json::json!({ "$gcounter": serde_json::Value::Object(obj) })
+        }
+        Value::OnCounter { pos, neg } => {
+            let pos_obj: serde_json::Map<String, serde_json::Value> = pos
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+                .collect();
+            let neg_obj: serde_json::Map<String, serde_json::Value> = neg
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+                .collect();
+            serde_json::json!({
+                "$pncounter": {
+                    "pos": serde_json::Value::Object(pos_obj),
+                    "neg": serde_json::Value::Object(neg_obj),
+                }
+            })
+        }
     }
 }
 

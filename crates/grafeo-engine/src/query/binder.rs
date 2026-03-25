@@ -14,7 +14,8 @@ use crate::query::plan::{
 use grafeo_common::types::LogicalType;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use grafeo_common::utils::strings::{find_similar, format_suggestion};
-use std::collections::HashMap;
+use indexmap::IndexMap;
+use std::collections::HashSet;
 
 /// Creates a semantic binding error.
 fn binding_error(message: impl Into<String>) -> Error {
@@ -28,7 +29,7 @@ fn binding_error_with_hint(message: impl Into<String>, hint: impl Into<String>) 
 
 /// Creates an "undefined variable" error with a suggestion if a similar variable exists.
 fn undefined_variable_error(variable: &str, context: &BindingContext, suffix: &str) -> Error {
-    let candidates: Vec<String> = context.variable_names().to_vec();
+    let candidates: Vec<String> = context.variable_names();
     let candidates_ref: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
 
     if let Some(suggestion) = find_similar(variable, &candidates_ref) {
@@ -55,12 +56,14 @@ pub struct VariableInfo {
 }
 
 /// Context containing all bound variables and their information.
+///
+/// Uses `IndexMap` to maintain insertion order without a separate `Vec`,
+/// removing redundant storage and making `remove_variable` O(n) instead of
+/// two separate O(n) operations.
 #[derive(Debug, Clone, Default)]
 pub struct BindingContext {
-    /// Map from variable name to its info.
-    variables: HashMap<String, VariableInfo>,
-    /// Variables in order of definition.
-    order: Vec<String>,
+    /// Map from variable name to its info, in definition order.
+    variables: IndexMap<String, VariableInfo>,
 }
 
 impl BindingContext {
@@ -68,16 +71,15 @@ impl BindingContext {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            variables: HashMap::new(),
-            order: Vec::new(),
+            variables: IndexMap::new(),
         }
     }
 
     /// Adds a variable to the context.
+    ///
+    /// If the variable is already defined, replaces its info but preserves its
+    /// position in definition order.
     pub fn add_variable(&mut self, name: String, info: VariableInfo) {
-        if !self.variables.contains_key(&name) {
-            self.order.push(name.clone());
-        }
         self.variables.insert(name, info);
     }
 
@@ -95,8 +97,8 @@ impl BindingContext {
 
     /// Returns all variable names in definition order.
     #[must_use]
-    pub fn variable_names(&self) -> &[String] {
-        &self.order
+    pub fn variable_names(&self) -> Vec<String> {
+        self.variables.keys().cloned().collect()
     }
 
     /// Returns the number of bound variables.
@@ -113,8 +115,7 @@ impl BindingContext {
 
     /// Removes a variable from the context (used for temporary scoping).
     pub fn remove_variable(&mut self, name: &str) {
-        self.variables.remove(name);
-        self.order.retain(|n| n != name);
+        self.variables.shift_remove(name);
     }
 }
 
@@ -609,10 +610,68 @@ impl Binder {
                 Ok(())
             }
             LogicalOperator::Apply(apply) => {
+                // Snapshot context BEFORE binding the input, so we can detect
+                // which variables were added by the input plan.
+                let pre_apply_names: HashSet<String> =
+                    self.context.variable_names().iter().cloned().collect();
+
                 self.bind_operator(&apply.input)?;
+
+                // Scope down: when the input plan exposes a Return/Aggregate
+                // projection (not a raw scan/expand), remove its internal-only
+                // variables. Only the projected output columns should be visible
+                // to the subplan — this prevents variables internal to a sibling
+                // CALL block from leaking into the next CALL block.
+                let mut input_output_ctx = BindingContext::new();
+                Self::register_subplan_columns(&apply.input, &mut input_output_ctx);
+                let input_output_names: HashSet<String> =
+                    input_output_ctx.variable_names().iter().cloned().collect();
+
+                if !input_output_names.is_empty() {
+                    // Input has an explicit projection: remove its internals.
+                    let input_internals: Vec<String> = self
+                        .context
+                        .variable_names()
+                        .iter()
+                        .filter(|n| {
+                            !pre_apply_names.contains(*n) && !input_output_names.contains(*n)
+                        })
+                        .cloned()
+                        .collect();
+                    for name in input_internals {
+                        self.context.remove_variable(&name);
+                    }
+                }
+
+                // Snapshot the permitted outer context for the subplan.
+                let outer_names: HashSet<String> =
+                    self.context.variable_names().iter().cloned().collect();
+
                 self.bind_operator(&apply.subplan)?;
-                // Register output columns from the subplan so the outer Return
-                // can reference them (e.g., VALUE subquery lifting).
+
+                // Remove internal-only variables added by the subplan (those that
+                // are not output columns). Prevents subplan internals from leaking
+                // into the outer query or sibling CALL blocks.
+                let mut subplan_output_ctx = BindingContext::new();
+                Self::register_subplan_columns(&apply.subplan, &mut subplan_output_ctx);
+                let subplan_output_names: HashSet<String> = subplan_output_ctx
+                    .variable_names()
+                    .iter()
+                    .cloned()
+                    .collect();
+
+                let to_remove: Vec<String> = self
+                    .context
+                    .variable_names()
+                    .iter()
+                    .filter(|n| !outer_names.contains(*n) && !subplan_output_names.contains(*n))
+                    .cloned()
+                    .collect();
+                for name in to_remove {
+                    self.context.remove_variable(&name);
+                }
+
+                // Register output columns so downstream operators can reference them.
                 Self::register_subplan_columns(&apply.subplan, &mut self.context);
                 Ok(())
             }

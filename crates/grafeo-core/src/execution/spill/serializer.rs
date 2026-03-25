@@ -28,6 +28,8 @@ const TAG_TIME: u8 = 11;
 const TAG_DURATION: u8 = 12;
 const TAG_PATH: u8 = 13;
 const TAG_ZONED_DATETIME: u8 = 14;
+const TAG_GCOUNTER: u8 = 15;
+const TAG_PNCOUNTER: u8 = 16;
 
 /// Serializes a Value to bytes.
 ///
@@ -144,6 +146,35 @@ pub fn serialize_value<W: Write + ?Sized>(value: &Value, w: &mut W) -> std::io::
             total += 8;
             for edge in edges.iter() {
                 total += serialize_value(edge, w)?;
+            }
+            Ok(total)
+        }
+        Value::GCounter(counts) => {
+            w.write_all(&[TAG_GCOUNTER])?;
+            w.write_all(&(counts.len() as u64).to_le_bytes())?;
+            let mut total = 1 + 8;
+            for (k, v) in counts.iter() {
+                let key_bytes = k.as_bytes();
+                w.write_all(&(key_bytes.len() as u64).to_le_bytes())?;
+                w.write_all(key_bytes)?;
+                w.write_all(&v.to_le_bytes())?;
+                total += 8 + key_bytes.len() + 8;
+            }
+            Ok(total)
+        }
+        Value::OnCounter { pos, neg } => {
+            w.write_all(&[TAG_PNCOUNTER])?;
+            let mut total = 1;
+            for map in [pos.as_ref(), neg.as_ref()] {
+                w.write_all(&(map.len() as u64).to_le_bytes())?;
+                total += 8;
+                for (k, v) in map {
+                    let key_bytes = k.as_bytes();
+                    w.write_all(&(key_bytes.len() as u64).to_le_bytes())?;
+                    w.write_all(key_bytes)?;
+                    w.write_all(&v.to_le_bytes())?;
+                    total += 8 + key_bytes.len() + 8;
+                }
             }
             Ok(total)
         }
@@ -311,6 +342,54 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
             Ok(Value::Path {
                 nodes: Arc::from(nodes),
                 edges: Arc::from(edges),
+            })
+        }
+        TAG_GCOUNTER => {
+            let mut u64_buf = [0u8; 8];
+            r.read_exact(&mut u64_buf)?;
+            let count = u64::from_le_bytes(u64_buf) as usize;
+            let mut map = std::collections::HashMap::with_capacity(count);
+            for _ in 0..count {
+                r.read_exact(&mut u64_buf)?;
+                let key_len = u64::from_le_bytes(u64_buf) as usize;
+                let mut key_buf = vec![0u8; key_len];
+                r.read_exact(&mut key_buf)?;
+                let key = String::from_utf8(key_buf).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                })?;
+                r.read_exact(&mut u64_buf)?;
+                let value = u64::from_le_bytes(u64_buf);
+                map.insert(key, value);
+            }
+            Ok(Value::GCounter(Arc::new(map)))
+        }
+        TAG_PNCOUNTER => {
+            let mut u64_buf = [0u8; 8];
+            let mut maps = [
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            ];
+            for map in &mut maps {
+                r.read_exact(&mut u64_buf)?;
+                let count = u64::from_le_bytes(u64_buf) as usize;
+                map.reserve(count);
+                for _ in 0..count {
+                    r.read_exact(&mut u64_buf)?;
+                    let key_len = u64::from_le_bytes(u64_buf) as usize;
+                    let mut key_buf = vec![0u8; key_len];
+                    r.read_exact(&mut key_buf)?;
+                    let key = String::from_utf8(key_buf).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })?;
+                    r.read_exact(&mut u64_buf)?;
+                    let value = u64::from_le_bytes(u64_buf);
+                    map.insert(key, value);
+                }
+            }
+            let [pos, neg] = maps;
+            Ok(Value::OnCounter {
+                pos: Arc::new(pos),
+                neg: Arc::new(neg),
             })
         }
         _ => Err(std::io::Error::new(
@@ -550,6 +629,38 @@ mod tests {
             let result = deserialize_row(&mut cursor, 2).unwrap();
             assert_eq!(&result, expected);
         }
+    }
+
+    #[test]
+    fn test_serialize_gcounter_roundtrip() {
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("replica-1".to_string(), 42u64);
+        counts.insert("replica-2".to_string(), 17u64);
+        let v = Value::GCounter(Arc::new(counts));
+        let result = roundtrip_value(v.clone());
+        assert_eq!(result, v);
+    }
+
+    #[test]
+    fn test_serialize_gcounter_empty() {
+        let v = Value::GCounter(Arc::new(std::collections::HashMap::new()));
+        let result = roundtrip_value(v.clone());
+        assert_eq!(result, v);
+    }
+
+    #[test]
+    fn test_serialize_pncounter_roundtrip() {
+        let mut pos = std::collections::HashMap::new();
+        pos.insert("node-a".to_string(), 10u64);
+        pos.insert("node-b".to_string(), 5u64);
+        let mut neg = std::collections::HashMap::new();
+        neg.insert("node-a".to_string(), 3u64);
+        let v = Value::OnCounter {
+            pos: Arc::new(pos),
+            neg: Arc::new(neg),
+        };
+        let result = roundtrip_value(v.clone());
+        assert_eq!(result, v);
     }
 
     #[test]

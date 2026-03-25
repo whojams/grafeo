@@ -6,7 +6,7 @@ use napi::bindgen_prelude::*;
 use napi::sys;
 use napi_derive::napi;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
 
 use crate::types;
 
@@ -16,7 +16,7 @@ use crate::types;
 pub struct JsNode {
     pub(crate) id: NodeId,
     pub(crate) labels: Vec<String>,
-    pub(crate) properties: HashMap<String, Value>,
+    pub(crate) properties: HashMap<PropertyKey, Value>,
 }
 
 #[napi]
@@ -36,7 +36,7 @@ impl JsNode {
     /// Get a property value by key.
     #[napi]
     pub fn get(&self, env: Env, key: String) -> Result<Unknown<'_>> {
-        match self.properties.get(&key) {
+        match self.properties.get(key.as_str()) {
             Some(v) => types::value_to_js(env.raw(), v),
             // SAFETY: env is valid and ToNapiValue produces a valid undefined value
             None => Ok(unsafe {
@@ -68,7 +68,7 @@ impl JsNode {
 }
 
 impl JsNode {
-    pub fn new(id: NodeId, labels: Vec<String>, properties: HashMap<String, Value>) -> Self {
+    pub fn new(id: NodeId, labels: Vec<String>, properties: HashMap<PropertyKey, Value>) -> Self {
         Self {
             id,
             labels,
@@ -85,7 +85,7 @@ pub struct JsEdge {
     pub(crate) edge_type: String,
     pub(crate) source_id: NodeId,
     pub(crate) target_id: NodeId,
-    pub(crate) properties: HashMap<String, Value>,
+    pub(crate) properties: HashMap<PropertyKey, Value>,
 }
 
 #[napi]
@@ -117,7 +117,7 @@ impl JsEdge {
     /// Get a property value by key.
     #[napi]
     pub fn get(&self, env: Env, key: String) -> Result<Unknown<'_>> {
-        match self.properties.get(&key) {
+        match self.properties.get(key.as_str()) {
             Some(v) => types::value_to_js(env.raw(), v),
             // SAFETY: env is valid and ToNapiValue produces a valid undefined value
             None => Ok(unsafe {
@@ -148,7 +148,7 @@ impl JsEdge {
         edge_type: String,
         source_id: NodeId,
         target_id: NodeId,
-        properties: HashMap<String, Value>,
+        properties: HashMap<PropertyKey, Value>,
     ) -> Self {
         Self {
             id,
@@ -163,7 +163,7 @@ impl JsEdge {
 /// Create a JS object from a Grafeo property map.
 pub(crate) fn properties_to_object(
     env: sys::napi_env,
-    properties: &HashMap<String, Value>,
+    properties: &HashMap<PropertyKey, Value>,
 ) -> Result<Object<'_>> {
     let mut raw_obj = std::ptr::null_mut();
     // SAFETY: env is valid; napi_create_object writes to our out-pointer
@@ -173,7 +173,7 @@ pub(crate) fn properties_to_object(
         let val_raw = types::value_to_napi(env, v)?;
         // SAFETY: env and val_raw are valid napi values produced by value_to_napi
         let val_unknown = unsafe { Unknown::from_raw_unchecked(env, val_raw) };
-        obj.set_named_property(k, val_unknown)?;
+        obj.set_named_property(k.as_str(), val_unknown)?;
     }
     Ok(obj)
 }

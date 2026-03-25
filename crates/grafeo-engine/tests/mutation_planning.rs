@@ -1243,6 +1243,84 @@ fn test_optional_match_boolean_null_comparison() {
 }
 
 // ============================================================================
+// OPTIONAL MATCH WHERE cross-side predicates (Area 3a regression)
+// ============================================================================
+
+#[test]
+fn test_optional_match_where_cross_predicate_preserves_null_rows() {
+    // WHERE referencing both a left-side and right-side variable (cross-predicate).
+    // The cross-side predicate must not eliminate NULL-padded rows (unmatched optional side).
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher(
+            "CREATE (a:Person {name: 'Alix', age: 30}), \
+             (b:Person {name: 'Gus', age: 25}), \
+             (c:Person {name: 'Harm', age: 40}), \
+             (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+    // Cross-predicate: b.age < a.age references both left (a) and right (b) sides.
+    // Harm has no KNOWS edge, so the right side is NULL for Harm.
+    // NULL-padded rows must pass through even though (NULL < 40) evaluates to NULL.
+    let result = session
+        .execute_cypher(
+            "MATCH (a:Person) \
+             OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) \
+             WHERE b.age < a.age \
+             RETURN a.name, b.name \
+             ORDER BY a.name",
+        )
+        .unwrap();
+
+    // All 3 persons must be preserved by the left join.
+    assert_eq!(
+        result.rows.len(),
+        3,
+        "Cross-predicate WHERE must not eliminate unmatched left rows, got {} rows",
+        result.rows.len()
+    );
+
+    // Alix (age 30) knows Gus (age 25): cross-predicate 25 < 30 is TRUE, Gus should appear.
+    let alix_row = result
+        .rows
+        .iter()
+        .find(|r| r[0] == Value::String("Alix".into()))
+        .expect("Alix row missing");
+    assert_eq!(
+        alix_row[1],
+        Value::String("Gus".into()),
+        "Alix->Gus should match (25 < 30)"
+    );
+
+    // Gus knows nobody: right side NULL, row must be preserved.
+    let gus_row = result
+        .rows
+        .iter()
+        .find(|r| r[0] == Value::String("Gus".into()))
+        .expect("Gus row missing");
+    assert_eq!(
+        gus_row[1],
+        Value::Null,
+        "Gus has no KNOWS, right side must be NULL"
+    );
+
+    // Harm knows nobody: right side NULL, row must be preserved.
+    let harm_row = result
+        .rows
+        .iter()
+        .find(|r| r[0] == Value::String("Harm".into()))
+        .expect("Harm row missing");
+    assert_eq!(
+        harm_row[1],
+        Value::Null,
+        "Harm has no KNOWS, right side must be NULL"
+    );
+}
+
+// ============================================================================
 // CALL PROCEDURE: covers plan_call_procedure, plan_static_result
 // ============================================================================
 

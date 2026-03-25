@@ -10,11 +10,12 @@ use super::common::{
 };
 use crate::query::plan::{
     AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp, CallProcedureOp,
-    CountExpr, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, JoinCondition,
-    JoinOp, JoinType, LeftJoinOp, ListPredicateKind, LoadDataFormat, LoadDataOp, LogicalExpression,
-    LogicalOperator, LogicalPlan, MapProjectionEntry, MergeOp, MergeRelationshipOp, NodeScanOp,
-    ParameterScanOp, PathMode, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem,
-    SetPropertyOp, ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
+    CountExpr, CreateEdgeOp, CreateNodeOp, DeleteEdgeOp, DeleteNodeOp, ExpandDirection, ExpandOp,
+    JoinCondition, JoinOp, JoinType, LeftJoinOp, ListPredicateKind, LoadDataFormat, LoadDataOp,
+    LogicalExpression, LogicalOperator, LogicalPlan, MapProjectionEntry, MergeOp,
+    MergeRelationshipOp, NodeScanOp, ParameterScanOp, PathMode, ProcedureYield, ProjectOp,
+    Projection, RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder,
+    UnaryOp, UnionOp, UnwindOp,
 };
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
@@ -1800,12 +1801,18 @@ impl CypherTranslator {
         // Delete each expression (typically variables)
         for expr in &delete_clause.expressions {
             if let ast::Expression::Variable(var) = expr {
-                // Check if it's a node or edge - for simplicity, try node first
-                plan = LogicalOperator::DeleteNode(DeleteNodeOp {
-                    variable: var.clone(),
-                    detach: delete_clause.detach,
-                    input: Box::new(plan),
-                });
+                if self.is_edge_variable(var) {
+                    plan = LogicalOperator::DeleteEdge(DeleteEdgeOp {
+                        variable: var.clone(),
+                        input: Box::new(plan),
+                    });
+                } else {
+                    plan = LogicalOperator::DeleteNode(DeleteNodeOp {
+                        variable: var.clone(),
+                        detach: delete_clause.detach,
+                        input: Box::new(plan),
+                    });
+                }
             } else {
                 return Err(Error::Query(QueryError::new(
                     QueryErrorKind::Semantic,

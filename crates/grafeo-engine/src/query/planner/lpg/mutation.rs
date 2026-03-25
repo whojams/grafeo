@@ -3,11 +3,12 @@
 use super::{
     AddLabelOp, AddLabelOperator, AntiJoinOp, Arc, CreateEdgeOp, CreateEdgeOperator, CreateNodeOp,
     CreateNodeOperator, DeleteEdgeOp, DeleteEdgeOperator, DeleteNodeOp, DeleteNodeOperator,
-    Direction, Error, ExpandDirection, GraphStore, HashMap, LeftJoinOp, LogicalExpression,
-    LogicalOperator, LogicalType, MergeConfig, MergeOp, MergeOperator, MergeRelationshipConfig,
-    MergeRelationshipOp, MergeRelationshipOperator, Operator, ProjectExpr, ProjectOperator,
-    PropertySource, RemoveLabelOp, RemoveLabelOperator, Result, SetPropertyOp, SetPropertyOperator,
-    ShortestPathOp, ShortestPathOperator, UnaryOp, UnwindOp, UnwindOperator, Value,
+    Direction, Error, ExpandDirection, ExpressionPredicate, FilterOperator, GraphStore, HashMap,
+    LeftJoinOp, LogicalExpression, LogicalOperator, LogicalType, MergeConfig, MergeOp,
+    MergeOperator, MergeRelationshipConfig, MergeRelationshipOp, MergeRelationshipOperator,
+    Operator, ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOp, RemoveLabelOperator,
+    Result, SetPropertyOp, SetPropertyOperator, ShortestPathOp, ShortestPathOperator, UnaryOp,
+    UnwindOp, UnwindOperator, Value,
 };
 #[cfg(feature = "algos")]
 use super::{CallProcedureOp, GraphStoreMut, StaticResultOperator};
@@ -243,13 +244,37 @@ impl super::Planner {
             };
         let (right_op, right_columns) = self.plan_operator(&left_join.right)?;
         let schema_fn = |cols: &[String]| self.derive_schema_from_columns(cols);
-        Ok(super::common::build_left_join(
+        let (join_op, join_columns) = super::common::build_left_join(
             left_op,
             right_op,
             &left_columns,
             &right_columns,
             schema_fn,
-        ))
+        );
+
+        // If the LeftJoin carries a cross-side condition (null-safe predicate),
+        // apply it as a Filter above the join. The condition already incorporates
+        // IS NULL guards so NULL-padded rows from unmatched optional sides pass through.
+        if let Some(condition) = &left_join.condition {
+            let filter_expr = self.convert_expression(condition)?;
+            let variable_columns: HashMap<String, usize> = join_columns
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect();
+            let predicate = ExpressionPredicate::new(
+                filter_expr,
+                variable_columns,
+                Arc::clone(&self.store) as Arc<dyn GraphStore>,
+            )
+            .with_transaction_context(self.viewing_epoch, self.transaction_id)
+            .with_session_context(self.session_context.clone());
+            let filter_op: Box<dyn Operator> =
+                Box::new(FilterOperator::new(join_op, Box::new(predicate)));
+            return Ok((filter_op, join_columns));
+        }
+
+        Ok((join_op, join_columns))
     }
 
     /// Plans an ANTI JOIN operator (for WHERE NOT EXISTS patterns).

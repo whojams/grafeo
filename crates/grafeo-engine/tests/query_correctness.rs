@@ -1885,6 +1885,39 @@ mod cypher_db_execute {
         assert_eq!(name, &Value::String("Gus".into()));
     }
 
+    #[test]
+    fn test_cypher_delete_edge_variable() {
+        // Regression: MATCH (a)-[e:KNOWS]->(b) DELETE e must emit DeleteEdgeOp,
+        // not DeleteNodeOp, so the edge (not the node) is removed.
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})")
+            .unwrap();
+        db.execute_cypher(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+             CREATE (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+        // Verify edge exists
+        let before = db
+            .execute_cypher("MATCH (a)-[e:KNOWS]->(b) RETURN e")
+            .unwrap();
+        assert_eq!(before.row_count(), 1, "Edge should exist before delete");
+
+        // Delete the edge by variable
+        db.execute_cypher("MATCH (a)-[e:KNOWS]->(b) DELETE e")
+            .unwrap();
+
+        // Edge should be gone; both nodes should remain
+        let edges_after = db
+            .execute_cypher("MATCH (a)-[e:KNOWS]->(b) RETURN e")
+            .unwrap();
+        assert_eq!(edges_after.row_count(), 0, "Edge should be deleted");
+
+        let nodes_after = db.execute_cypher("MATCH (n:Person) RETURN n.name").unwrap();
+        assert_eq!(nodes_after.row_count(), 2, "Both nodes should remain");
+    }
+
     // === Cypher REMOVE tests ===
 
     #[test]

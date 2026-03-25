@@ -603,13 +603,10 @@ mod introspection {
         match &result.rows[0][0] {
             Value::Map(m) => {
                 assert!(
-                    m.contains_key(&"node_count".into()),
+                    m.contains_key("node_count"),
                     "info() should have node_count"
                 );
-                assert!(
-                    m.contains_key(&"version".into()),
-                    "info() should have version"
-                );
+                assert!(m.contains_key("version"), "info() should have version");
             }
             other => panic!("info() should return a Map, got: {other:?}"),
         }
@@ -632,7 +629,7 @@ mod introspection {
         let result = session.execute("RETURN info() AS i").unwrap();
         match &result.rows[0][0] {
             Value::Map(m) => {
-                let node_count = m.get(&"node_count".into()).expect("should have node_count");
+                let node_count = m.get("node_count").expect("should have node_count");
                 assert_eq!(
                     *node_count,
                     Value::Int64(1),
@@ -652,10 +649,7 @@ mod introspection {
         assert_eq!(result.rows.len(), 1);
         match &result.rows[0][0] {
             Value::Map(m) => {
-                assert!(
-                    m.contains_key(&"labels".into()),
-                    "schema() should have labels"
-                );
+                assert!(m.contains_key("labels"), "schema() should have labels");
             }
             other => panic!("schema() should return a Map, got: {other:?}"),
         }
@@ -677,7 +671,7 @@ mod introspection {
         let result = session.execute("RETURN schema() AS s").unwrap();
         match &result.rows[0][0] {
             Value::Map(m) => {
-                let labels = m.get(&"labels".into()).expect("should have labels");
+                let labels = m.get("labels").expect("should have labels");
                 match labels {
                     Value::List(list) => {
                         let label_strs: Vec<_> = list

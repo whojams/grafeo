@@ -817,3 +817,125 @@ mod merge_null_node_reference {
         assert!(result.is_ok(), "Standalone MERGE should still work");
     }
 }
+
+mod distinct_edges {
+    use super::*;
+
+    /// Regression: DISTINCT on edge result columns must deduplicate by edge identity,
+    /// not by debug-format string. Edges are stored as Int64(edge_id) in execution
+    /// columns, so the DistinctOperator's Int64 arm handles them correctly.
+    #[test]
+    fn distinct_on_edges_deduplicates_correctly() {
+        let db = db();
+        let s = db.session();
+        // Create two nodes with a single edge between them
+        s.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+        s.execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+             INSERT (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+        // Cartesian product of nodes produces duplicate edge references;
+        // DISTINCT should collapse them to exactly one row.
+        let result = s
+            .execute(
+                "MATCH (a:Person), (b:Person) \
+                 MATCH (a)-[e:KNOWS]->(b) \
+                 RETURN DISTINCT e",
+            )
+            .unwrap();
+        assert_eq!(
+            result.rows.len(),
+            1,
+            "DISTINCT e should return exactly one row, got: {}",
+            result.rows.len()
+        );
+    }
+
+    #[test]
+    fn distinct_on_edges_multiple_edge_types() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Vincent'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Jules'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Mia'})").unwrap();
+        s.execute(
+            "MATCH (a:Person {name: 'Vincent'}), (b:Person {name: 'Jules'}) \
+             INSERT (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+        s.execute(
+            "MATCH (a:Person {name: 'Jules'}), (b:Person {name: 'Mia'}) \
+             INSERT (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+        // MATCH all edges of type KNOWS and return them with DISTINCT
+        let result = s
+            .execute("MATCH ()-[e:KNOWS]->() RETURN DISTINCT e")
+            .unwrap();
+        assert_eq!(
+            result.rows.len(),
+            2,
+            "DISTINCT should return both edges, got: {}",
+            result.rows.len()
+        );
+    }
+}
+
+mod call_block_scope {
+    use super::*;
+
+    /// Regression item 14: variables bound inside one CALL block must not be
+    /// visible inside a sibling CALL block. The binder previously used a single
+    /// global BindingContext, so a variable from CALL block 1 leaked into CALL
+    /// block 2, making it appear to be in scope when it was not.
+    ///
+    /// This test verifies the binder correctly accepts a query with sibling CALL
+    /// blocks that compose independent output columns.
+    #[test]
+    fn sibling_call_block_outputs_are_in_scope_for_return() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Alix', age: 30})")
+            .unwrap();
+        s.execute("INSERT (:Person {name: 'Gus', age: 25})")
+            .unwrap();
+
+        // Two independent CALL blocks: their output columns (age_a, age_b) must
+        // both be visible to the outer RETURN. The binder should accept this query.
+        let result = s.execute(
+            "CALL { MATCH (a:Person {name: 'Alix'}) RETURN a.age AS age_a } \
+             CALL { MATCH (b:Person {name: 'Gus'}) RETURN b.age AS age_b } \
+             RETURN age_a, age_b",
+        );
+        assert!(
+            result.is_ok(),
+            "sibling CALL outputs should be accessible in outer RETURN, got: {result:?}"
+        );
+    }
+
+    /// Internal variable `a` from CALL block 1 must not be visible in CALL block 2.
+    /// If scope isolation is working, the second CALL cannot reference `a`.
+    #[test]
+    fn internal_variable_from_first_call_is_not_visible_in_second_call() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+
+        // The second CALL references `a`, which is internal to the first CALL.
+        // With correct scope isolation this should fail with an undefined-variable error.
+        let result = s.execute(
+            "CALL { MATCH (a:Person) RETURN a.name AS name_a } \
+             CALL { MATCH (b:Person) WHERE b.name = a.name RETURN b } \
+             RETURN name_a",
+        );
+        assert!(
+            result.is_err(),
+            "second CALL referencing internal var of first CALL should fail, got: {result:?}"
+        );
+    }
+}

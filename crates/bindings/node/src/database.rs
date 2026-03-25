@@ -206,11 +206,7 @@ impl JsGrafeoDB {
         let db = self.inner.read();
         Ok(db.get_node(node_id).map(|node| {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties = node
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties = node.properties.into_iter().collect();
             JsNode::new(node_id, labels, properties)
         }))
     }
@@ -221,11 +217,7 @@ impl JsGrafeoDB {
         let edge_id = validate_edge_id(id)?;
         let db = self.inner.read();
         Ok(db.get_edge(edge_id).map(|edge| {
-            let properties = edge
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties = edge.properties.into_iter().collect();
             JsEdge::new(
                 edge_id,
                 edge.edge_type.to_string(),
@@ -1034,11 +1026,7 @@ fn fetch_node(db: &GrafeoDB, id: NodeId) -> Result<JsNode> {
     db.get_node(id)
         .map(|node| {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties = node
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties = node.properties.into_iter().collect();
             JsNode::new(id, labels, properties)
         })
         .ok_or_else(|| NodeGrafeoError::Database("Failed to fetch created node".into()).into())
@@ -1048,11 +1036,7 @@ fn fetch_node(db: &GrafeoDB, id: NodeId) -> Result<JsNode> {
 fn fetch_edge(db: &GrafeoDB, id: EdgeId) -> Result<JsEdge> {
     db.get_edge(id)
         .map(|edge| {
-            let properties = edge
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k.as_str().to_string(), v))
-                .collect();
+            let properties = edge.properties.into_iter().collect();
             JsEdge::new(
                 id,
                 edge.edge_type.to_string(),

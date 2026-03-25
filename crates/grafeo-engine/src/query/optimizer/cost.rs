@@ -229,7 +229,9 @@ impl CostModel {
             LogicalOperator::VectorJoin(join) => self.vector_join_cost(join, cardinality),
             LogicalOperator::MultiWayJoin(mwj) => self.multi_way_join_cost(mwj, cardinality),
             LogicalOperator::LeftJoin(lj) => {
-                self.left_join_cost(lj, cardinality, cardinality.sqrt(), cardinality.sqrt())
+                let left_card = self.estimate_child_cardinality(&lj.left);
+                let right_card = self.estimate_child_cardinality(&lj.right);
+                self.left_join_cost(lj, cardinality, left_card, right_card)
             }
             _ => Cost::cpu(cardinality * self.cpu_tuple_cost),
         }
@@ -343,6 +345,44 @@ impl CostModel {
         let output_cost = cardinality * self.cpu_tuple_cost;
 
         Cost::cpu(build_cost + probe_cost + output_cost).with_memory(memory_cost)
+    }
+
+    /// Estimates the cardinality of a child operator using available statistics.
+    ///
+    /// Used internally to compute left/right child cardinalities for joins
+    /// without requiring an external `CardinalityEstimator`. Uses the same
+    /// statistics the cost model already holds (label counts, fanout).
+    fn estimate_child_cardinality(&self, op: &LogicalOperator) -> f64 {
+        match op {
+            LogicalOperator::NodeScan(scan) => if let Some(label) = &scan.label {
+                self.label_cardinalities
+                    .get(label)
+                    .map_or(self.total_nodes as f64, |&c| c as f64)
+            } else {
+                self.total_nodes as f64
+            }
+            .max(1.0),
+            LogicalOperator::Expand(expand) => {
+                let input_card = self.estimate_child_cardinality(&expand.input);
+                let fanout = if expand.edge_types.is_empty() {
+                    self.avg_fanout
+                } else {
+                    self.fanout_for_expand(expand)
+                };
+                (input_card * fanout).max(1.0)
+            }
+            LogicalOperator::Filter(filter) => {
+                // Approximate: filters reduce cardinality by 10%
+                (self.estimate_child_cardinality(&filter.input) * 0.1).max(1.0)
+            }
+            LogicalOperator::Return(ret) => self.estimate_child_cardinality(&ret.input),
+            LogicalOperator::Limit(limit) => {
+                let input = self.estimate_child_cardinality(&limit.input);
+                // LimitOp.count may be a parameter; use input as upper bound
+                input.min(100.0)
+            }
+            _ => (self.total_nodes as f64).max(1.0),
+        }
     }
 
     /// Estimates the cost of a multi-way (leapfrog) join.

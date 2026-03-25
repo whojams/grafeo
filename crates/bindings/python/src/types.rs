@@ -361,6 +361,37 @@ impl PyValue {
                 .expect("dict.set_item only fails on memory exhaustion");
                 dict.unbind().into_any()
             }
+            Value::GCounter(counts) => {
+                // Expose as {"$gcounter": {"replica": count, ...}, "$value": total}
+                use pyo3::conversion::IntoPyObjectExt;
+                let dict = PyDict::new(py);
+                let replicas = PyDict::new(py);
+                let mut total: u64 = 0;
+                for (replica, count) in counts.iter() {
+                    total += count;
+                    replicas
+                        .set_item(replica.as_str(), *count)
+                        .expect("dict.set_item only fails on memory exhaustion");
+                }
+                dict.set_item("$gcounter", replicas)
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.set_item("$value", total)
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.into_py_any(py)
+                    .expect("dict to Python conversion cannot fail")
+            }
+            Value::OnCounter { pos, neg } => {
+                use pyo3::conversion::IntoPyObjectExt;
+                let pos_sum: i64 = pos.values().copied().map(|v| v as i64).sum();
+                let neg_sum: i64 = neg.values().copied().map(|v| v as i64).sum();
+                let dict = PyDict::new(py);
+                dict.set_item("$pncounter", true)
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.set_item("$value", pos_sum - neg_sum)
+                    .expect("dict.set_item only fails on memory exhaustion");
+                dict.into_py_any(py)
+                    .expect("dict to Python conversion cannot fail")
+            }
         }
     }
 }

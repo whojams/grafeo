@@ -10,6 +10,10 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 - **CDC structural metadata**: `ChangeEvent` now carries `labels` on node Create events and `edge_type`/`src_id`/`dst_id` on edge Create events, giving sync clients the full information needed to replay creates on a remote database
 - **CRDT counter value types**: `Value::GCounter(HashMap<String, u64>)` and `Value::OnCounter { pos, neg }` added as first-class variants. G-Counter merge is per-replica max (grows monotonically); ON-Counter merge is per-replica max over positive and negative maps separately. All bindings surface these as structured objects: `{$gcounter: {...replicas}, $value: total}` and `{$pncounter: true, $value: net}`. Spill serializer encodes them as opaque TAG_STRING for backward compatibility
 
+### Changed
+
+- **Tracing is now opt-in** (`tracing` feature flag): observability spans and events compile to zero-cost no-ops when disabled. Included in the `server` profile, excluded from `embedded`/`browser`/default. Eliminates ~29% overhead on micro-benchmarks like single-node insert
+
 ### Fixed
 
 - **Cypher target node property filter ignored**: `MATCH ()-[r]->(o {name: 'X'})` and similar patterns with inline property maps on the target node returned unfiltered results, ignoring the property constraint. The Cypher translator now applies target node property predicates and edge property predicates after the expand operator, matching GQL behavior (Discussion #155)

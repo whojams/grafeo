@@ -391,7 +391,9 @@ impl GrafeoFileManager {
     /// Returns an error if sync or unlock fails.
     pub fn close(&self) -> Result<()> {
         let file = self.file.lock();
-        file.sync_all()?;
+        if !self.read_only {
+            file.sync_all()?;
+        }
         file.unlock()
             .map_err(|e| Error::Internal(format!("failed to unlock database file: {e}")))?;
         Ok(())

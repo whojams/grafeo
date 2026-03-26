@@ -599,6 +599,19 @@ impl<Id: EntityId> PropertyStorage<Id> {
         }
         result
     }
+
+    /// Returns the version history for a single property of an entity.
+    ///
+    /// More efficient than `get_all_history` when only one property is needed.
+    #[must_use]
+    pub fn get_history(&self, id: Id, key: &PropertyKey) -> Vec<(EpochId, Value)> {
+        let columns = self.columns.read();
+        columns
+            .get(key)
+            .and_then(|col| col.values.get(&id))
+            .map(|log| log.history().iter().map(|(e, v)| (*e, v.clone())).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// Compressed storage for a property column.

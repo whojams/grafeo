@@ -93,6 +93,25 @@ impl LpgStore {
         self.node_properties.get_all_history(id)
     }
 
+    /// Returns a property value at a specific epoch.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn get_node_property_at_epoch(
+        &self,
+        id: NodeId,
+        key: &PropertyKey,
+        epoch: EpochId,
+    ) -> Option<Value> {
+        self.node_properties.get_at(id, key, epoch)
+    }
+
+    /// Returns the version history for a single property of a node.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn node_property_history_for_key(&self, id: NodeId, key: &str) -> Vec<(EpochId, Value)> {
+        self.node_properties.get_history(id, &PropertyKey::new(key))
+    }
+
     /// Returns the full version history for all properties of an edge.
     #[cfg(feature = "temporal")]
     #[must_use]

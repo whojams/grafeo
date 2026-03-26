@@ -35,7 +35,7 @@
 //!
 //! // Find them
 //! let result = session.execute("MATCH (p:Person) RETURN p.name")?;
-//! # Ok::<(), grafeo_common::utils::error::Error>(())
+//! # Ok::<(), grafeo::Error>(())
 //! ```
 //!
 #![forbid(unsafe_code)]
@@ -70,5 +70,11 @@ pub use grafeo_engine::{
     GraphStore, GraphStoreMut, IndexDefinition, IndexType, Session, VERSION,
 };
 
+// Re-export query results
+pub use grafeo_engine::database::QueryResult;
+
 // Re-export core types - you'll need these for working with IDs and values
 pub use grafeo_common::types::{EdgeId, NodeId, Value};
+
+// Re-export error types so users don't need to depend on grafeo-common directly
+pub use grafeo_common::utils::error::{Error, Result};

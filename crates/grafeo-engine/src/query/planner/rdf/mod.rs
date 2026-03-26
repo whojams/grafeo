@@ -487,15 +487,52 @@ impl RdfPlanner {
     /// Plans a SORT operator.
     fn plan_sort(&self, sort: &SortOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         use crate::query::plan::SortOrder;
-        use grafeo_core::execution::operators::{NullOrder, SortDirection, SortKey};
+        use grafeo_core::execution::operators::{
+            FilterExpression, NullOrder, ProjectExpr, ProjectOperator, SortDirection, SortKey,
+        };
 
-        let (input_op, columns) = self.plan_operator(&sort.input)?;
+        let (mut input_op, columns) = self.plan_operator(&sort.input)?;
 
-        let variable_columns: HashMap<String, usize> = columns
+        let mut variable_columns: HashMap<String, usize> = columns
             .iter()
             .enumerate()
             .map(|(i, name)| (name.clone(), i))
             .collect();
+
+        // Pre-project complex sort key expressions
+        let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
+        let mut next_col_idx = columns.len();
+        for key in &sort.keys {
+            match &key.expression {
+                LogicalExpression::Variable(_) => {}
+                _ => {
+                    let col_name = format!("__expr_{:?}", key.expression);
+                    if !variable_columns.contains_key(&col_name) {
+                        let filter_expr = convert_filter_expression(&key.expression)?;
+                        expression_projections.push((filter_expr, col_name.clone()));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
+                }
+            }
+        }
+
+        if !expression_projections.is_empty() {
+            let mut projections: Vec<ProjectExpr> =
+                (0..columns.len()).map(ProjectExpr::Column).collect();
+            let mut output_types: Vec<LogicalType> =
+                columns.iter().map(|_| LogicalType::String).collect();
+
+            for (filter_expr, _col_name) in &expression_projections {
+                projections.push(ProjectExpr::Expression {
+                    expr: filter_expr.clone(),
+                    variable_columns: variable_columns.clone(),
+                });
+                output_types.push(LogicalType::Any);
+            }
+
+            input_op = Box::new(ProjectOperator::new(input_op, projections, output_types));
+        }
 
         let physical_keys: Vec<SortKey> = sort
             .keys
@@ -617,9 +654,27 @@ impl RdfPlanner {
             .map(|(i, name)| (name.clone(), i))
             .collect();
 
-        // Pre-project complex expressions (CASE, Binary, etc.) inside aggregate arguments
+        // Pre-project complex expressions in group-by keys and aggregate arguments
         let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
         let mut next_col_idx = input_columns.len();
+
+        // Group-by expressions (Labels, Type, FunctionCall, etc.)
+        for expr in &agg.group_by {
+            match expr {
+                LogicalExpression::Variable(_) => {}
+                _ => {
+                    let col_name = format!("__expr_{:?}", expr);
+                    if !variable_columns.contains_key(&col_name) {
+                        let filter_expr = convert_filter_expression(expr)?;
+                        expression_projections.push((filter_expr, col_name.clone()));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
+                }
+            }
+        }
+
+        // Aggregate argument expressions
         for agg_expr in &agg.aggregates {
             for expr_opt in [&agg_expr.expression, &agg_expr.expression2] {
                 let Some(expr) = expr_opt else { continue };

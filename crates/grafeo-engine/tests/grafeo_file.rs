@@ -1017,3 +1017,241 @@ fn schema_with_data_across_multiple_cycles() {
         db.close().unwrap();
     }
 }
+
+// =========================================================================
+// WAL-disabled single-file mode (issue #185)
+// =========================================================================
+
+/// Verifies the bug fixed in #185: file manager was previously gated behind
+/// `wal_enabled`, so opening with WAL disabled + SingleFile produced no output.
+/// With the fix, checkpoint-on-close persists the snapshot correctly.
+#[test]
+fn wal_disabled_single_file_persists_on_close() {
+    use grafeo_engine::config::StorageFormat;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("no_wal.grafeo");
+
+    {
+        let config = Config {
+            wal_enabled: false,
+            ..Config::persistent(&path).with_storage_format(StorageFormat::SingleFile)
+        };
+        let db = GrafeoDB::with_config(config).unwrap();
+        let session = db.session();
+        session
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
+            .unwrap();
+        session
+            .execute("INSERT (:City {name: 'Amsterdam'})")
+            .unwrap();
+        assert_eq!(db.node_count(), 2);
+
+        // No sidecar WAL should exist: WAL is disabled
+        assert!(
+            !sidecar_wal_path(&path).exists(),
+            "no sidecar WAL should be created when wal_enabled: false"
+        );
+
+        db.close().unwrap();
+    }
+
+    // Sidecar WAL should not exist (was never created)
+    assert!(
+        !sidecar_wal_path(&path).exists(),
+        "sidecar WAL should not exist after close with wal_enabled: false"
+    );
+
+    // File should exist and contain the checkpointed data
+    assert!(path.exists() && path.is_file());
+
+    {
+        let config = Config {
+            wal_enabled: false,
+            ..Config::persistent(&path).with_storage_format(StorageFormat::SingleFile)
+        };
+        let db = GrafeoDB::with_config(config).unwrap();
+        assert_eq!(
+            db.node_count(),
+            2,
+            "data must survive close-reopen with WAL disabled"
+        );
+
+        let session = db.session();
+        let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
+        assert_eq!(extract_strings(&result.rows), vec!["Alix"]);
+        db.close().unwrap();
+    }
+}
+
+// =========================================================================
+// Drop: implicit close persists data and cleans up sidecar WAL
+// =========================================================================
+
+/// Dropping a GrafeoDB without explicitly calling close() still persists all
+/// data and cleans up the sidecar WAL, because GrafeoDB::Drop calls close().
+/// This verifies that implicit close (via drop) is as safe as explicit close.
+#[test]
+fn drop_persists_data_and_removes_sidecar_wal() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("drop_implicit_close.grafeo");
+
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+        session
+            .execute("INSERT (:Person {name: 'Vincent'})")
+            .unwrap();
+        session.execute("INSERT (:Person {name: 'Jules'})").unwrap();
+        // Drop triggers close(), which checkpoints and removes sidecar WAL
+        drop(db);
+    }
+
+    // Sidecar WAL must be cleaned up (drop triggers close())
+    assert!(
+        !sidecar_wal_path(&path).exists(),
+        "sidecar WAL should be removed after implicit close via drop"
+    );
+
+    // File must contain the checkpointed data
+    assert!(path.exists() && path.is_file());
+
+    // Reopen: both nodes must be present
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        assert_eq!(
+            db.node_count(),
+            2,
+            "both nodes must survive implicit close via drop"
+        );
+        let result = db
+            .session()
+            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(extract_strings(&result.rows), vec!["Jules", "Vincent"]);
+        db.close().unwrap();
+    }
+}
+
+// =========================================================================
+// Concurrent read-only access
+// =========================================================================
+
+/// Two open_read_only handles on the same file can coexist (shared locks).
+#[test]
+fn two_concurrent_read_only_opens() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("shared_ro.grafeo");
+
+    // Writer: create, populate, close (releases exclusive lock)
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        db.session()
+            .execute("INSERT (:City {name: 'Amsterdam'})")
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    // Both read-only handles must open and read successfully
+    let ro1 = GrafeoDB::open_read_only(&path).unwrap();
+    let ro2 = GrafeoDB::open_read_only(&path).unwrap();
+
+    assert_eq!(ro1.node_count(), 1);
+    assert_eq!(ro2.node_count(), 1);
+
+    let r1 = ro1
+        .session()
+        .execute("MATCH (c:City) RETURN c.name")
+        .unwrap();
+    let r2 = ro2
+        .session()
+        .execute("MATCH (c:City) RETURN c.name")
+        .unwrap();
+    assert_eq!(extract_strings(&r1.rows), vec!["Amsterdam"]);
+    assert_eq!(extract_strings(&r2.rows), vec!["Amsterdam"]);
+
+    ro1.close().unwrap();
+    ro2.close().unwrap();
+}
+
+/// open_read_only must fail while a writer holds the exclusive lock.
+#[test]
+fn read_only_blocked_while_writer_holds_lock() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("writer_lock.grafeo");
+
+    // Create the file first (writer creates it)
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        db.session()
+            .execute("INSERT (:Person {name: 'Mia'})")
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    // Writer holds exclusive lock
+    let writer = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+
+    // Read-only open must fail (cannot acquire shared lock while exclusive held)
+    let result = GrafeoDB::open_read_only(&path);
+    assert!(
+        result.is_err(),
+        "open_read_only must fail while writer holds exclusive lock"
+    );
+
+    writer.close().unwrap();
+
+    // After writer releases, read-only must succeed
+    let ro = GrafeoDB::open_read_only(&path).unwrap();
+    assert_eq!(ro.node_count(), 1);
+    ro.close().unwrap();
+}
+
+// =========================================================================
+// WAL and checkpoint interaction
+// =========================================================================
+
+/// Data written to the WAL after the last checkpoint is recovered on reopen.
+/// This covers the case where the process exits between a checkpoint and
+/// the subsequent close (e.g. a crash or ungraceful shutdown).
+#[test]
+fn wal_data_after_checkpoint_survives_drop() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("wal_after_checkpoint.grafeo");
+
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+
+        // First batch: checkpointed to snapshot
+        session.execute("INSERT (:Person {name: 'Butch'})").unwrap();
+        db.wal_checkpoint().unwrap();
+
+        let fm = db.file_manager().unwrap();
+        assert_eq!(
+            fm.active_header().node_count,
+            1,
+            "checkpoint must capture first node"
+        );
+
+        // Second batch: in WAL only, not yet in snapshot
+        session
+            .execute("INSERT (:Person {name: 'Shosanna'})")
+            .unwrap();
+
+        // Drop without close: second node is only in sidecar WAL
+        drop(db);
+    }
+
+    // Reopen: both nodes must be present (first from snapshot, second from WAL)
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        assert_eq!(db.node_count(), 2);
+        let result = db
+            .session()
+            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(extract_strings(&result.rows), vec!["Butch", "Shosanna"]);
+        db.close().unwrap();
+    }
+}

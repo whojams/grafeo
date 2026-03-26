@@ -39,20 +39,24 @@ impl super::GrafeoDB {
             // Check if this is an operator filter (Map with $-prefixed keys)
             let is_operator_filter = matches!(filter_value, Value::Map(ops) if ops.keys().any(|k| k.as_str().starts_with('$')));
 
-            let matching: std::collections::HashSet<NodeId> = if is_operator_filter {
-                // Operator filter: must scan nodes and check each
-                self.store
-                    .find_nodes_matching_filter(key, filter_value)
-                    .into_iter()
-                    .collect()
+            if is_operator_filter {
+                // Operator filter: scan only the current allowlist (not all nodes).
+                // This is much faster when a prior filter has already narrowed the set.
+                let prop_key = grafeo_common::types::PropertyKey::new(key);
+                allowlist.retain(|&node_id| {
+                    self.store
+                        .get_node_property(node_id, &prop_key)
+                        .is_some_and(|v| grafeo_core::LpgStore::matches_filter(&v, filter_value))
+                });
             } else {
                 // Equality filter: use indexed lookup when available
-                self.store
+                let matching: std::collections::HashSet<NodeId> = self
+                    .store
                     .find_nodes_by_property(key, filter_value)
                     .into_iter()
-                    .collect()
-            };
-            allowlist = allowlist.intersection(&matching).copied().collect();
+                    .collect();
+                allowlist = allowlist.intersection(&matching).copied().collect();
+            }
 
             // Short-circuit: empty intersection means no results possible
             if allowlist.is_empty() {

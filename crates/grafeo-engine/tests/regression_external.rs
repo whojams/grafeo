@@ -1046,3 +1046,311 @@ mod unwind_merge_set {
         assert_eq!(result.rows[0][1], Value::String("module".into()));
     }
 }
+
+// ============================================================================
+// #187: labels(n) and type(r) fail in aggregation context
+// ============================================================================
+
+#[cfg(feature = "cypher")]
+mod issue_187_labels_type_aggregation {
+    use super::*;
+
+    #[test]
+    fn labels_with_count() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher(
+            "CREATE (:Class {name: 'A'}), (:Class {name: 'B'}), (:Method {name: 'C'})",
+        )
+        .unwrap();
+
+        let result = s
+            .execute_cypher(
+                "MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY label",
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.row_count(),
+            2,
+            "Should have two groups: Class and Method"
+        );
+        assert_eq!(result.rows[0][0], Value::String("Class".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(2));
+        assert_eq!(result.rows[1][0], Value::String("Method".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(1));
+    }
+
+    #[test]
+    fn type_with_count() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher(
+            "CREATE (a:A), (b:B), (c:C), (a)-[:CALLS]->(b), (a)-[:CALLS]->(c), (b)-[:IMPORTS]->(c)",
+        )
+        .unwrap();
+
+        let result = s
+            .execute_cypher(
+                "MATCH ()-[r]->() RETURN type(r) AS edge_type, count(r) AS cnt ORDER BY edge_type",
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.row_count(),
+            2,
+            "Should have two groups: CALLS and IMPORTS"
+        );
+        assert_eq!(result.rows[0][0], Value::String("CALLS".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(2));
+        assert_eq!(result.rows[1][0], Value::String("IMPORTS".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(1));
+    }
+
+    #[test]
+    fn labels_without_index_access() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (:Foo), (:Bar)").unwrap();
+
+        let result = s
+            .execute_cypher("MATCH (n) RETURN labels(n) AS lbls, count(n) AS cnt ORDER BY cnt")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2);
+    }
+
+    #[test]
+    fn order_by_labels() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (:Zebra {name: 'Z'}), (:Apple {name: 'A'})")
+            .unwrap();
+
+        // Just verify it doesn't error; ORDER BY labels(n)[0] is a complex expression
+        let result = s
+            .execute_cypher("MATCH (n) RETURN n.name ORDER BY labels(n)[0]")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2);
+    }
+
+    #[test]
+    fn order_by_type() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (a:X), (b:Y), (c:Z), (a)-[:BETA]->(b), (a)-[:ALPHA]->(c)")
+            .unwrap();
+
+        let result = s
+            .execute_cypher("MATCH ()-[r]->() RETURN type(r) AS t ORDER BY t")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("ALPHA".into()));
+        assert_eq!(result.rows[1][0], Value::String("BETA".into()));
+    }
+
+    #[test]
+    fn gql_labels_with_count() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Dog {name: 'Rex'}), (:Dog {name: 'Max'}), (:Cat {name: 'Whiskers'})")
+            .unwrap();
+
+        let result = s
+            .execute("MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY label")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Cat".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(1));
+        assert_eq!(result.rows[1][0], Value::String("Dog".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(2));
+    }
+
+    #[test]
+    fn gql_order_by_labels() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Zebra {name: 'Z'}), (:Apple {name: 'A'})")
+            .unwrap();
+
+        // ORDER BY labels(n) in GQL should not error
+        let result = s
+            .execute("MATCH (n) RETURN n.name ORDER BY labels(n)[0]")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2);
+    }
+}
+
+// ============================================================================
+// #187 extended: edge cases for expression-in-aggregation and ORDER BY
+// ============================================================================
+
+#[cfg(feature = "cypher")]
+mod issue_187_extended {
+    use super::*;
+
+    #[test]
+    fn labels_with_sum() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (:Alpha {val: 10}), (:Alpha {val: 20}), (:Beta {val: 5})")
+            .unwrap();
+
+        // Verify the planner does not crash on sum() grouped by labels(n)[0]
+        let result = s
+            .execute_cypher(
+                "MATCH (n) RETURN labels(n)[0] AS label, sum(n.val) AS total ORDER BY label",
+            )
+            .unwrap();
+
+        assert!(
+            result.row_count() >= 2,
+            "Should produce at least 2 rows, got {}",
+            result.row_count()
+        );
+    }
+
+    #[test]
+    fn type_with_collect() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher(
+            "CREATE (a:X), (b:Y), (c:Z), (a)-[:LIKES]->(b), (a)-[:LIKES]->(c), (b)-[:KNOWS]->(c)",
+        )
+        .unwrap();
+
+        let result = s
+            .execute_cypher("MATCH ()-[r]->() RETURN type(r) AS t, collect(r) AS items ORDER BY t")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2, "Two edge types: KNOWS and LIKES");
+    }
+
+    #[test]
+    fn multi_label_node_group_by() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher(
+            "CREATE (:A:B {name: 'one'}), (:A:B {name: 'two'}), (:C:D {name: 'three'})",
+        )
+        .unwrap();
+
+        // Verify the planner does not crash on grouping by full label lists.
+        // Ideally this produces 2 groups ([A,B] and [C,D]), but the exact
+        // grouping semantics for list values may vary.
+        let result = s
+            .execute_cypher("MATCH (n) RETURN labels(n) AS lbls, count(n) AS cnt")
+            .unwrap();
+
+        assert!(
+            result.row_count() >= 2,
+            "Should produce at least 2 rows, got {}",
+            result.row_count()
+        );
+    }
+
+    #[test]
+    fn order_by_type_descending() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher(
+            "CREATE (a:X), (b:Y), (c:Z), (a)-[:ALPHA]->(b), (a)-[:GAMMA]->(c), (b)-[:BETA]->(c)",
+        )
+        .unwrap();
+
+        let result = s
+            .execute_cypher("MATCH ()-[r]->() RETURN type(r) AS t ORDER BY t DESC")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 3);
+        assert_eq!(result.rows[0][0], Value::String("GAMMA".into()));
+        assert_eq!(result.rows[1][0], Value::String("BETA".into()));
+        assert_eq!(result.rows[2][0], Value::String("ALPHA".into()));
+    }
+
+    #[test]
+    fn order_by_labels_with_limit() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (:Zebra {name: 'Z'}), (:Apple {name: 'A'}), (:Mango {name: 'M'})")
+            .unwrap();
+
+        let result = s
+            .execute_cypher("MATCH (n) RETURN n.name ORDER BY labels(n)[0] LIMIT 1")
+            .unwrap();
+
+        assert_eq!(
+            result.row_count(),
+            1,
+            "LIMIT 1 should return exactly one row"
+        );
+    }
+
+    #[test]
+    fn group_by_and_order_by_both_complex() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher(
+            "CREATE (:Dog {name: 'Rex'}), (:Dog {name: 'Max'}), (:Cat {name: 'Whiskers'})",
+        )
+        .unwrap();
+
+        // Both GROUP BY (implicit from labels(n)[0] in RETURN) and ORDER BY use
+        // the same complex expression. The goal is to verify no planner crash.
+        let result = s
+            .execute_cypher(
+                "MATCH (n) RETURN labels(n)[0] AS lbl, count(n) AS cnt ORDER BY labels(n)[0]",
+            )
+            .unwrap();
+
+        assert!(
+            result.row_count() >= 2,
+            "Should produce at least 2 rows, got {}",
+            result.row_count()
+        );
+    }
+
+    #[test]
+    fn empty_result_group_by_labels() {
+        let db = db();
+        let s = db.session();
+
+        let result = s
+            .execute_cypher("MATCH (n:NonExistent) RETURN labels(n)[0] AS lbl, count(n) AS cnt")
+            .unwrap();
+
+        assert_eq!(
+            result.row_count(),
+            0,
+            "No matching nodes should yield zero rows"
+        );
+    }
+}
+
+// The GQL variant of type_with_count (does not require the cypher feature).
+mod issue_187_gql_type_with_count {
+    use super::*;
+
+    #[test]
+    fn gql_type_with_count() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:A)-[:FOLLOWS]->(:B)").unwrap();
+        s.execute("INSERT (:C)-[:FOLLOWS]->(:D)").unwrap();
+        s.execute("INSERT (:E)-[:BLOCKS]->(:F)").unwrap();
+
+        let result = s
+            .execute("MATCH ()-[r]->() RETURN type(r) AS t, count(r) AS cnt ORDER BY t")
+            .unwrap();
+
+        assert_eq!(result.row_count(), 2, "Two edge types: BLOCKS and FOLLOWS");
+        assert_eq!(result.rows[0][0], Value::String("BLOCKS".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(1));
+        assert_eq!(result.rows[1][0], Value::String("FOLLOWS".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(2));
+    }
+}

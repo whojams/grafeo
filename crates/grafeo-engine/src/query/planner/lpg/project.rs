@@ -1,9 +1,9 @@
 //! Projection, RETURN, sort, limit, and skip planning.
 
 use super::{
-    Arc, Error, GraphStore, HashMap, LimitOp, LogicalExpression, LogicalOperator, LogicalType,
-    NullOrder, Operator, PhysicalSortKey, ProjectExpr, ProjectOperator, Result, ReturnOp, SkipOp,
-    SortDirection, SortOp, SortOperator, SortOrder, common, expression_to_string,
+    Arc, Error, FilterExpression, GraphStore, HashMap, LimitOp, LogicalExpression, LogicalOperator,
+    LogicalType, NullOrder, Operator, PhysicalSortKey, ProjectExpr, ProjectOperator, Result,
+    ReturnOp, SkipOp, SortDirection, SortOp, SortOperator, SortOrder, common, expression_to_string,
     value_to_logical_type,
 };
 
@@ -578,17 +578,33 @@ impl super::Planner {
         let mut property_projections: Vec<(String, String, String)> = Vec::new();
         let mut next_col_idx = input_columns.len();
 
+        let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
         for key in &sort.keys {
-            if let LogicalExpression::Property { variable, property } = &key.expression {
-                let col_name = format!("{}_{}", variable, property);
-                if !variable_columns.contains_key(&col_name) {
-                    property_projections.push((
-                        variable.clone(),
-                        property.clone(),
-                        col_name.clone(),
-                    ));
-                    variable_columns.insert(col_name, next_col_idx);
-                    next_col_idx += 1;
+            match &key.expression {
+                LogicalExpression::Property { variable, property } => {
+                    let col_name = format!("{}_{}", variable, property);
+                    if !variable_columns.contains_key(&col_name) {
+                        property_projections.push((
+                            variable.clone(),
+                            property.clone(),
+                            col_name.clone(),
+                        ));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
+                }
+                LogicalExpression::Variable(_) => {
+                    // Already in variable_columns
+                }
+                _ => {
+                    // Complex expression (Labels, Type, FunctionCall, IndexAccess, etc.)
+                    let col_name = format!("__expr_{:?}", key.expression);
+                    if !variable_columns.contains_key(&col_name) {
+                        let filter_expr = self.convert_expression(&key.expression)?;
+                        expression_projections.push((filter_expr, col_name.clone()));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
                 }
             }
         }
@@ -596,8 +612,8 @@ impl super::Planner {
         // Track output columns
         let mut output_columns = input_columns.clone();
 
-        // If we have property expressions, add a projection to materialize them
-        if !property_projections.is_empty() {
+        // If we have property or expression projections, add a projection to materialize them
+        if !property_projections.is_empty() || !expression_projections.is_empty() {
             let mut projections = Vec::new();
             let mut output_types = Vec::new();
 
@@ -619,6 +635,16 @@ impl super::Planner {
                 projections.push(ProjectExpr::PropertyAccess {
                     column: source_col,
                     property: property.clone(),
+                });
+                output_types.push(LogicalType::Any);
+                output_columns.push(col_name.clone());
+            }
+
+            // Then add complex expression projections (Labels, Type, FunctionCall, etc.)
+            for (filter_expr, col_name) in &expression_projections {
+                projections.push(ProjectExpr::Expression {
+                    expr: filter_expr.clone(),
+                    variable_columns: variable_columns.clone(),
                 });
                 output_types.push(LogicalType::Any);
                 output_columns.push(col_name.clone());
@@ -701,10 +727,16 @@ impl super::Planner {
                     ))
                 })
             }
-            _ => Err(Error::Internal(format!(
-                "Unsupported ORDER BY expression: {:?}",
-                expr
-            ))),
+            _ => {
+                // Complex expression (Labels, Type, FunctionCall, IndexAccess, etc.)
+                let col_name = format!("__expr_{:?}", expr);
+                variable_columns.get(&col_name).copied().ok_or_else(|| {
+                    Error::Internal(format!(
+                        "Cannot resolve ORDER BY expression to column: {:?}",
+                        expr
+                    ))
+                })
+            }
         }
     }
 

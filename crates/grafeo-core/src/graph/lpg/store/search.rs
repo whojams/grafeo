@@ -229,7 +229,7 @@ impl LpgStore {
     ///
     /// - Scalar filter: equality check
     /// - Map filter with `$`-prefixed keys: operator evaluation
-    fn matches_filter(node_value: &Value, filter_value: &Value) -> bool {
+    pub fn matches_filter(node_value: &Value, filter_value: &Value) -> bool {
         match filter_value {
             Value::Map(ops) if ops.keys().any(|k| k.as_str().starts_with('$')) => {
                 ops.iter().all(|(op_key, op_val)| {

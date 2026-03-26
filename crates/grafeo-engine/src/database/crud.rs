@@ -194,6 +194,51 @@ impl super::GrafeoDB {
         self.store.get_edge_history(id)
     }
 
+    /// Returns a property value as it existed at a specific epoch.
+    ///
+    /// Uses the internal `VersionLog` to do a point-in-time read. Returns
+    /// `None` if the property didn't exist or was deleted at that epoch.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn get_node_property_at_epoch(
+        &self,
+        id: grafeo_common::types::NodeId,
+        key: &str,
+        epoch: grafeo_common::types::EpochId,
+    ) -> Option<grafeo_common::types::Value> {
+        let prop_key = grafeo_common::types::PropertyKey::new(key);
+        self.store.get_node_property_at_epoch(id, &prop_key, epoch)
+    }
+
+    /// Returns the full version timeline for a single property of a node.
+    ///
+    /// Each entry is `(epoch, value)` in ascending epoch order. Tombstones
+    /// (deletions) appear as `Value::Null`.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn get_node_property_history(
+        &self,
+        id: grafeo_common::types::NodeId,
+        key: &str,
+    ) -> Vec<(grafeo_common::types::EpochId, grafeo_common::types::Value)> {
+        self.store.node_property_history_for_key(id, key)
+    }
+
+    /// Returns the full version history for ALL properties of a node.
+    ///
+    /// Each entry is `(property_key, Vec<(epoch, value)>)`.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn get_all_node_property_history(
+        &self,
+        id: grafeo_common::types::NodeId,
+    ) -> Vec<(
+        grafeo_common::types::PropertyKey,
+        Vec<(grafeo_common::types::EpochId, grafeo_common::types::Value)>,
+    )> {
+        self.store.node_property_history(id)
+    }
+
     /// Returns the current epoch of the database.
     #[must_use]
     pub fn current_epoch(&self) -> grafeo_common::types::EpochId {
@@ -841,6 +886,97 @@ impl super::GrafeoDB {
                 if let Some(node) = self.store.get_node(id) {
                     let pk = grafeo_common::types::PropertyKey::new(property);
                     if let Some(grafeo_common::types::Value::Vector(v)) = node.properties.get(&pk) {
+                        index.insert(id, v, &accessor);
+                    }
+                }
+            }
+        }
+
+        ids
+    }
+
+    /// Batch-creates nodes with full property maps.
+    ///
+    /// Each entry in `properties_list` is a complete property map for one node.
+    /// Vector values (`Value::Vector`) are automatically inserted into matching
+    /// vector indexes. Text values are automatically inserted into matching text
+    /// indexes.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Label for all created nodes.
+    /// * `properties_list` - One property map per node to create.
+    ///
+    /// # Returns
+    ///
+    /// Vector of created `NodeId`s in the same order as the input.
+    pub fn batch_create_nodes_with_props(
+        &self,
+        label: &str,
+        properties_list: Vec<
+            std::collections::HashMap<
+                grafeo_common::types::PropertyKey,
+                grafeo_common::types::Value,
+            >,
+        >,
+    ) -> Vec<grafeo_common::types::NodeId> {
+        use grafeo_common::types::Value;
+
+        let labels: &[&str] = &[label];
+
+        let ids: Vec<grafeo_common::types::NodeId> = properties_list
+            .into_iter()
+            .map(|props| {
+                let id = self.store.create_node_with_props(
+                    labels,
+                    props.iter().map(|(k, v)| (k.clone(), v.clone())),
+                );
+
+                // Log to WAL
+                #[cfg(feature = "wal")]
+                {
+                    if let Err(e) = self.log_wal(&WalRecord::CreateNode {
+                        id,
+                        labels: labels.iter().map(|s| (*s).to_string()).collect(),
+                    }) {
+                        grafeo_warn!("Failed to log CreateNode to WAL: {}", e);
+                    }
+                    for (key, value) in self
+                        .store
+                        .get_node(id)
+                        .map(|n| n.properties.clone())
+                        .unwrap_or_default()
+                    {
+                        if let Err(e) = self.log_wal(&WalRecord::SetNodeProperty {
+                            id,
+                            key: key.to_string(),
+                            value,
+                        }) {
+                            grafeo_warn!("Failed to log SetNodeProperty to WAL: {}", e);
+                        }
+                    }
+                }
+
+                id
+            })
+            .collect();
+
+        // Auto-insert into matching vector indexes for any vector properties
+        #[cfg(feature = "vector-index")]
+        {
+            for (key, index) in self.store.vector_index_entries() {
+                // key is "label:property"
+                if !key.starts_with(label) || !key[label.len()..].starts_with(':') {
+                    continue;
+                }
+                let property = &key[label.len() + 1..];
+                let accessor =
+                    grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
+                let pk = grafeo_common::types::PropertyKey::new(property);
+                for &id in &ids {
+                    if let Some(node) = self.store.get_node(id)
+                        && let Some(Value::Vector(v)) = node.properties.get(&pk)
+                    {
                         index.insert(id, v, &accessor);
                     }
                 }

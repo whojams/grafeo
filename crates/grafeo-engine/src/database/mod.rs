@@ -1229,6 +1229,10 @@ impl GrafeoDB {
                 wal.close_active_log();
             }
 
+            {
+                use grafeo_core::testing::crash::maybe_crash;
+                maybe_crash("close:before_remove_sidecar_wal");
+            }
             fm.remove_sidecar_wal()?;
             fm.close()?;
         }

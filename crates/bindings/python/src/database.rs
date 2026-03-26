@@ -712,6 +712,71 @@ impl PyGrafeoDB {
         Ok(result)
     }
 
+    /// Get a property value at a specific historical epoch.
+    ///
+    /// Returns the property value as it existed at the given epoch,
+    /// or None if the property didn't exist at that epoch.
+    ///
+    /// Requires the `temporal` feature.
+    #[cfg(feature = "temporal")]
+    fn get_node_property_at_epoch(
+        &self,
+        id: u64,
+        key: &str,
+        epoch: u64,
+        py: Python<'_>,
+    ) -> Option<Py<PyAny>> {
+        let db = self.inner.read();
+        let node_id = NodeId(id);
+        let epoch_id = grafeo_common::types::EpochId::new(epoch);
+        db.get_node_property_at_epoch(node_id, key, epoch_id)
+            .map(|v| PyValue::to_py(&v, py))
+    }
+
+    /// Get the full version history for a specific property of a node.
+    ///
+    /// Returns a list of (epoch, value) tuples in ascending epoch order.
+    /// Requires the `temporal` feature.
+    #[cfg(feature = "temporal")]
+    fn get_node_property_history(
+        &self,
+        id: u64,
+        key: &str,
+        py: Python<'_>,
+    ) -> Vec<(u64, Py<PyAny>)> {
+        let db = self.inner.read();
+        let node_id = NodeId(id);
+        let history = db.get_node_property_history(node_id, key);
+        history
+            .into_iter()
+            .map(|(epoch, value)| (epoch.as_u64(), PyValue::to_py(&value, py)))
+            .collect()
+    }
+
+    /// Get the full version history for ALL properties of a node.
+    ///
+    /// Returns a dict mapping property names to lists of (epoch, value) tuples.
+    /// Requires the `temporal` feature.
+    #[cfg(feature = "temporal")]
+    fn get_all_node_property_history(
+        &self,
+        id: u64,
+        py: Python<'_>,
+    ) -> HashMap<String, Vec<(u64, Py<PyAny>)>> {
+        let db = self.inner.read();
+        let node_id = NodeId(id);
+        let history = db.get_all_node_property_history(node_id);
+        let mut result = HashMap::new();
+        for (key, entries) in history {
+            let py_entries: Vec<(u64, Py<PyAny>)> = entries
+                .into_iter()
+                .map(|(epoch, value)| (epoch.as_u64(), PyValue::to_py(&value, py)))
+                .collect();
+            result.insert(key.to_string(), py_entries);
+        }
+        result
+    }
+
     /// Returns the current epoch of the database.
     ///
     /// The epoch increments with each committed transaction.
@@ -1096,6 +1161,46 @@ impl PyGrafeoDB {
     ) -> PyResult<Vec<u64>> {
         let db = self.inner.read();
         let ids = db.batch_create_nodes(label, property, vectors);
+        Ok(ids.into_iter().map(|id| id.as_u64()).collect())
+    }
+
+    /// Batch-create nodes with full property maps.
+    ///
+    /// Each dict in `properties_list` is a complete set of properties for one
+    /// node. Vector values (list of floats) are automatically inserted into
+    /// matching vector indexes.
+    ///
+    /// Args:
+    ///     label: Node label for all created nodes.
+    ///     properties_list: List of property dicts, one per node.
+    ///
+    /// Returns:
+    ///     List of created node IDs.
+    ///
+    /// Example:
+    ///     ids = db.batch_create_nodes_with_props("Memory", [
+    ///         {"text": "hello", "user_id": "u1", "embedding": [0.1, 0.2]},
+    ///         {"text": "world", "user_id": "u1", "embedding": [0.3, 0.4]},
+    ///     ])
+    #[pyo3(signature = (label, properties_list))]
+    fn batch_create_nodes_with_props(
+        &self,
+        label: &str,
+        properties_list: &Bound<'_, pyo3::types::PyList>,
+    ) -> PyResult<Vec<u64>> {
+        let db = self.inner.read();
+        let mut props_vec = Vec::with_capacity(properties_list.len());
+        for item in properties_list.iter() {
+            let py_dict: &Bound<'_, pyo3::types::PyDict> = item.cast()?;
+            let mut props = std::collections::HashMap::new();
+            for (key, value) in py_dict.iter() {
+                let key_str: String = key.extract()?;
+                let val = PyValue::from_py(&value)?;
+                props.insert(grafeo_common::types::PropertyKey::new(key_str), val);
+            }
+            props_vec.push(props);
+        }
+        let ids = db.batch_create_nodes_with_props(label, props_vec);
         Ok(ids.into_iter().map(|id| id.as_u64()).collect())
     }
 

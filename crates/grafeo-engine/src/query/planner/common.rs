@@ -349,6 +349,13 @@ pub(crate) fn expression_to_string(expr: &LogicalExpression) -> String {
         }
         LogicalExpression::Literal(value) => format!("{value:?}"),
         LogicalExpression::FunctionCall { name, .. } => format!("{name}(...)"),
+        LogicalExpression::IndexAccess { base, index } => {
+            format!(
+                "{}[{}]",
+                expression_to_string(base),
+                expression_to_string(index)
+            )
+        }
         _ => "expr".to_string(),
     }
 }

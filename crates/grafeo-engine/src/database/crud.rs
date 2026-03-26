@@ -932,6 +932,16 @@ impl super::GrafeoDB {
                     props.iter().map(|(k, v)| (k.clone(), v.clone())),
                 );
 
+                // Build CDC snapshot before WAL consumes props
+                #[cfg(feature = "cdc")]
+                let cdc_props: std::collections::HashMap<
+                    String,
+                    grafeo_common::types::Value,
+                > = props
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect();
+
                 // Log to WAL
                 #[cfg(feature = "wal")]
                 {
@@ -941,12 +951,7 @@ impl super::GrafeoDB {
                     }) {
                         grafeo_warn!("Failed to log CreateNode to WAL: {}", e);
                     }
-                    for (key, value) in self
-                        .store
-                        .get_node(id)
-                        .map(|n| n.properties.clone())
-                        .unwrap_or_default()
-                    {
+                    for (key, value) in props {
                         if let Err(e) = self.log_wal(&WalRecord::SetNodeProperty {
                             id,
                             key: key.to_string(),
@@ -956,6 +961,18 @@ impl super::GrafeoDB {
                         }
                     }
                 }
+
+                #[cfg(feature = "cdc")]
+                self.cdc_log.record_create_node(
+                    id,
+                    self.store.current_epoch(),
+                    if cdc_props.is_empty() {
+                        None
+                    } else {
+                        Some(cdc_props)
+                    },
+                    Some(labels.iter().map(|s| (*s).to_string()).collect()),
+                );
 
                 id
             })
@@ -978,6 +995,20 @@ impl super::GrafeoDB {
                         && let Some(Value::Vector(v)) = node.properties.get(&pk)
                     {
                         index.insert(id, v, &accessor);
+                    }
+                }
+            }
+        }
+
+        // Auto-insert into matching text indexes for any string properties
+        #[cfg(feature = "text-index")]
+        for &id in &ids {
+            if let Some(node) = self.store.get_node(id) {
+                for (prop_key, prop_val) in &node.properties {
+                    if let Value::String(text) = prop_val
+                        && let Some(index) = self.store.get_text_index(label, prop_key.as_ref())
+                    {
+                        index.write().insert(id, text);
                     }
                 }
             }

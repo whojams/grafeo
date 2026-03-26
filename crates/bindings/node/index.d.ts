@@ -8,8 +8,9 @@ export declare class GrafeoDB {
   static open(path: string): GrafeoDB
   /**
    * Open an existing database in read-only mode.
-   * Multiple processes can read the same .grafeo file concurrently.
-   * Mutations will throw an error.
+   *
+   * Uses a shared file lock, so multiple processes can read the same
+   * .grafeo file concurrently. Mutations will throw an error.
    */
   static openReadOnly(path: string): GrafeoDB
   /** Execute a GQL query. Returns a Promise<QueryResult>. */
@@ -95,19 +96,12 @@ export declare class GrafeoDB {
   /** Returns the Grafeo engine version string. */
   version(): string
   /**
-   * Clear the query plan cache. Called automatically after DDL operations,
-   * but can be invoked manually.
+   * Clear all cached query plans.
+   *
+   * Forces re-parsing and re-optimization on next execution.
+   * Called automatically after DDL operations, but can be invoked manually.
    */
   clearPlanCache(): void
-  /**
-   * Set a schema context for subsequent queries. All execute() calls will
-   * use this schema until resetSchema() is called.
-   */
-  setSchema(name: string): void
-  /** Clear the schema context. Subsequent execute() calls use the default namespace. */
-  resetSchema(): void
-  /** Returns the current schema name, or null if no schema is set. */
-  currentSchema(): string | null
   /** Close the database. */
   close(): void
   /** Returns the full change history for a node. */
@@ -118,6 +112,21 @@ export declare class GrafeoDB {
   nodeHistorySince(nodeId: number, sinceEpoch: number): Promise<Array<any>>
   /** Returns all change events across entities in an epoch range. */
   changesBetween(startEpoch: number, endEpoch: number): Promise<Array<any>>
+  /**
+   * Sets the current schema for subsequent `execute()` calls.
+   *
+   * Equivalent to running `SESSION SET SCHEMA <name>` but persists across
+   * calls. Use `resetSchema()` to clear it.
+   */
+  setSchema(name: string): void
+  /**
+   * Clears the current schema context.
+   *
+   * Subsequent `execute()` calls will use the default (no-schema) namespace.
+   */
+  resetSchema(): void
+  /** Returns the current schema name, or `null` if no schema is set. */
+  currentSchema(): string | null
   /** Execute a Cypher query. */
   executeCypher(query: string, params?: any | undefined | null): Promise<QueryResult>
   /** Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE). */
@@ -185,10 +194,10 @@ export declare class QueryResult {
   nodes(): Array<JsNode>
   /** Get edges found in the result. */
   edges(): Array<JsEdge>
-  /** Get all rows as an array of arrays (no column names). */
-  rows(): Array<Array<unknown>>
   /** Returns the result formatted as a Unicode table. */
   toString(): string
+  /** Get all rows as an array of arrays (no column names). */
+  rows(): object
 }
 
 /**

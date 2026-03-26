@@ -412,9 +412,7 @@ class GrafeoDB implements Finalizable {
   int createNode(List<String> labels, Map<String, dynamic> properties) {
     _checkOpen();
     final labelsJson = jsonEncode(labels);
-    final propsJson = jsonEncode(
-      properties.map((k, v) => MapEntry(k, _encodeValue(v))),
-    );
+    final propsJson = encodeParams(properties);
     final labelsPtr = labelsJson.toNativeUtf8(allocator: malloc);
     final propsPtr = propsJson.toNativeUtf8(allocator: malloc);
     try {
@@ -546,9 +544,7 @@ class GrafeoDB implements Finalizable {
   ) {
     _checkOpen();
     final typePtr = type.toNativeUtf8(allocator: malloc);
-    final propsJson = jsonEncode(
-      properties.map((k, v) => MapEntry(k, _encodeValue(v))),
-    );
+    final propsJson = encodeParams(properties);
     final propsPtr = propsJson.toNativeUtf8(allocator: malloc);
     try {
       final id = _bindings.grafeoCreateEdge(
@@ -1014,16 +1010,4 @@ class GrafeoDB implements Finalizable {
     }
   }
 
-  /// Encode a single value (used by CRUD methods for property values).
-  static dynamic _encodeValue(dynamic value) {
-    return switch (value) {
-      null => null,
-      bool b => b,
-      int i => i,
-      double d => d,
-      String s => s,
-      DateTime dt => {r'$timestamp_us': dt.toUtc().microsecondsSinceEpoch},
-      _ => value.toString(),
-    };
-  }
 }

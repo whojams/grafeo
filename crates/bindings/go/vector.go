@@ -5,7 +5,10 @@ package grafeo
 #include <stdlib.h>
 */
 import "C"
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 // CreateVectorIndex creates an HNSW similarity index on a vector property.
 func (db *Database) CreateVectorIndex(label, property string, opts ...VectorIndexOption) error {
@@ -25,11 +28,13 @@ func (db *Database) CreateVectorIndex(label, property string, opts ...VectorInde
 		defer C.free(unsafe.Pointer(cMetric))
 	}
 
-	return statusToError(C.grafeo_create_vector_index(
-		db.handle, cLabel, cProp,
-		C.int32_t(cfg.dimensions), cMetric,
-		C.int32_t(cfg.m), C.int32_t(cfg.efConstruction),
-	))
+	return lockAndCheckStatus(func() C.GrafeoStatus {
+		return C.grafeo_create_vector_index(
+			db.handle, cLabel, cProp,
+			C.int32_t(cfg.dimensions), cMetric,
+			C.int32_t(cfg.m), C.int32_t(cfg.efConstruction),
+		)
+	})
 }
 
 // VectorSearch finds the k nearest neighbors of a query vector.
@@ -48,6 +53,7 @@ func (db *Database) VectorSearch(label, property string, query []float32, k int,
 	var outDists *C.float
 	var outCount C.size_t
 
+	runtime.LockOSThread()
 	status := C.grafeo_vector_search(
 		db.handle, cLabel, cProp,
 		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
@@ -55,8 +61,11 @@ func (db *Database) VectorSearch(label, property string, query []float32, k int,
 		&outIDs, &outDists, &outCount,
 	)
 	if status != C.GRAFEO_OK {
-		return nil, statusToError(status)
+		err := statusToError(status)
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 
 	count := int(outCount)
 	if count == 0 {
@@ -94,6 +103,7 @@ func (db *Database) BatchCreateNodes(label, property string, vectors [][]float32
 
 	var outIDs *C.uint64_t
 	var outCount C.size_t
+	runtime.LockOSThread()
 	status := C.grafeo_batch_create_nodes(
 		db.handle, cLabel, cProp,
 		(*C.float)(unsafe.Pointer(&flat[0])),
@@ -101,8 +111,11 @@ func (db *Database) BatchCreateNodes(label, property string, vectors [][]float32
 		&outIDs, &outCount,
 	)
 	if status != C.GRAFEO_OK {
-		return nil, statusToError(status)
+		err := statusToError(status)
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	count := int(outCount)
 	defer C.grafeo_free_node_ids(outIDs, outCount)
 

@@ -295,7 +295,7 @@ func TestTransactionCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = tx.Execute("CREATE (:Tx {val: 1})")
+	_, err = tx.Execute("INSERT (:Tx {val: 1})")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestTransactionRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = tx.Execute("CREATE (:Rolled {val: 2})")
+	_, err = tx.Execute("INSERT (:Rolled {val: 2})")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestTransactionIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = tx.Execute("CREATE (:Isolated {val: 1})")
+	_, err = tx.Execute("INSERT (:Isolated {val: 1})")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,8 +433,8 @@ func TestVectorIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) < 1 {
-		t.Fatal("expected at least 1 result")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 	// Closest should be the first vector.
 	if results[0].NodeID != ids[0] {

@@ -26,6 +26,26 @@ fn extract_strings(rows: &[Vec<Value>]) -> Vec<String> {
     names
 }
 
+/// Helper: build the sidecar WAL path for a given `.grafeo` file.
+fn sidecar_wal_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut p = path.as_os_str().to_owned();
+    p.push(".wal");
+    std::path::PathBuf::from(p)
+}
+
+/// Assert that at least the main file or the sidecar WAL exists, so recovery
+/// is possible. If neither exists, the crash destroyed all data.
+fn assert_recoverable(path: &std::path::Path, context: &str) {
+    let wal = sidecar_wal_path(path);
+    assert!(
+        path.exists() || wal.exists(),
+        "{context}: neither the main file ({}) nor the sidecar WAL ({}) exist, \
+         crash destroyed all data",
+        path.display(),
+        wal.display(),
+    );
+}
+
 // =========================================================================
 // Crash during checkpoint_to_file (close path)
 // =========================================================================
@@ -80,26 +100,26 @@ fn crash_during_close_checkpoint_preserves_data_via_sidecar_wal() {
         }
 
         // Phase 2: Reopen and verify data survived
-        if path.exists() {
-            let db = GrafeoDB::open(&path).unwrap();
-            let session = db.session();
+        assert_recoverable(&path, &format!("crash_point={crash_point}"));
 
-            let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
-            let names = extract_strings(&result.rows);
-            assert_eq!(
-                names,
-                vec!["Alix", "Gus"],
-                "crash_point={crash_point}: data lost after crash"
-            );
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
 
-            assert_eq!(
-                db.edge_count(),
-                1,
-                "crash_point={crash_point}: edge lost after crash"
-            );
+        let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
+        let names = extract_strings(&result.rows);
+        assert_eq!(
+            names,
+            vec!["Alix", "Gus"],
+            "crash_point={crash_point}: data lost after crash"
+        );
 
-            db.close().unwrap();
-        }
+        assert_eq!(
+            db.edge_count(),
+            1,
+            "crash_point={crash_point}: edge lost after crash"
+        );
+
+        db.close().unwrap();
     }
 }
 
@@ -141,20 +161,20 @@ fn crash_during_wal_checkpoint_leaves_db_usable() {
         drop(db);
 
         // Reopen: data should survive via sidecar WAL replay
-        if path.exists() {
-            let db2 = GrafeoDB::open(&path).unwrap();
-            let session2 = db2.session();
+        assert_recoverable(&path, &format!("crash_point={crash_point}"));
 
-            let result = session2.execute("MATCH (c:City) RETURN c.name").unwrap();
-            let names = extract_strings(&result.rows);
-            assert_eq!(
-                names,
-                vec!["Amsterdam", "Berlin"],
-                "crash_point={crash_point}: data lost after checkpoint crash"
-            );
+        let db2 = GrafeoDB::open(&path).unwrap();
+        let session2 = db2.session();
 
-            db2.close().unwrap();
-        }
+        let result = session2.execute("MATCH (c:City) RETURN c.name").unwrap();
+        let names = extract_strings(&result.rows);
+        assert_eq!(
+            names,
+            vec!["Amsterdam", "Berlin"],
+            "crash_point={crash_point}: data lost after checkpoint crash"
+        );
+
+        db2.close().unwrap();
     }
 }
 
@@ -285,39 +305,35 @@ fn crash_before_sidecar_wal_removal_recovered_on_reopen() {
     }
 
     // Phase 2: Reopen - sidecar WAL may still exist (if crash happened); must recover
-    if path.exists() {
-        let db = GrafeoDB::open(&path).unwrap();
-        let count = db.node_count();
-        assert_eq!(
-            count, 2,
-            "both nodes must survive crash before sidecar removal"
-        );
+    assert_recoverable(&path, "crash before sidecar WAL removal");
 
-        let result = db
-            .session()
-            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
-            .unwrap();
-        let names = extract_strings(&result.rows);
-        assert!(
-            names.contains(&"Beatrix".to_string()),
-            "Beatrix missing after crash"
-        );
-        assert!(
-            names.contains(&"Django".to_string()),
-            "Django missing after crash"
-        );
+    let db = GrafeoDB::open(&path).unwrap();
+    let count = db.node_count();
+    assert_eq!(
+        count, 2,
+        "both nodes must survive crash before sidecar removal"
+    );
 
-        // Proper close must now clean up the sidecar WAL
-        db.close().unwrap();
+    let result = db
+        .session()
+        .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+        .unwrap();
+    let names = extract_strings(&result.rows);
+    assert!(
+        names.contains(&"Beatrix".to_string()),
+        "Beatrix missing after crash"
+    );
+    assert!(
+        names.contains(&"Django".to_string()),
+        "Django missing after crash"
+    );
 
-        let wal_path = {
-            let mut p = path.as_os_str().to_owned();
-            p.push(".wal");
-            std::path::PathBuf::from(p)
-        };
-        assert!(
-            !wal_path.exists(),
-            "sidecar WAL must be removed after the second (clean) close"
-        );
-    }
+    // Proper close must now clean up the sidecar WAL
+    db.close().unwrap();
+
+    let wal_path = sidecar_wal_path(&path);
+    assert!(
+        !wal_path.exists(),
+        "sidecar WAL must be removed after the second (clean) close"
+    );
 }

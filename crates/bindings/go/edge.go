@@ -7,6 +7,7 @@ package grafeo
 import "C"
 import (
 	"encoding/json"
+	"runtime"
 	"unsafe"
 )
 
@@ -25,10 +26,14 @@ func (db *Database) CreateEdge(sourceID, targetID uint64, edgeType string, prope
 		defer C.free(unsafe.Pointer(cProps))
 	}
 
+	runtime.LockOSThread()
 	id := uint64(C.grafeo_create_edge(db.handle, C.uint64_t(sourceID), C.uint64_t(targetID), cType, cProps))
 	if id == ^uint64(0) {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 
 	if properties == nil {
 		properties = make(map[string]any)
@@ -45,10 +50,14 @@ func (db *Database) CreateEdge(sourceID, targetID uint64, edgeType string, prope
 // GetEdge retrieves an edge by ID. Returns nil if not found.
 func (db *Database) GetEdge(id uint64) (*Edge, error) {
 	var cEdge *C.GrafeoEdge
+	runtime.LockOSThread()
 	status := C.grafeo_get_edge(db.handle, C.uint64_t(id), &cEdge)
 	if status != C.GRAFEO_OK {
-		return nil, statusToError(status)
+		err := statusToError(status)
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_edge(cEdge)
 
 	edgeID := uint64(C.grafeo_edge_id(cEdge))
@@ -76,10 +85,14 @@ func (db *Database) GetEdge(id uint64) (*Edge, error) {
 
 // DeleteEdge deletes an edge by ID. Returns true if the edge existed.
 func (db *Database) DeleteEdge(id uint64) (bool, error) {
+	runtime.LockOSThread()
 	result := int(C.grafeo_delete_edge(db.handle, C.uint64_t(id)))
 	if result < 0 {
-		return false, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return false, err
 	}
+	runtime.UnlockOSThread()
 	return result == 1, nil
 }
 
@@ -93,16 +106,22 @@ func (db *Database) SetEdgeProperty(id uint64, key string, value any) error {
 	}
 	cValue := C.CString(string(valueJSON))
 	defer C.free(unsafe.Pointer(cValue))
-	return statusToError(C.grafeo_set_edge_property(db.handle, C.uint64_t(id), cKey, cValue))
+	return lockAndCheckStatus(func() C.GrafeoStatus {
+		return C.grafeo_set_edge_property(db.handle, C.uint64_t(id), cKey, cValue)
+	})
 }
 
 // RemoveEdgeProperty removes a property from an edge.
 func (db *Database) RemoveEdgeProperty(id uint64, key string) (bool, error) {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
+	runtime.LockOSThread()
 	result := int(C.grafeo_remove_edge_property(db.handle, C.uint64_t(id), cKey))
 	if result < 0 {
-		return false, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return false, err
 	}
+	runtime.UnlockOSThread()
 	return result == 1, nil
 }

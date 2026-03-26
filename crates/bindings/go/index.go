@@ -7,6 +7,7 @@ package grafeo
 import "C"
 import (
 	"encoding/json"
+	"runtime"
 	"unsafe"
 )
 
@@ -14,17 +15,23 @@ import (
 func (db *Database) CreatePropertyIndex(property string) error {
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	return statusToError(C.grafeo_create_property_index(db.handle, cProp))
+	return lockAndCheckStatus(func() C.GrafeoStatus {
+		return C.grafeo_create_property_index(db.handle, cProp)
+	})
 }
 
 // DropPropertyIndex drops a property index. Returns true if it existed.
 func (db *Database) DropPropertyIndex(property string) (bool, error) {
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
+	runtime.LockOSThread()
 	result := int(C.grafeo_drop_property_index(db.handle, cProp))
 	if result < 0 {
-		return false, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return false, err
 	}
+	runtime.UnlockOSThread()
 	return result == 1, nil
 }
 
@@ -50,10 +57,14 @@ func (db *Database) FindNodesByProperty(property string, value any) ([]uint64, e
 	var outIDs *C.uint64_t
 	var outCount C.size_t
 
+	runtime.LockOSThread()
 	status := C.grafeo_find_nodes_by_property(db.handle, cProp, cValue, &outIDs, &outCount)
 	if status != C.GRAFEO_OK {
-		return nil, statusToError(status)
+		err := statusToError(status)
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 
 	count := int(outCount)
 	if count == 0 {

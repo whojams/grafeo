@@ -14,19 +14,6 @@ fn db() -> GrafeoDB {
     GrafeoDB::new_in_memory()
 }
 
-/// Helper: extract a column of string values from query results.
-#[allow(dead_code)]
-fn string_column(result: &QueryResult, col: usize) -> Vec<String> {
-    result
-        .rows
-        .iter()
-        .map(|row| match &row[col] {
-            Value::String(s) => s.to_string(),
-            other => format!("{other:?}"),
-        })
-        .collect()
-}
-
 // ============================================================================
 // MERGE + UNWIND tuple count
 // MERGE in a loop should return one row per input tuple, even when
@@ -350,6 +337,18 @@ mod collect_order {
 
 mod group_by_expression_order {
     use super::*;
+
+    /// Helper: extract a column of string values from query results.
+    fn string_column(result: &QueryResult, col: usize) -> Vec<String> {
+        result
+            .rows
+            .iter()
+            .map(|row| match &row[col] {
+                Value::String(s) => s.to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
 
     #[test]
     fn return_column_order_does_not_affect_group_by() {
@@ -705,14 +704,17 @@ mod cyclic_traversal {
                  RETURN b.name",
             )
             .unwrap();
-        // Should find paths but not infinite-loop
+        // In a 3-node directed triangle where each node has exactly one
+        // outgoing edge, paths of length 1..5 from Alix yield at most one
+        // path per length (5 paths total). Allow some headroom for
+        // implementation-specific traversal semantics.
         assert!(
             r.row_count() > 0,
             "Should find reachable nodes through cycle"
         );
         assert!(
-            r.row_count() < 100,
-            "Should not explode: got {} rows",
+            r.row_count() < 20,
+            "Should not explode: got {} rows (expected ~5 for a 3-node triangle with *1..5)",
             r.row_count()
         );
     }
@@ -965,20 +967,24 @@ mod call_block_scope {
         assert_eq!(result.rows[0][1], Value::String("TechCorp".into()));
     }
 
-    /// Aggregation inside a CALL subquery should produce a single row.
+    /// SUM aggregation inside a CALL subquery should produce a single row
+    /// with the correct total.
     #[test]
-    fn aggregation_inside_call_subquery_returns_single_row() {
+    fn sum_inside_call_subquery_returns_single_row() {
         let db = db();
         let s = db.session();
-        s.execute("INSERT (:Person {name: 'Alix'})").unwrap();
-        s.execute("INSERT (:Person {name: 'Gus'})").unwrap();
-        s.execute("INSERT (:Person {name: 'Harm'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Alix', age: 30})")
+            .unwrap();
+        s.execute("INSERT (:Person {name: 'Gus', age: 25})")
+            .unwrap();
+        s.execute("INSERT (:Person {name: 'Vincent', age: 40})")
+            .unwrap();
 
         let result = s
-            .execute("CALL { MATCH (n:Person) RETURN count(n) AS cnt } RETURN cnt")
+            .execute("CALL { MATCH (n:Person) RETURN sum(n.age) AS total } RETURN total")
             .unwrap();
         assert_eq!(result.row_count(), 1);
-        assert_eq!(result.rows[0][0], Value::Int64(3));
+        assert_eq!(result.rows[0][0], Value::Int64(95));
     }
 }
 
@@ -1155,17 +1161,19 @@ mod issue_187_labels_type_aggregation {
     fn gql_labels_with_count() {
         let db = db();
         let s = db.session();
-        s.execute("INSERT (:Dog {name: 'Rex'}), (:Dog {name: 'Max'}), (:Cat {name: 'Whiskers'})")
-            .unwrap();
+        s.execute(
+            "INSERT (:Engineer {name: 'Vincent'}), (:Engineer {name: 'Jules'}), (:Designer {name: 'Mia'})",
+        )
+        .unwrap();
 
         let result = s
             .execute("MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY label")
             .unwrap();
 
         assert_eq!(result.row_count(), 2);
-        assert_eq!(result.rows[0][0], Value::String("Cat".into()));
+        assert_eq!(result.rows[0][0], Value::String("Designer".into()));
         assert_eq!(result.rows[0][1], Value::Int64(1));
-        assert_eq!(result.rows[1][0], Value::String("Dog".into()));
+        assert_eq!(result.rows[1][0], Value::String("Engineer".into()));
         assert_eq!(result.rows[1][1], Value::Int64(2));
     }
 
@@ -1200,16 +1208,18 @@ mod issue_187_extended {
         s.execute_cypher("CREATE (:Alpha {val: 10}), (:Alpha {val: 20}), (:Beta {val: 5})")
             .unwrap();
 
-        // Verify the planner does not crash on sum() grouped by labels(n)[0]
+        // Each node has exactly one label, so labels(n)[0] is deterministic:
+        // exactly 2 groups (Alpha, Beta).
         let result = s
             .execute_cypher(
                 "MATCH (n) RETURN labels(n)[0] AS label, sum(n.val) AS total ORDER BY label",
             )
             .unwrap();
 
-        assert!(
-            result.row_count() >= 2,
-            "Should produce at least 2 rows, got {}",
+        assert_eq!(
+            result.row_count(),
+            2,
+            "Should produce exactly 2 rows (Alpha, Beta), got {}",
             result.row_count()
         );
     }
@@ -1239,16 +1249,16 @@ mod issue_187_extended {
         )
         .unwrap();
 
-        // Verify the planner does not crash on grouping by full label lists.
-        // Ideally this produces 2 groups ([A,B] and [C,D]), but the exact
-        // grouping semantics for list values may vary.
+        // Groups by the full label list. Ideally [A,B] and [C,D] form
+        // exactly 2 groups, but list-valued GROUP BY keys may produce
+        // extra rows when the engine hashes list elements individually.
         let result = s
             .execute_cypher("MATCH (n) RETURN labels(n) AS lbls, count(n) AS cnt")
             .unwrap();
 
         assert!(
             result.row_count() >= 2,
-            "Should produce at least 2 rows, got {}",
+            "Expected at least 2 rows (one per distinct label-set), got {}",
             result.row_count()
         );
     }
@@ -1295,21 +1305,23 @@ mod issue_187_extended {
         let db = db();
         let s = db.session();
         s.execute_cypher(
-            "CREATE (:Dog {name: 'Rex'}), (:Dog {name: 'Max'}), (:Cat {name: 'Whiskers'})",
+            "CREATE (:Engineer {name: 'Vincent'}), (:Engineer {name: 'Jules'}), (:Designer {name: 'Mia'})",
         )
         .unwrap();
 
         // Both GROUP BY (implicit from labels(n)[0] in RETURN) and ORDER BY use
-        // the same complex expression. The goal is to verify no planner crash.
+        // the same complex expression. Each node has exactly one label, so
+        // labels(n)[0] is deterministic: exactly 2 groups (Designer, Engineer).
         let result = s
             .execute_cypher(
                 "MATCH (n) RETURN labels(n)[0] AS lbl, count(n) AS cnt ORDER BY labels(n)[0]",
             )
             .unwrap();
 
-        assert!(
-            result.row_count() >= 2,
-            "Should produce at least 2 rows, got {}",
+        assert_eq!(
+            result.row_count(),
+            2,
+            "Should produce exactly 2 rows (Designer, Engineer), got {}",
             result.row_count()
         );
     }

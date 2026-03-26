@@ -574,21 +574,32 @@ impl super::Planner {
             .map(|(i, name)| (name.clone(), i))
             .collect();
 
-        // Collect property expressions that need to be projected before sorting
-        let mut property_projections: Vec<(String, String, String)> = Vec::new();
+        // Collect extra projections in a single ordered list so that column
+        // index assignment matches the order they are added to the ProjectOperator.
+        enum SortExtraProjection {
+            Property {
+                variable: String,
+                property: String,
+                col_name: String,
+            },
+            Expression {
+                filter_expr: FilterExpression,
+                col_name: String,
+            },
+        }
+        let mut extra_projections: Vec<SortExtraProjection> = Vec::new();
         let mut next_col_idx = input_columns.len();
 
-        let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
         for key in &sort.keys {
             match &key.expression {
                 LogicalExpression::Property { variable, property } => {
                     let col_name = format!("{}_{}", variable, property);
                     if !variable_columns.contains_key(&col_name) {
-                        property_projections.push((
-                            variable.clone(),
-                            property.clone(),
-                            col_name.clone(),
-                        ));
+                        extra_projections.push(SortExtraProjection::Property {
+                            variable: variable.clone(),
+                            property: property.clone(),
+                            col_name: col_name.clone(),
+                        });
                         variable_columns.insert(col_name, next_col_idx);
                         next_col_idx += 1;
                     }
@@ -601,7 +612,10 @@ impl super::Planner {
                     let col_name = format!("__expr_{:?}", key.expression);
                     if !variable_columns.contains_key(&col_name) {
                         let filter_expr = self.convert_expression(&key.expression)?;
-                        expression_projections.push((filter_expr, col_name.clone()));
+                        extra_projections.push(SortExtraProjection::Expression {
+                            filter_expr,
+                            col_name: col_name.clone(),
+                        });
                         variable_columns.insert(col_name, next_col_idx);
                         next_col_idx += 1;
                     }
@@ -612,8 +626,8 @@ impl super::Planner {
         // Track output columns
         let mut output_columns = input_columns.clone();
 
-        // If we have property or expression projections, add a projection to materialize them
-        if !property_projections.is_empty() || !expression_projections.is_empty() {
+        // If we have extra projections, add a projection to materialize them
+        if !extra_projections.is_empty() {
             let mut projections = Vec::new();
             let mut output_types = Vec::new();
 
@@ -624,30 +638,39 @@ impl super::Planner {
                 output_types.push(LogicalType::Node);
             }
 
-            // Then add property access projections
-            for (variable, property, col_name) in &property_projections {
-                let source_col = *variable_columns.get(variable).ok_or_else(|| {
-                    Error::Internal(format!(
-                        "Variable '{}' not found for ORDER BY property projection",
-                        variable
-                    ))
-                })?;
-                projections.push(ProjectExpr::PropertyAccess {
-                    column: source_col,
-                    property: property.clone(),
-                });
-                output_types.push(LogicalType::Any);
-                output_columns.push(col_name.clone());
-            }
-
-            // Then add complex expression projections (Labels, Type, FunctionCall, etc.)
-            for (filter_expr, col_name) in &expression_projections {
-                projections.push(ProjectExpr::Expression {
-                    expr: filter_expr.clone(),
-                    variable_columns: variable_columns.clone(),
-                });
-                output_types.push(LogicalType::Any);
-                output_columns.push(col_name.clone());
+            // Add extra projections in the same order as index assignment
+            for proj in &extra_projections {
+                match proj {
+                    SortExtraProjection::Property {
+                        variable,
+                        property,
+                        col_name,
+                    } => {
+                        let source_col = *variable_columns.get(variable).ok_or_else(|| {
+                            Error::Internal(format!(
+                                "Variable '{}' not found for ORDER BY property projection",
+                                variable
+                            ))
+                        })?;
+                        projections.push(ProjectExpr::PropertyAccess {
+                            column: source_col,
+                            property: property.clone(),
+                        });
+                        output_types.push(LogicalType::Any);
+                        output_columns.push(col_name.clone());
+                    }
+                    SortExtraProjection::Expression {
+                        filter_expr,
+                        col_name,
+                    } => {
+                        projections.push(ProjectExpr::Expression {
+                            expr: filter_expr.clone(),
+                            variable_columns: variable_columns.clone(),
+                        });
+                        output_types.push(LogicalType::Any);
+                        output_columns.push(col_name.clone());
+                    }
+                }
             }
 
             input_op = Box::new(

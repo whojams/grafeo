@@ -2,9 +2,11 @@
 //! Verifies that the RDF planner handles expression-based aggregation and
 //! sorting gracefully (returns a clean error, does not panic).
 //!
-//! Currently, STR() in GROUP BY / ORDER BY parses correctly but the physical
-//! plan lacks the store reference needed for expression evaluation. These tests
-//! verify the failure mode is a clean `Err`, not a panic.
+//! STR() in GROUP BY / ORDER BY parses correctly but the physical plan may
+//! lack the store reference needed for expression evaluation. These tests
+//! accept either:
+//!   - `Err` with a known expression-eval message (known limitation), or
+//!   - `Ok` with correct results (once the limitation is fixed).
 //!
 //! ```bash
 //! cargo test -p grafeo-engine --all-features --test sparql_aggregate_expressions
@@ -31,8 +33,8 @@ mod sparql_aggregate_expression_tests {
     }
 
     /// GROUP BY (STR(?s)): expression-based grouping should not panic.
-    /// Currently returns an error because the project operator lacks a store
-    /// reference for expression evaluation in the RDF path.
+    /// Accepts a known expression-eval error, or validates results if the
+    /// limitation is fixed.
     #[test]
     fn sparql_group_by_str_with_count() {
         let db = rdf_db();
@@ -42,13 +44,24 @@ mod sparql_aggregate_expression_tests {
             "SELECT (STR(?s) AS ?subject) (COUNT(*) AS ?cnt) WHERE { ?s ?p ?o } GROUP BY (STR(?s))",
         );
 
-        // Must not panic. When the store-ref issue is fixed, change to assert is_ok.
-        if let Err(ref err) = result {
-            let msg = format!("{err}");
-            assert!(
-                msg.contains("Store required") || msg.contains("expression"),
-                "Expected a clean expression-eval error, got: {msg}"
-            );
+        // Must not panic. Accept known error or validate correct results.
+        match result {
+            Err(ref err) => {
+                let msg = format!("{err}");
+                assert!(
+                    msg.contains("Store required") || msg.contains("expression"),
+                    "Expected a clean expression-eval error, got: {msg}"
+                );
+            }
+            Ok(ref qr) => {
+                // Two subjects (alix, gus), each with 2 triples: expect 2 groups
+                assert_eq!(
+                    qr.row_count(),
+                    2,
+                    "GROUP BY STR(?s) should produce 2 groups, got {}",
+                    qr.row_count()
+                );
+            }
         }
     }
 
@@ -61,12 +74,23 @@ mod sparql_aggregate_expression_tests {
         let result = db
             .execute_sparql("SELECT ?s WHERE { ?s <http://ex.org/name> ?o } ORDER BY ASC(STR(?s))");
 
-        if let Err(ref err) = result {
-            let msg = format!("{err}");
-            assert!(
-                msg.contains("Store required") || msg.contains("expression"),
-                "Expected a clean expression-eval error, got: {msg}"
-            );
+        match result {
+            Err(ref err) => {
+                let msg = format!("{err}");
+                assert!(
+                    msg.contains("Store required") || msg.contains("expression"),
+                    "Expected a clean expression-eval error, got: {msg}"
+                );
+            }
+            Ok(ref qr) => {
+                // Two triples match the pattern (alix, gus): expect 2 rows
+                assert_eq!(
+                    qr.row_count(),
+                    2,
+                    "ORDER BY ASC(STR(?s)) should return 2 rows, got {}",
+                    qr.row_count()
+                );
+            }
         }
     }
 
@@ -80,12 +104,23 @@ mod sparql_aggregate_expression_tests {
             "SELECT (STR(?s) AS ?subject) (COUNT(*) AS ?cnt) WHERE { ?s ?p ?o } GROUP BY (STR(?s)) ORDER BY (STR(?s))",
         );
 
-        if let Err(ref err) = result {
-            let msg = format!("{err}");
-            assert!(
-                msg.contains("Store required") || msg.contains("expression"),
-                "Expected a clean expression-eval error, got: {msg}"
-            );
+        match result {
+            Err(ref err) => {
+                let msg = format!("{err}");
+                assert!(
+                    msg.contains("Store required") || msg.contains("expression"),
+                    "Expected a clean expression-eval error, got: {msg}"
+                );
+            }
+            Ok(ref qr) => {
+                // Two subjects (alix, gus), each with 2 triples: expect 2 groups
+                assert_eq!(
+                    qr.row_count(),
+                    2,
+                    "GROUP BY + ORDER BY STR(?s) should produce 2 groups, got {}",
+                    qr.row_count()
+                );
+            }
         }
     }
 
@@ -99,12 +134,23 @@ mod sparql_aggregate_expression_tests {
             "SELECT ?s WHERE { ?s <http://ex.org/name> ?o } ORDER BY DESC(STR(?s))",
         );
 
-        if let Err(ref err) = result {
-            let msg = format!("{err}");
-            assert!(
-                msg.contains("Store required") || msg.contains("expression"),
-                "Expected a clean expression-eval error, got: {msg}"
-            );
+        match result {
+            Err(ref err) => {
+                let msg = format!("{err}");
+                assert!(
+                    msg.contains("Store required") || msg.contains("expression"),
+                    "Expected a clean expression-eval error, got: {msg}"
+                );
+            }
+            Ok(ref qr) => {
+                // Two triples match the pattern (alix, gus): expect 2 rows
+                assert_eq!(
+                    qr.row_count(),
+                    2,
+                    "ORDER BY DESC(STR(?s)) should return 2 rows, got {}",
+                    qr.row_count()
+                );
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ package grafeo
 import "C"
 import (
 	"encoding/json"
+	"runtime"
 	"unsafe"
 )
 
@@ -22,10 +23,14 @@ type DatabaseInfo struct {
 
 // Info returns high-level database information.
 func (db *Database) Info() (*DatabaseInfo, error) {
+	runtime.LockOSThread()
 	cInfo := C.grafeo_info(db.handle)
 	if cInfo == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_string(cInfo)
 
 	var info DatabaseInfo
@@ -39,10 +44,14 @@ func (db *Database) Info() (*DatabaseInfo, error) {
 func (db *Database) Save(path string) error {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
-	return statusToError(C.grafeo_save(db.handle, cPath))
+	return lockAndCheckStatus(func() C.GrafeoStatus {
+		return C.grafeo_save(db.handle, cPath)
+	})
 }
 
 // WalCheckpoint triggers a WAL checkpoint.
 func (db *Database) WalCheckpoint() error {
-	return statusToError(C.grafeo_wal_checkpoint(db.handle))
+	return lockAndCheckStatus(func() C.GrafeoStatus {
+		return C.grafeo_wal_checkpoint(db.handle)
+	})
 }

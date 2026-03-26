@@ -19,10 +19,14 @@ type Transaction struct {
 
 // BeginTransaction starts a new transaction with default isolation (snapshot).
 func (db *Database) BeginTransaction() (*Transaction, error) {
+	runtime.LockOSThread()
 	h := C.grafeo_begin_transaction(db.handle)
 	if h == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	tx := &Transaction{handle: h}
 	runtime.SetFinalizer(tx, (*Transaction).free)
 	return tx, nil
@@ -30,10 +34,14 @@ func (db *Database) BeginTransaction() (*Transaction, error) {
 
 // BeginTransactionWith starts a transaction with a specific isolation level.
 func (db *Database) BeginTransactionWith(level IsolationLevel) (*Transaction, error) {
+	runtime.LockOSThread()
 	h := C.grafeo_begin_transaction_with_isolation(db.handle, C.GrafeoIsolationLevel(level))
 	if h == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	tx := &Transaction{handle: h}
 	runtime.SetFinalizer(tx, (*Transaction).free)
 	return tx, nil
@@ -43,10 +51,14 @@ func (db *Database) BeginTransactionWith(level IsolationLevel) (*Transaction, er
 func (tx *Transaction) Execute(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
+	runtime.LockOSThread()
 	r := C.grafeo_transaction_execute(tx.handle, cQuery)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -57,10 +69,14 @@ func (tx *Transaction) ExecuteWithParams(query string, paramsJSON string) (*Quer
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_transaction_execute_with_params(tx.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -73,24 +89,28 @@ func (tx *Transaction) ExecuteLanguage(language, query, paramsJSON string) (*Que
 	defer C.free(unsafe.Pointer(cLang))
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	var r *C.GrafeoResult
-	if paramsJSON == "" {
-		r = C.grafeo_transaction_execute_language(tx.handle, cLang, cQuery, nil)
-	} else {
-		cParams := C.CString(paramsJSON)
+	var cParams *C.char
+	if paramsJSON != "" {
+		cParams = C.CString(paramsJSON)
 		defer C.free(unsafe.Pointer(cParams))
-		r = C.grafeo_transaction_execute_language(tx.handle, cLang, cQuery, cParams)
 	}
+	runtime.LockOSThread()
+	r := C.grafeo_transaction_execute_language(tx.handle, cLang, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
 
 // Commit commits the transaction.
 func (tx *Transaction) Commit() error {
+	runtime.LockOSThread()
 	err := statusToError(C.grafeo_commit(tx.handle))
+	runtime.UnlockOSThread()
 	if err == nil {
 		// Prevent double-free on GC.
 		runtime.SetFinalizer(tx, nil)
@@ -100,7 +120,9 @@ func (tx *Transaction) Commit() error {
 
 // Rollback aborts the transaction.
 func (tx *Transaction) Rollback() error {
+	runtime.LockOSThread()
 	err := statusToError(C.grafeo_rollback(tx.handle))
+	runtime.UnlockOSThread()
 	if err == nil {
 		runtime.SetFinalizer(tx, nil)
 	}

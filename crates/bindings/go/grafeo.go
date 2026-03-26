@@ -40,10 +40,14 @@ type Database struct {
 
 // OpenInMemory creates a new in-memory database.
 func OpenInMemory() (*Database, error) {
+	runtime.LockOSThread()
 	h := C.grafeo_open_memory()
 	if h == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	db := &Database{handle: h}
 	runtime.SetFinalizer(db, (*Database).free)
 	return db, nil
@@ -53,10 +57,14 @@ func OpenInMemory() (*Database, error) {
 func Open(path string) (*Database, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
+	runtime.LockOSThread()
 	h := C.grafeo_open(cPath)
 	if h == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	db := &Database{handle: h}
 	runtime.SetFinalizer(db, (*Database).free)
 	return db, nil
@@ -68,10 +76,14 @@ func Open(path string) (*Database, error) {
 func OpenSingleFile(path string) (*Database, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
+	runtime.LockOSThread()
 	h := C.grafeo_open_single_file(cPath)
 	if h == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	db := &Database{handle: h}
 	runtime.SetFinalizer(db, (*Database).free)
 	return db, nil
@@ -82,11 +94,14 @@ func (db *Database) Close() error {
 	if db.handle == nil {
 		return nil
 	}
+	runtime.LockOSThread()
 	status := C.grafeo_close(db.handle)
+	err := statusToError(status)
+	runtime.UnlockOSThread()
 	C.grafeo_free_database(db.handle)
 	db.handle = nil
 	runtime.SetFinalizer(db, nil)
-	return statusToError(status)
+	return err
 }
 
 // free is called by the Go runtime finalizer for leak prevention.
@@ -132,10 +147,14 @@ func (db *Database) ExecuteWithParams(query string, paramsJSON string) (*QueryRe
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_with_params(db.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -144,10 +163,14 @@ func (db *Database) ExecuteWithParams(query string, paramsJSON string) (*QueryRe
 func (db *Database) ExecuteCypher(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_cypher(db.handle, cQuery)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -156,10 +179,14 @@ func (db *Database) ExecuteCypher(query string) (*QueryResult, error) {
 func (db *Database) ExecuteGremlin(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_gremlin(db.handle, cQuery)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -168,10 +195,14 @@ func (db *Database) ExecuteGremlin(query string) (*QueryResult, error) {
 func (db *Database) ExecuteGraphQL(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_graphql(db.handle, cQuery)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -180,10 +211,14 @@ func (db *Database) ExecuteGraphQL(query string) (*QueryResult, error) {
 func (db *Database) ExecuteSPARQL(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_sparql(db.handle, cQuery)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -192,10 +227,14 @@ func (db *Database) ExecuteSPARQL(query string) (*QueryResult, error) {
 func (db *Database) ExecuteSQL(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_sql(db.handle, cQuery)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -206,10 +245,14 @@ func (db *Database) ExecuteCypherWithParams(query, paramsJSON string) (*QueryRes
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_cypher_with_params(db.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -220,10 +263,14 @@ func (db *Database) ExecuteGremlinWithParams(query, paramsJSON string) (*QueryRe
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_gremlin_with_params(db.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -234,10 +281,14 @@ func (db *Database) ExecuteGraphQLWithParams(query, paramsJSON string) (*QueryRe
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_graphql_with_params(db.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -248,10 +299,14 @@ func (db *Database) ExecuteSPARQLWithParams(query, paramsJSON string) (*QueryRes
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_sparql_with_params(db.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -262,10 +317,14 @@ func (db *Database) ExecuteSQLWithParams(query, paramsJSON string) (*QueryResult
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
+	runtime.LockOSThread()
 	r := C.grafeo_execute_sql_with_params(db.handle, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -278,17 +337,19 @@ func (db *Database) ExecuteLanguage(language, query, paramsJSON string) (*QueryR
 	defer C.free(unsafe.Pointer(cLang))
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	var r *C.GrafeoResult
-	if paramsJSON == "" {
-		r = C.grafeo_execute_language(db.handle, cLang, cQuery, nil)
-	} else {
-		cParams := C.CString(paramsJSON)
+	var cParams *C.char
+	if paramsJSON != "" {
+		cParams = C.CString(paramsJSON)
 		defer C.free(unsafe.Pointer(cParams))
-		r = C.grafeo_execute_language(db.handle, cLang, cQuery, cParams)
 	}
+	runtime.LockOSThread()
+	r := C.grafeo_execute_language(db.handle, cLang, cQuery, cParams)
 	if r == nil {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	defer C.grafeo_free_result(r)
 	return parseResult(r)
 }
@@ -310,11 +371,9 @@ func (db *Database) RebuildVectorIndex(label, property string) error {
 	defer C.free(unsafe.Pointer(cLabel))
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	status := C.grafeo_rebuild_vector_index(db.handle, cLabel, cProp)
-	if status != C.GRAFEO_OK {
-		return lastError()
-	}
-	return nil
+	return lockAndCheckStatus(func() C.GrafeoStatus {
+		return C.grafeo_rebuild_vector_index(db.handle, cLabel, cProp)
+	})
 }
 
 // MmrSearch finds diverse nearest neighbors using Maximal Marginal Relevance.
@@ -331,6 +390,7 @@ func (db *Database) MmrSearch(label, property string, query []float32, k int, fe
 	var outDists *C.float
 	var outCount C.size_t
 
+	runtime.LockOSThread()
 	status := C.grafeo_mmr_search(
 		db.handle, cLabel, cProp,
 		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
@@ -338,8 +398,11 @@ func (db *Database) MmrSearch(label, property string, query []float32, k int, fe
 		&outIDs, &outDists, &outCount,
 	)
 	if status != C.GRAFEO_OK {
-		return nil, lastError()
+		err := lastError()
+		runtime.UnlockOSThread()
+		return nil, err
 	}
+	runtime.UnlockOSThread()
 	count := int(outCount)
 	if count == 0 {
 		return nil, nil

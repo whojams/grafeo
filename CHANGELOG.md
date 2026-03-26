@@ -2,115 +2,149 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.26] - 2026-03-25
+## [0.5.27] - Unreleased
+
+C FFI overhaul, Dart expansion, binding-wide usability audit, grafeo-memory engine support.
 
 ### Added
 
-- **GQL conformance: GraphGlot cross-validation** (ISO/IEC 39075:2024): 234-query test corpus cross-validated against GraphGlot, a GQL reference parser. 184/234 both-pass, 48 Grafeo-only Cypher superset, 2 both-fail on non-GQL `WITH` chains
-- **SQL/PGQ: WHERE inside GRAPH_TABLE** (SQL:2023): `WHERE` clause between `MATCH` and `COLUMNS` inside `GRAPH_TABLE(...)`, filtering at the graph pattern level before column projection
-- **SQL/PGQ: SELECT DISTINCT**: `SELECT DISTINCT` now wired through parser to `DistinctOp` in the execution plan
-- **SQL/PGQ: GROUP BY / HAVING**: explicit `GROUP BY` with one or more expressions and `HAVING` clause for filtering aggregated groups
-- **SQL/PGQ: graph name reference**: `GRAPH_TABLE(graph_name, MATCH ...)` syntax parsed and stored (session-level routing planned for future release)
-- **CALL block scope isolation tests**: regression tests verifying variable scope isolation between sibling `CALL { }` blocks, including aggregation in subqueries
-- **Cross-language correctness tests**: SQL/PGQ queries cross-validated against GQL equivalents for WHERE, DISTINCT, GROUP BY, and nullIf
+- **C API overhaul** (#185): `grafeo_open_single_file`, `_with_params` for all 5 languages, unified `grafeo_execute_language`, type-safe `GrafeoIsolationLevel` enum
+- **Dart bindings expansion**: `openSingleFile`, `openReadOnly`, `executeLanguage`, `execute*WithParams`, schema context, property/vector indexes, `batchCreateNodes`
+- **Dart Flutter guide**: native library bundling for Windows, macOS, Linux desktop
+- **Go bindings**: `OpenSingleFile`, `ExecuteLanguage`, `Execute*WithParams`, `ExecuteParams(map[string]any)`
+- **Rust facade re-exports**: `Error`, `Result`, `QueryResult` now at crate root
+- **`batch_create_nodes_with_props`**: engine + Python method accepting list of property dicts with mixed types including vectors
+- **Temporal property versioning API** (`temporal` feature): `get_node_property_at_epoch`, `get_node_property_history`, `get_all_node_property_history`
+- **Node.js user guide**: 5 pages covering database, queries, CRUD, transactions, results
+- **C# P/Invoke completeness**: 11 missing native declarations added
+- **Crash safety testing**: new crash injection point, 6 new recovery/concurrency tests
+- **Python API docs**: 45+ undocumented methods added to API reference (DataFrame, batch, search, algorithms, temporal, admin)
 
 ### Fixed
 
-- **EXISTS/COUNT subquery with target-side correlation returns wrong results** (#173): `EXISTS { MATCH ()-[:TYPE]->(n) }` and `COUNT { MATCH ()-[:TYPE]->(n) }` silently returned empty/zero when the correlated variable appeared on the target side of the pattern. The fast-path evaluator used the anonymous source node as the lookup key, which never existed in the outer scope. Fixed by detecting the anonymous source and flipping the traversal direction to start from the correlated target variable.
-- **WAL directory-format data loss on reopen** (#174): `close()` wrote `checkpoint.meta` for directory-format databases, causing recovery to skip older WAL files after rotation. Since directory format has no snapshot, this silently lost all pre-rotation data. Fixed by syncing without checkpointing.
-- **UNWIND variable property access in SET clause** (#172): `UNWIND $batch AS item MERGE (:T {k: item.k}) SET x.name = item.name` silently set properties to NULL instead of the UNWIND map value. Root cause: five mutation planner functions (MERGE, MERGE relationship, DELETE node, DELETE edge, SET property) assigned `LogicalType::Node` to all pass-through output columns, causing Map values from UNWIND to be silently dropped. All five now use `LogicalType::Any` for pass-through columns. Both `SET x.prop = item.prop` and `SET x += item` resolve correctly. Present since 0.5.14.
-- **GQL conformance gaps**: closed all 24 ISO GQL conformance gaps identified by GraphGlot cross-validation:
-  - G036/G060/G061: post-edge quantifiers `->{1,3}`, `->+`, `->*`
-  - G047: parenthesized quantified path continuation `(a)(-[]->(x)){2,5}(b)`
-  - G030/G032: path alternation `|` and `|+|` at MATCH level
-  - GQ08: `FILTER WHERE` clause
-  - GG:SS01/GG:GE01: `SELECT ... FROM ... MATCH` statement
-  - GG02/GG22: brace-delimited graph type patterns with variable names
-  - Per-pattern path search prefix `p = ANY SHORTEST (...)`
-- **EXISTS/COUNT subquery end-node labels ignored**: the fast-path evaluator extracted `end_labels` at plan time but never checked them at runtime, silently accepting edges to nodes with wrong labels. Both `ExistsSubquery` and `CountSubquery` now verify the other endpoint's labels.
-- **Complex EXISTS inside OR predicates**: `WHERE EXISTS { multi-hop } OR property > value` errored because the semi-join rewrite only handled AND trees. OR branches are now split into semi-join + filter, unioned, and deduplicated.
-- **SQL/PGQ GROUP BY drops non-aggregate columns**: `SELECT col, COUNT(*) ... GROUP BY col` silently omitted `col` from the aggregate output. Non-aggregate SELECT items are now always passed through as group-by keys.
-- **C API: typed entity access** (#177): `grafeo_result_nodes_json()` and `grafeo_result_edges_json()` return JSON arrays with explicit `element_type`, `id`, `labels`/`type`, and `properties` fields, eliminating ambiguity between nodes, edges, and user maps.
-- **`SET n:Label` drops variable binding for subsequent clauses** (#178, #182): `AddLabelOperator` and `RemoveLabelOperator` discarded all input columns, returning only a single-row update count. Any clause after `SET n:Label` that referenced the same variable failed with "Variable not found", and `count(*)` always returned 1. Both operators now preserve input columns per-row, matching `SetPropertyOperator` behavior.
-- **`timestamp()` returns `null` instead of millisecond epoch** (#179): `timestamp()` was missing from the expression evaluator, falling through to the default `None` case. In SET clauses, zero-argument temporal functions (`timestamp()`, `now()`, `datetime()`, `date()`, `time()`) failed with "Unsupported expression type". Added `timestamp()` returning epoch milliseconds as Int64, and extended `try_fold_expression` to support zero-argument temporal functions.
-- **`startNode(r)` and `endNode(r)` return `None`** (#180): both functions were unimplemented. Added `startNode(r)` and `endNode(r)` to the expression evaluator, returning the source/destination node ID as Int64.
-- **`MATCH ... CREATE (a)-[:REL]->(b)` creates phantom nodes** (#181): the planner always created new physical nodes for every node in a CREATE path, even when the variable was already bound from a prior MATCH. Added a guard in `plan_create_node` that skips node creation when the variable already exists in the column list with no labels or properties.
+- **`labels(n)`/`type(r)` in aggregation** (#187): complex expressions in GROUP BY and ORDER BY failed with "Cannot resolve expression to column". Fixed in all 4 planner locations (LPG aggregate, LPG sort, RDF aggregate, RDF sort)
+- **C# isolation level always failed**: P/Invoke passed `string` where `int` expected. Added `IsolationLevel` enum
+- **C# `DropVectorIndex` threw on success**: now returns `bool`
+- **C# P/Invoke mismatches (3)**: wrong signatures for property indexes, create_vector_index, batch_create_nodes
+- **C# double-rollback after commit**: `TransactionHandle` now skips rollback when committed
+- **Go stale `grafeo.h`**: 40+ missing declarations prevented compilation
+- **Go column order random**: replaced map iteration with ordered JSON key parsing
+- **Go thread-local error race**: added `runtime.LockOSThread()` around C calls
+- **Node.js stale TypeScript definitions**: 6 missing methods, improved `rows()` type
+- **Dart iOS loader**: missing `Platform.isIOS` branch
+- **Dart Duration decoding**: returned raw ISO string instead of `Duration` object
+- **Rust docs (8 errors)**: wrong method names, nonexistent APIs, incorrect fallibility
+- **SPARQL docs contradicted themselves**: two pages said "not supported" while it works
+- **README missing `pip install grafeo`**: added as primary install command
+- **WASM docs**: `createVectorIndex` wrongly listed as unavailable
+- **Vector search filter optimization**: operator filters ($gt, $lt, etc.) now scan only the narrowed allowlist instead of all nodes
+- **Single-file storage silent failure** (#185): no file created when WAL disabled
+- **C API `batch_create_nodes` missing `out_count`** (#185)
+- **Windows read-only close failure**: skipped `sync_all()` on read-only handles
+- **Adjacency benchmark regression** (~2x): reduced `SmallVec` inline capacity from 16 to 4
+
+## [0.5.26] - 2026-03-25
+
+GQL conformance validation, SQL/PGQ features, and a big batch of bug fixes.
+
+### Added
+
+- **GQL conformance** (ISO/IEC 39075:2024): 234-query corpus cross-validated against GraphGlot. All 24 identified gaps closed: post-edge quantifiers (`->{1,3}`, `->+`, `->*`), path alternation (`|`, `|+|`), FILTER WHERE, SELECT...FROM...MATCH, brace-delimited graph types, and per-pattern path search prefixes
+- **SQL/PGQ**: WHERE inside GRAPH_TABLE, SELECT DISTINCT, GROUP BY / HAVING, and graph name references
+- **Cross-language correctness tests**: SQL/PGQ queries validated against GQL equivalents, plus CALL block scope isolation tests
+
+### Fixed
+
+- **EXISTS/COUNT subquery bugs**: target-side correlation (#173) now flips traversal direction instead of looking up the anonymous source, end-node labels are verified at runtime (were silently ignored), and complex EXISTS inside OR predicates works via split semi-join + filter
+- **WAL directory-format data loss** (#174): `close()` wrote checkpoint metadata that caused recovery to skip older WAL files, silently losing pre-rotation data
+- **UNWIND variable in SET clause** (#172): five mutation planner functions assigned `LogicalType::Node` to pass-through columns, silently dropping Map values from UNWIND. All now use `LogicalType::Any`. Present since 0.5.14
+- **SET n:Label drops variable binding** (#178, #182): label operators discarded input columns, breaking any subsequent clause referencing the same variable. Now preserves columns per-row
+- **Missing expression functions** (#179, #180): `timestamp()` returns epoch milliseconds (was null), `startNode(r)`/`endNode(r)` return node IDs (were unimplemented), zero-argument temporal functions now work in SET clauses
+- **CREATE after MATCH creates phantom nodes** (#181): planner now skips node creation when the variable is already bound from a prior MATCH
+- **SQL/PGQ GROUP BY** silently dropped non-aggregate columns; **C API typed entity access** (#177) now returns explicit `element_type`/`id`/`labels`/`type` fields in JSON
 
 ## [0.5.25] - 2026-03-25
 
+RDF change tracking, CRDT counters, and tracing goes opt-in.
+
 ### Added
 
-- **RDF CDC bridge** (`cdc` + `rdf` features): SPARQL `INSERT DATA`, `DELETE DATA`, and `DELETE/INSERT WHERE` mutations now emit `ChangeEvent` records to the CDC log alongside LPG mutations. Triple events carry N-Triples-encoded subject/predicate/object/graph terms and appear in `changes_between()` and `history()` with `EntityId::Triple`. Enables `GET /changes` and `POST /sync` to surface RDF mutations to offline-first clients
-- **CDC structural metadata**: `ChangeEvent` now carries `labels` on node Create events and `edge_type`/`src_id`/`dst_id` on edge Create events, giving sync clients the full information needed to replay creates on a remote database
-- **CRDT counter value types**: `Value::GCounter(HashMap<String, u64>)` and `Value::OnCounter { pos, neg }` added as first-class variants. G-Counter merge is per-replica max (grows monotonically); ON-Counter merge is per-replica max over positive and negative maps separately. All bindings surface these as structured objects: `{$gcounter: {...replicas}, $value: total}` and `{$pncounter: true, $value: net}`. Spill serializer encodes them as opaque TAG_STRING for backward compatibility
+- **RDF CDC bridge** (`cdc` + `rdf`): SPARQL INSERT/DELETE mutations now emit `ChangeEvent` records to the CDC log, carrying N-Triples-encoded terms. Surfaces RDF changes through `GET /changes` and `POST /sync` for offline-first clients
+- **CDC structural metadata**: node Create events now carry `labels`, edge Create events carry `edge_type`/`src_id`/`dst_id`, giving sync clients everything needed to replay creates remotely
+- **CRDT counter values**: `Value::GCounter` and `Value::OnCounter` as first-class types with proper merge semantics (per-replica max). All bindings surface them as structured JSON objects
 
 ### Changed
 
-- **Tracing is now opt-in** (`tracing` feature flag): observability spans and events compile to zero-cost no-ops when disabled. Included in the `server` profile, excluded from `embedded`/`browser`/default. Eliminates ~29% overhead on micro-benchmarks like single-node insert
+- **Tracing is now opt-in** (`tracing` feature): compiles to zero-cost no-ops when disabled. Included in `server` profile, excluded from `embedded`/`browser`. Eliminates ~29% overhead on micro-benchmarks
 
 ### Fixed
 
-- **Cypher target node property filter ignored**: `MATCH ()-[r]->(o {name: 'X'})` and similar patterns with inline property maps on the target node returned unfiltered results, ignoring the property constraint. The Cypher translator now applies target node property predicates and edge property predicates after the expand operator, matching GQL behavior (Discussion #155)
-- **Schema isolation for types**: `SHOW GRAPH TYPES`, `SHOW NODE TYPES` and `SHOW EDGE TYPES` now respect `SESSION SET SCHEMA`, returning only types belonging to the current schema. `CREATE`, `DROP` and `ALTER` type commands also scope to the active schema. `DROP SCHEMA` now rejects non-empty schemas that still contain types (#167)
-- **`CREATE GRAPH TYPED` regression**: fixed `CREATE GRAPH foo TYPED bar` failing with `TypeNotFound` when a session schema is set; the type name now resolves relative to the current schema as expected
-- **Cross-schema type references**: `CREATE GRAPH foo TYPED my_schema.type_name` now works from any session schema, allowing graphs to be bound to types defined in a different schema
-- **Schema context in bindings**: all language bindings (Python, Node.js, C, WASM) now expose `set_schema` / `reset_schema` / `current_schema` methods that persist across `execute()` calls, mirroring the existing graph context API
-- **Temporal feature benchmark regression**: optimized `VersionLog::at()` with a last-entry fast path (O(1) for current-epoch reads instead of O(log N) binary search), eliminated double HashMap lookup in `TransactionManager::record_write`, and added current-epoch shortcuts in `get_node_at_epoch`/`get_edge_at_epoch` to use `latest()` instead of epoch-based lookup. Reduces temporal feature overhead from ~16% to ~6% on read benchmarks.
+- **Cypher target node property filter ignored**: `MATCH ()-[r]->(o {name: 'X'})` returned unfiltered results. Translator now applies target and edge property predicates after expand (Discussion #155)
+- **Schema isolation for types**: SHOW/CREATE/DROP/ALTER type commands now respect `SESSION SET SCHEMA`. `DROP SCHEMA` rejects non-empty schemas (#167)
+- **CREATE GRAPH TYPED regression**: type name resolution now works correctly with session schemas, including cross-schema references like `my_schema.type_name`
+- **Schema context in bindings**: all bindings now expose `set_schema`/`reset_schema`/`current_schema` methods that persist across `execute()` calls
+- **Temporal feature overhead**: optimized `VersionLog::at()` with O(1) fast path for current-epoch reads, eliminated double HashMap lookups. Reduces overhead from ~16% to ~6%
 
 ## [0.5.24] - 2026-03-24
 
+Temporal properties, read-only mode, and snapshot format v4.
+
 ### Added
 
-- **Index metadata in snapshots**: property, vector, and text index definitions are now persisted in snapshots (v4 format) and automatically rebuilt on import/restore
-- **Read-only open mode**: `GrafeoDB::open_read_only()` uses a shared file lock so multiple processes can read the same `.grafeo` file concurrently; mutations are rejected at the session level
-- **Agent memory migration tests**: Rust and Python integration tests verifying HNSW at scale, BYOV 384-dim vectors, persistence, concurrent reads, bulk import, and storage size (Discussion #155)
-- **Temporal properties** (`temporal` feature): opt-in append-only property and label versioning with `execute_at_epoch()` for point-in-time queries, `get_node_at_epoch()`/`get_node_history()` APIs, snapshot roundtrip of full version history, and transaction-safe rollback (Discussion #163)
+- **Index metadata in snapshots**: property, vector, and text index definitions now persist in v4 snapshots and auto-rebuild on import/restore
+- **Read-only open mode**: `GrafeoDB::open_read_only()` uses shared file locks for concurrent reads; mutations rejected at the session level
+- **Agent memory migration tests**: Rust and Python integration tests for HNSW at scale, BYOV 384-dim vectors, persistence, concurrent reads, bulk import, and storage size (Discussion #155)
+- **Temporal properties** (`temporal` feature): opt-in append-only property versioning with `execute_at_epoch()`, `get_node_at_epoch()`/`get_node_history()` APIs, snapshot roundtrip, and transaction-safe rollback (Discussion #163)
 
 ### Breaking
 
-- **Snapshot format v4**: properties now stored as version-history lists; snapshots from this release are not compatible with older versions
+- **Snapshot format v4**: properties stored as version-history lists; not backward-compatible
 
 ### Fixed
 
-- **MERGE + UNWIND creates only one node**: `UNWIND [1, 2, 3] AS i MERGE (:Item {val: i})` created a single node instead of three because the planner evaluated MERGE property expressions as constants at plan time, silently dropping variable references from UNWIND. MERGE now uses per-row `PropertySource` resolution (matching CREATE behavior), correctly creating/matching nodes for each input row.
-- **MERGE with NULL node reference silently succeeds**: `OPTIONAL MATCH (n:NonExistent) MERGE (n)-[:R]->(m:Target)` silently succeeded as a no-op instead of raising an error. MERGE now detects NULL-bound variables from unmatched OPTIONAL MATCH and returns a clear type mismatch error.
+- **MERGE + UNWIND creates only one node**: planner evaluated MERGE property expressions as constants at plan time, dropping UNWIND variable references. Now uses per-row resolution
+- **MERGE with NULL node reference**: `OPTIONAL MATCH (n:NonExistent) MERGE (n)-[:R]->(m)` silently succeeded as a no-op. Now returns a clear type mismatch error
 
 ## [0.5.23] - 2026-03-23
 
+Prometheus metrics, tracing spans, and SQL/PGQ optional matching.
+
 ### Added
 
-- **Prometheus metrics export** (`metrics` feature): `MetricsRegistry::to_prometheus()` renders all counters, gauges, and histograms in Prometheus text exposition format, ready for `/metrics` HTTP endpoints; `GrafeoDB::metrics_prometheus()` provides one-call access; `snapshot_with_cache()` merges plan cache hit/miss/size stats into the snapshot
-- **Tracing spans**: structured `tracing` spans on query and transaction lifecycle boundaries (`grafeo::session::execute`, `grafeo::query::parse`, `grafeo::query::optimize`, `grafeo::query::plan`, `grafeo::query::execute`, `grafeo::tx::begin`, `grafeo::tx::commit`, `grafeo::tx::rollback`); zero-cost when no subscriber is registered
-- **SQL/PGQ LEFT OUTER JOIN**: `LEFT [OUTER] JOIN MATCH` and `OPTIONAL MATCH` syntax inside `GRAPH_TABLE(...)` expressions, producing `LeftJoinOp` with NULL-padded rows for unmatched patterns
+- **Prometheus metrics export** (`metrics`): `MetricsRegistry::to_prometheus()` renders counters, gauges, and histograms in Prometheus text format; `GrafeoDB::metrics_prometheus()` for one-call access; plan cache stats merged into snapshots
+- **Tracing spans**: structured spans on query and transaction lifecycle (`session::execute`, `query::parse/optimize/plan/execute`, `tx::begin/commit/rollback`); zero-cost when no subscriber is registered
+- **SQL/PGQ LEFT OUTER JOIN**: `LEFT [OUTER] JOIN MATCH` and `OPTIONAL MATCH` inside `GRAPH_TABLE(...)`, producing NULL-padded rows for unmatched patterns
 
 ### Changed
 
-- **Read-only expand fast path**: expand operators (`ExpandOperator`, `FactorizedExpandOperator`, `VariableLengthExpandOperator`, `LazyFactorizedChainOperator`) skip versioned MVCC lookups (`edge_type_versioned`, `is_edge_visible_versioned`) for read-only queries without active transactions, using cheaper epoch-only visibility checks instead
+- **Read-only expand fast path**: all expand operators skip versioned MVCC lookups for read-only queries, using cheaper epoch-only visibility checks
 
 ### Fixed
 
-- **Questioned edge (`->?`) row preservation**: `pre_expand_plan` was saved after the expand instead of before, causing the LeftJoin to collapse source rows instead of preserving them with NULLs; all unmatched source rows now correctly appear with NULL target columns
-- **Negative numeric literals in INSERT/CREATE property maps**: unary negation (e.g. `{lat: -6.248}`) was not folded at plan time, causing an "unsupported expression" error for both GQL and Cypher (#160)
+- **Questioned edge (`->?`) row preservation**: LeftJoin collapsed source rows instead of preserving them with NULLs
+- **Negative numeric literals in property maps**: unary negation (e.g. `{lat: -6.248}`) now folds correctly at plan time for both GQL and Cypher (#160)
 
 ## [0.5.22] - 2026-03-14
 
+Pretty printing, observability, RDF performance overhaul, and GQL conformance tracking.
+
 ### Added
 
-- **Pretty Print query results**: added a `Display` implementation for `QueryResult` records that now renders as an ASCII table. Replacing the old simple raw `Vec<Vec<Value>>` implementation.
-- **Observability** (`metrics` feature): lock-free `MetricsRegistry` with atomic counters and fixed-bucket histograms; `GrafeoDB::metrics()` returns a serializable snapshot, `reset_metrics()` clears all counters; included in `server` profile, zero overhead when disabled. Tracks query count, latency (p50/p99/mean), errors, timeouts, and rows returned/scanned across all 6 query languages (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ); transaction lifecycle (active, committed, rolled back, conflicts, duration p50/p99/mean); session lifecycle (active, created); GC sweep runs; plan cache hits, misses, size, and invalidations
-- **Edge visibility fast path**: `is_edge_visible_at_epoch()` and `is_edge_visible_versioned()` on `GraphStore` skip full edge construction when only checking MVCC visibility, matching the existing node visibility pattern
-- **Plan cache bindings**: `clear_plan_cache()` exposed in Python, Node.js, C, and WASM bindings
-- **RDF bulk load**: `RdfStore::bulk_load()` builds all indexes in a single pass with pre-sized HashMaps and computes statistics during the same traversal; `RdfStore::load_ntriples()` parses N-Triples documents with full term support (IRIs, blank nodes, typed/language-tagged literals)
-- **SPARQL EXPLAIN**: `EXPLAIN SELECT ...` prefix returns the optimized logical plan tree without executing the query, showing operator types and estimated cardinalities
-- **GQL conformance tracking**: `// ISO:` test annotations linking spec compliance tests to ISO/IEC 39075:2024 feature IDs; `scripts/gql-conformance.py` generates coverage reports and a machine-readable `docs/gql-dialect.json` dialect file for tools like GraphGlot (inspired by [community feedback](https://github.com/orgs/GrafeoDB/discussions/122))
-- **GQL binary set functions** (GF11): `COVAR_SAMP`, `COVAR_POP`, `CORR`, `REGR_SLOPE`, `REGR_INTERCEPT`, `REGR_R2`, `REGR_COUNT`, `REGR_SXX`, `REGR_SYY`, `REGR_SXY`, `REGR_AVGX`, `REGR_AVGY` aggregate functions for statistical analysis
+- **Pretty-printed query results**: `QueryResult` now renders as an ASCII table via `Display`, replacing the raw `Vec<Vec<Value>>` output
+- **Observability** (`metrics`): lock-free `MetricsRegistry` with atomic counters and fixed-bucket histograms, tracking queries, latency (p50/p99), errors, transactions, sessions, GC sweeps, and plan cache stats across all 6 query languages. Zero overhead when disabled
+- **Edge visibility fast path**: `is_edge_visible_at_epoch()` skips full edge construction when only checking MVCC visibility
+- **Plan cache bindings**: `clear_plan_cache()` in Python, Node.js, C, and WASM
+- **RDF bulk load**: `bulk_load()` builds all indexes in a single pass; `load_ntriples()` parses N-Triples with full term support (IRIs, blank nodes, typed/language-tagged literals)
+- **SPARQL EXPLAIN**: returns the optimized logical plan tree without executing
+- **GQL conformance tracking**: `// ISO:` test annotations linking to ISO/IEC 39075:2024 feature IDs, with `scripts/gql-conformance.py` for coverage reports and a machine-readable `gql-dialect.json` ([community feedback](https://github.com/orgs/GrafeoDB/discussions/122))
+- **GQL binary set functions** (GF11): 12 statistical aggregates (COVAR_SAMP/POP, CORR, REGR_SLOPE/INTERCEPT/R2/COUNT/SXX/SYY/SXY/AVGX/AVGY)
 
 ### Changed
 
-- **RDF query performance**: replaced O(N*M) nested loop joins with O(N+M) hash joins for all RDF join types (inner, left/OPTIONAL, semi/EXISTS, anti/NOT EXISTS); added composite indexes (SP, PO, OS) for O(1) lookup on 2-bound triple patterns (was linear filter over single-term index); SPARQL optimizer now uses RDF-specific statistics with triple pattern cardinality estimation
-- **Unsafe code enforcement**: `#![forbid(unsafe_code)]` on pure-safe crates (grafeo, grafeo-adapters, bindings-common, python, wasm), `#![deny(unsafe_code)]` on crates with targeted unsafe (grafeo-common, grafeo-core, grafeo-engine, grafeo-cli)
-- **GroupKeyPart zero-alloc**: `GroupKeyPart::String` now uses `ArcStr` instead of `String`, eliminating allocations during aggregation group key construction
-- **RDF code consolidation**: consolidated scattered RDF `#[cfg]` gates in `grafeo-engine` by extracting dedicated `database/rdf_ops.rs` and `session/rdf.rs` modules
+- **RDF query performance**: O(N*M) nested loop joins replaced with O(N+M) hash joins for all join types; composite indexes (SP, PO, OS) for O(1) lookup on 2-bound triple patterns; SPARQL optimizer uses RDF-specific statistics
+- **Unsafe code enforcement**: `#![forbid(unsafe_code)]` on pure-safe crates, `#![deny(unsafe_code)]` on crates with targeted unsafe
+- **GroupKeyPart zero-alloc**: uses `ArcStr` instead of `String`, eliminating allocations during aggregation
+- **RDF code consolidation**: scattered `#[cfg]` gates consolidated into dedicated `database/rdf_ops.rs` and `session/rdf.rs` modules
 
 ## [0.5.21] - 2026-03-13
 
@@ -118,11 +152,11 @@ First implementation of C# and Dart bindings, single file database completed, sn
 
 ### Added
 
-- **C# / .NET bindings** (`crates/bindings/csharp`): full-featured .NET 8 binding wrapping the C FFI layer via source-generated P/Invoke (`LibraryImport`). Includes `GrafeoDB` lifecycle (memory/persistent), GQL + multi-language query execution (sync and async), ACID transactions with auto-rollback, typed node/edge CRUD, vector search (k-NN + MMR), parameterized queries with temporal type support and a `SafeHandle`-based resource management pattern. tests across database, query, transaction and CRUD categories. CI matrix covers Ubuntu, Windows and macOS.
-- **Dart bindings** (`crates/bindings/dart`): Dart FFI binding for grafeo-c. Full API coverage including GQL query execution with parameterized queries (temporal type encoding via `$timestamp_us`, `$date`, `$duration` wire format), ACID transactions with commit/rollback, typed node/edge CRUD, vector search (MMR) and database lifecycle management. Uses `NativeFinalizer` for leak prevention, `late final` cached FFI lookups, sealed exception hierarchy matching C status codes and consistent `malloc` allocator usage. Tests with assertions across database, query, transaction, CRUD and error categories. CI matrix covers Ubuntu, Windows and macOS. Based on community PR #138 by @CorvusYe.
-- **Single-file `.grafeo` database format**: new persistence format stores the entire database in a single file with a sidecar WAL directory during operation (DuckDB-style). Features dual-header crash safety with CRC32 checksums, automatic format detection by file extension and seamless WAL checkpoint merging. Enable with the `grafeo-file` feature flag (included in `storage` and `full` profiles). Use `GrafeoDB::open("mydb.grafeo")` or `db.save("mydb.grafeo")` to create single-file databases. This previously deferred feature was pulled into this release to realize feature request #139 by @CorvusYe.
+- **C# / .NET bindings** (`crates/bindings/csharp`): .NET 8 P/Invoke binding wrapping grafeo-c. Covers GQL + multi-language queries (sync/async), ACID transactions, CRUD, vector search (k-NN + MMR), parameterized queries with temporal types, and SafeHandle resource management. CI on Ubuntu, Windows and macOS
+- **Dart bindings** (`crates/bindings/dart`): Dart FFI binding wrapping grafeo-c. Covers parameterized queries with temporal type encoding, ACID transactions, CRUD, vector search (MMR), NativeFinalizer for memory safety, and sealed exception hierarchy. CI on all three platforms. Based on community PR #138 by @CorvusYe
+- **Single-file `.grafeo` database format**: stores the entire database in one file with a sidecar WAL during operation (DuckDB-style). Dual-header crash safety with CRC32 checksums, auto format detection by extension, and WAL checkpoint merging. Use `GrafeoDB::open("mydb.grafeo")` or `db.save("mydb.grafeo")`. Realizes feature request #139 by @CorvusYe
 - **Exclusive file locking** for `.grafeo` files: prevents multiple processes from opening the same database file simultaneously. Lock is acquired on open and released on close/drop (uses `fs2` for cross-platform advisory locking).
-- **DDL schema persistence in snapshots**: `CREATE NODE TYPE`, `CREATE EDGE TYPE`, `CREATE GRAPH TYPE`, `CREATE PROCEDURE` and `CREATE SCHEMA` definitions now survive close/reopen cycles and export/import roundtrips. Snapshot format consolidated from v1/v2 to a single v3 format that includes full schema metadata alongside graph data.
+- **DDL schema persistence in snapshots**: CREATE NODE/EDGE/GRAPH TYPE, PROCEDURE and SCHEMA definitions survive close/reopen and export/import. Snapshot format consolidated to v3 with full schema metadata
 - **Crash injection testing** (`testing-crash-injection` feature): `maybe_crash()` instrumentation points in `write_snapshot` and `checkpoint_to_file` enable deterministic crash simulation for verifying sidecar WAL recovery
 - **Introspection functions**: `RETURN CURRENT_SCHEMA`, `RETURN CURRENT_GRAPH`, `RETURN info()`, `RETURN schema()` for querying session state and database metadata from within GQL
 
@@ -132,15 +166,15 @@ First implementation of C# and Dart bindings, single file database completed, sn
 
 ### Testing
 
-- **Seam tests for spec compliance**: systematic coverage of feature boundaries and negative paths targeting ISO/IEC 39075 sections 4.7.3, 7.1, 7.2, 8, 13, 16, 20.9 and 21; covers session state independence, transaction enforcement, DML edge cases, pattern matching boundaries, aggregate NULL semantics, CASE expressions, type coercion and cross-graph isolation; uncovered 3 spec deviations (DDL in READ ONLY transactions, SUM on empty sets, CASE ELSE with NULL comparisons)
+- **Spec compliance seam tests**: systematic coverage of ISO/IEC 39075 feature boundaries and negative paths (sessions, transactions, DML, patterns, aggregates, CASE, type coercion, cross-graph isolation). Uncovered 3 spec deviations
 
 ### Fixed
 
-- **DDL in READ ONLY transactions** (ISO/IEC 39075 Section 8): `CREATE GRAPH` and `DROP GRAPH` are now correctly blocked inside `START TRANSACTION READ ONLY`; previously they bypassed the read-only check because they were dispatched as session commands rather than schema commands
-- **SUM on empty set returns NULL** (ISO/IEC 39075 Section 20.9): `SUM()` over zero rows now returns `NULL` instead of `0`, matching the behavior of `AVG`, `MIN` and `MAX` on empty sets
-- **CASE WHEN with NULL conditions** (ISO/IEC 39075 Section 21): `CASE WHEN` expressions where the condition evaluates to NULL (e.g. comparing a missing property) now correctly fall through to `ELSE` instead of returning NULL for the entire expression
-- **`SESSION SET SCHEMA` / `SESSION SET GRAPH` separation** (ISO/IEC 39075 Section 7.1): session schema and session graph are now independent fields per the GQL standard; `SESSION SET SCHEMA` sets the session schema (validating against registered schemas), `SESSION SET GRAPH` sets the session graph (resolved within the current schema) and `SESSION RESET` supports independent targets (`SESSION RESET SCHEMA`, `SESSION RESET GRAPH`, `SESSION RESET TIME ZONE`, `SESSION RESET PARAMETERS`) per Section 7.2; graphs created within a schema are stored with schema-scoped keys for cross-schema isolation; added `SHOW SCHEMAS` command and `DROP SCHEMA` now enforces "schema must be empty" per Section 12.3
-- **`COUNT(*)` parsing** (ISO/IEC 39075 Section 20.9): `COUNT(*)` is now correctly parsed as a zero-argument aggregate counting all rows, rather than failing on the `*` token
+- **DDL in READ ONLY transactions** (ISO 39075 §8): CREATE/DROP GRAPH now blocked inside READ ONLY transactions
+- **SUM on empty set** (ISO 39075 §20.9): returns NULL instead of 0, matching AVG/MIN/MAX
+- **CASE WHEN with NULL conditions** (ISO 39075 §21): NULL conditions now correctly fall through to ELSE
+- **SESSION SET SCHEMA / GRAPH separation** (ISO 39075 §7.1-7.2): schema and graph are now independent session fields with independent reset targets, schema-scoped graph keys, and `SHOW SCHEMAS`. `DROP SCHEMA` enforces "must be empty" per §12.3
+- **COUNT(\*) parsing** (ISO 39075 §20.9): correctly parsed as a zero-argument aggregate
 
 ## [0.5.20] - 2026-03-11
 
@@ -165,8 +199,7 @@ GQL translator refactor, new methods, GQL improvements and fixes
 - **LOAD DATA (multi-format import)**: generalized `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET [WITH HEADERS] AS variable` in GQL, with Cypher-compatible `LOAD CSV` syntax preserved; JSONL behind `jsonl-import` feature, Parquet behind `parquet-import` feature
 - **Python `import_df()`**: bulk-import nodes or edges from a pandas or polars DataFrame via `db.import_df(df, 'nodes', label='Person')` or `db.import_df(df, 'edges', edge_type='KNOWS')`
 - **Memory introspection**: `db.memory_usage()` returns a hierarchical breakdown of heap usage across store, indexes, MVCC chains, query caches, string pools and buffer manager regions
-- **Named graph WAL persistence**: `CREATE GRAPH` / `DROP GRAPH` and all data mutations within named graphs are now WAL-logged and recovered on restart via `SwitchGraph` context records; concurrent sessions writing to different named graphs are safely interleaved
-- **Named graph snapshot persistence**: snapshot v2 format includes named graph data in `export_snapshot`, `import_snapshot`, `restore_snapshot`, `save` and `to_memory`; v1 snapshots remain backward-compatible
+- **Named graph persistence**: CREATE/DROP GRAPH and all mutations within named graphs are WAL-logged and recovered on restart. Snapshot v2 includes named graph data in all export/import/save paths; v1 snapshots remain backward-compatible
 - **SHOW GRAPHS**: `SHOW GRAPHS` lists all named graphs in the database, complementing existing `SHOW NODE TYPES` / `SHOW EDGE TYPES`
 - **RDF persistence**: SPARQL INSERT/DELETE/CLEAR/CREATE/DROP operations are now WAL-logged and recovered on restart; snapshot export/import includes RDF triples and RDF named graphs
 - **Cross-graph transactions**: `USE GRAPH` and `SESSION SET GRAPH` now work within active transactions; commit/rollback/savepoint operations apply atomically across all touched graphs
@@ -175,10 +208,10 @@ GQL translator refactor, new methods, GQL improvements and fixes
 
 ### Fixed
 
-- **Named graph data isolation** ([#133](https://github.com/GrafeoDB/grafeo/issues/133)): `USE GRAPH`, `SESSION SET SCHEMA` and `SESSION SET GRAPH` now correctly route all queries and mutations to the selected named graph instead of always using the default store; query cache keys include the active graph name to prevent cross-graph cache hits; dropping the active graph resets the session to default
-- **OPTIONAL MATCH WHERE pushdown**: right-side predicates are now correctly pushed into the join instead of filtering out NULL rows, with dedicated cost/cardinality estimation for LeftJoin
-- **Cypher COUNT(expr) NULL skipping**: `COUNT(expr)` now correctly skips NULLs (using `CountNonNull`), matching `COUNT(*)` which counts all rows
-- **Vector validity bitmap fix**: consecutive NULL pushes to the same column no longer silently drop null bits, fixing incorrect empty-string results in SPARQL OPTIONAL and RDF left joins
+- **Named graph data isolation** ([#133](https://github.com/GrafeoDB/grafeo/issues/133)): USE GRAPH / SESSION SET GRAPH now correctly route all queries to the selected graph; query cache keys include graph name; dropping the active graph resets session to default
+- **OPTIONAL MATCH WHERE pushdown**: right-side predicates pushed into the join instead of filtering out NULL rows
+- **Cypher COUNT(expr) NULL skipping**: `COUNT(expr)` now skips NULLs (using `CountNonNull`), matching `COUNT(*)` behavior
+- **Vector validity bitmap**: consecutive NULL pushes no longer silently drop null bits, fixing incorrect results in SPARQL OPTIONAL and RDF left joins
 
 ### Improved
 
@@ -192,32 +225,28 @@ Query language compliance improvements, expanded test coverage and Deriva compat
 
 ### Added
 
-- **Extensive spec test suites**: 8 Cypher spec modules (reading clauses, return/ordering, writing clauses, patterns, expressions, functions, types, admin/schema) and 12 GQL spec modules (data query, patterns, mutations, expressions, functions, types, schema DDL, sessions, procedures, predicates, subqueries, composite) covering 1,300+ test cases
-- **Cypher exotic integration tests**: 67 end-to-end Cypher tests covering exotic query patterns (NOT EXISTS subqueries, any() predicates, reduce, list comprehensions, collect with maps, OPTIONAL MATCH, CASE WHEN, elementId, multi-label MATCH, etc.)
+- **Extensive spec test suites**: 8 Cypher + 12 GQL spec modules covering 1,300+ test cases, plus 67 Cypher exotic integration tests (NOT EXISTS, any()/reduce, list comprehensions, OPTIONAL MATCH, CASE, multi-label, etc.)
 
 ### Fixed (Cypher)
 
-- **CALL subquery variable scope**: `CALL { WITH p MATCH (p)-[:KNOWS]->(q) RETURN q.name AS friend }` now correctly resolves inner RETURN columns in the outer query instead of returning NULL
-- **RETURN after DELETE**: `DETACH DELETE n RETURN count(n)` no longer fails with "Variable not found"; delete operators pass through input rows for downstream aggregation
-- **Inline MERGE with relationship SET**: `MERGE (a:L {id:1})-[r:REL]->(b:L {id:2}) SET r.weight = 0.5` decomposes inline node patterns into chained MERGE operations
-- **WITH \* wildcard**: `WITH *` now correctly passes all bound variables through instead of failing to parse
-- **DoubleDash edge patterns**: undirected relationship patterns using `--` are now parsed alongside `-[]-` syntax
+- **CALL subquery variable scope**: inner RETURN columns now resolve in the outer query instead of returning NULL
+- **RETURN after DELETE**: delete operators pass through input rows for downstream aggregation
+- **Inline MERGE with relationship SET**: decomposes inline node patterns into chained MERGE operations
+- **WITH \* wildcard**: correctly passes all bound variables through
+- **DoubleDash edge patterns**: undirected `--` patterns now parsed alongside `-[]-` syntax
 
 ### Fixed (GQL)
 
-- **CALL { subquery }**: `CALL { ... } RETURN ...` is now recognized as a query-level clause instead of a procedure call
-- **WITH + LET bindings**: LET clauses immediately after WITH are now parsed and attached correctly
-- **String concatenation operator**: `||` (CONCAT) is now supported in arithmetic expressions
-- **Inline MERGE with relationship SET**: same decomposition fix applied to the GQL translator
+- **CALL { subquery }** recognized as query-level clause instead of procedure call
+- **WITH + LET bindings**: LET clauses after WITH parsed and attached correctly
+- **String concatenation**: `||` (CONCAT) now supported in arithmetic expressions
+- **Inline MERGE with relationship SET**: same decomposition fix as Cypher
 
 ### Fixed
 
-- **Multiple NOT EXISTS subqueries**: queries with two or more `NOT EXISTS { ... }` predicates no longer fail with variable-not-found errors
-- **SET property transaction rollback**: `SET n.prop = value` changes within a transaction are now correctly undone on `ROLLBACK`
-- **Label mutation rollback**: `SET n:Label` and `REMOVE n:Label` changes are correctly undone on `ROLLBACK`
-- **MERGE ON MATCH SET rollback**: properties updated via `MERGE ... ON MATCH SET` are correctly restored on `ROLLBACK`
-- **Savepoint partial rollback**: `ROLLBACK TO SAVEPOINT` now undoes property and label mutations made after the savepoint while preserving earlier changes
-- **NPM package missing native binaries** ([#128](https://github.com/GrafeoDB/grafeo/issues/128)): `@grafeo-db/js` now publishes per-platform packages (`@grafeo-db/js-darwin-arm64`, `@grafeo-db/js-linux-x64-gnu`, etc.) as `optionalDependencies`, so `npm install` and `bun install` pull the correct native binary automatically
+- **Multiple NOT EXISTS subqueries**: two or more `NOT EXISTS` predicates no longer cause variable-not-found errors
+- **Transaction rollback**: SET property, SET/REMOVE label, and MERGE ON MATCH SET changes all correctly undone on ROLLBACK. Savepoint partial rollback preserves earlier changes
+- **NPM package missing native binaries** ([#128](https://github.com/GrafeoDB/grafeo/issues/128)): `@grafeo-db/js` now publishes per-platform packages as `optionalDependencies`
 
 ## [0.5.17] - 2026-03-09
 
@@ -328,39 +357,39 @@ Big language compliance push, schema DDL, time-travel and named graphs
 
 #### Infrastructure
 
-- **LPG named graphs**: multi-graph support with per-graph storage, labels, indexes and MVCC versioning. Public API: `create_graph()`, `drop_graph()`, `list_graphs()`
+- **LPG named graphs**: multi-graph support with per-graph storage, labels, indexes and MVCC versioning (`create_graph()`, `drop_graph()`, `list_graphs()`)
 - **Apply operator**: correlated subquery execution for CALL, VALUE, NEXT and pattern comprehensions
-- **Temporal types**: `Date`, `Time`, `Duration` with ISO 8601 parsing, arithmetic and component extraction. JSON encoding as `{"$date": "..."}` etc. Python round-trips via `datetime.date`/`datetime.time`
+- **Temporal types**: `Date`, `Time`, `Duration` with ISO 8601 parsing, arithmetic and component extraction. Python round-trips via `datetime.date`/`datetime.time`
 
-#### Schema / DDL System
+#### Schema / DDL
 
-- **Full schema DDL via GQL**: `CREATE`/`DROP`/`ALTER` for NODE TYPE, EDGE TYPE, GRAPH TYPE, INDEX, CONSTRAINT and SCHEMA, with `OR REPLACE`, `IF NOT EXISTS`/`IF EXISTS` and WAL persistence
-- **Type definitions**: `CREATE NODE TYPE Person (name STRING NOT NULL, age INT64)` with property types and nullability
+- **Full schema DDL**: CREATE/DROP/ALTER for NODE TYPE, EDGE TYPE, GRAPH TYPE, INDEX, CONSTRAINT and SCHEMA, with `OR REPLACE`, `IF NOT EXISTS`/`IF EXISTS` and WAL persistence
+- **Type definitions**: `CREATE NODE TYPE Person (name STRING NOT NULL, age INT64)` with nullability
 - **Index DDL**: `CREATE INDEX ... FOR (n:Label) ON (n.property) [USING TEXT|VECTOR|BTREE]`
-- **Constraint enforcement**: UNIQUE, NOT NULL, NODE KEY, EXISTS constraints validated on writes
+- **Constraint enforcement**: UNIQUE, NOT NULL, NODE KEY, EXISTS validated on writes
 
 #### Time-Travel
 
-- **Epoch-based time-travel**: `execute_at_epoch(query, epoch)` runs any query against a historical snapshot. Also available as a persistent session mode via `set_viewing_epoch()` or `SESSION SET PARAMETER viewing_epoch = <n>`
-- **Version history**: `get_node_history(id)` and `get_edge_history(id)` return all versions with creation/deletion epochs
+- **Epoch-based time-travel**: `execute_at_epoch(query, epoch)` runs any query against a historical snapshot. Also available via `set_viewing_epoch()` or `SESSION SET PARAMETER viewing_epoch = <n>`
+- **Version history**: `get_node_history(id)` / `get_edge_history(id)` return all versions with creation/deletion epochs
 
 #### GQL Spec Compliance (78% to ~97%)
 
-- **New syntax**: LIKE operator, CAST to temporal types, SET map operations (`= {map}`, `+= {map}`), NODETACH DELETE, RETURN \*/WITH \*, list comprehensions and predicates in RETURN, transaction characteristics, zoned temporal types, ALTER DDL, CREATE GRAPH TYPED, stored procedures
-- **List property storage**: `reduce()` and list operations now work correctly after INSERT with list-valued properties
+- **New syntax**: LIKE, CAST to temporal, SET map operations (`= {map}`, `+= {map}`), NODETACH DELETE, RETURN \*/WITH \*, list comprehensions, transaction characteristics, zoned temporals, ALTER DDL, CREATE GRAPH TYPED, stored procedures
+- **List property storage**: `reduce()` and list operations work correctly after INSERT with list-valued properties
 
 ### Fixed
 
-- **Time-travel scans**: now use pure epoch-based visibility instead of transaction-aware checks that bypassed epoch filtering
+- **Time-travel scans**: now use pure epoch-based visibility instead of transaction-aware checks
 - **LIKE parser**: token existed but was never consumed as an infix operator
-- **RETURN * binder**: was incorrectly rejected as an undefined variable
-- **List comprehensions in projections**: planner now handles these in RETURN clauses
+- **RETURN \* binder**: was incorrectly rejected as an undefined variable
+- **List comprehensions**: planner now handles these in RETURN projections
 - **Cypher fixes**: standalone DELETE/SET/REMOVE error messages, `^` power operator, anonymous variable name collisions
-- **Temporal comparison**: 10 compare_values paths now handle Date/Time/Timestamp (previously returned false silently)
+- **Temporal comparison**: Date/Time/Timestamp comparisons no longer silently return false
 
 ### Improved
 
-- **Test coverage**: 80+ GQL parser tests (was 44), 137 Python GQL compliance tests (was 100), new SPARQL and Cypher compliance suites
+- **Test coverage**: 80+ GQL parser tests (was 44), 137 Python compliance tests (was 100), new SPARQL and Cypher suites
 
 ## [0.5.12] - 2026-03-02
 

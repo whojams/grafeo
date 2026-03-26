@@ -764,9 +764,12 @@ impl ExpressionPredicate {
                 let col = chunk.column(col_idx)?;
                 let node_id = col.get_node_id(row)?;
                 let node = self.resolve_node(node_id)?;
-                let labels: Vec<Value> = node
-                    .labels
-                    .iter()
+                // Sort labels so sets with the same members always produce
+                // the same list, regardless of internal storage order.
+                let mut sorted: Vec<&arcstr::ArcStr> = node.labels.iter().collect();
+                sorted.sort();
+                let labels: Vec<Value> = sorted
+                    .into_iter()
                     .map(|l| Value::String(l.clone()))
                     .collect();
                 Some(Value::List(labels.into()))
@@ -1587,9 +1590,10 @@ impl ExpressionPredicate {
                     let col = chunk.column(col_idx)?;
                     let node_id = col.get_node_id(row)?;
                     let node = self.resolve_node(node_id)?;
-                    let labels: Vec<Value> = node
-                        .labels
-                        .iter()
+                    let mut sorted: Vec<&arcstr::ArcStr> = node.labels.iter().collect();
+                    sorted.sort();
+                    let labels: Vec<Value> = sorted
+                        .into_iter()
                         .map(|l| Value::String(l.clone()))
                         .collect();
                     return Some(Value::List(labels.into()));

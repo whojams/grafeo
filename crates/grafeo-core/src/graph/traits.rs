@@ -537,7 +537,7 @@ pub trait GraphStoreMut: GraphStore {
 
 /// A no-op [`GraphStore`] that returns empty results for all queries.
 ///
-/// Used by the RDF planner to satisfy [`ExpressionPredicate`]'s store
+/// Used by the RDF planner to satisfy the expression evaluator's store
 /// requirement. SPARQL expression functions (STR, LANG, DATATYPE, etc.)
 /// operate on already-materialized values in DataChunk columns and never
 /// call store methods.

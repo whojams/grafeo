@@ -1271,8 +1271,9 @@ mod issue_187_extended {
         assert_eq!(
             result.row_count(),
             2,
-            "Expected exactly 2 rows (one per distinct label-set), got {}",
-            result.row_count()
+            "Expected exactly 2 rows (one per distinct label-set), got {}: {:?}",
+            result.row_count(),
+            result.rows
         );
     }
 

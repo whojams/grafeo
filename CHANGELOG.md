@@ -40,9 +40,12 @@ C FFI overhaul, Dart expansion, binding-wide usability audit, grafeo-memory engi
 - **Vector search filter optimization**: operator filters ($gt, $lt, etc.) now scan only the narrowed allowlist instead of all nodes
 - **Single-file storage silent failure** (#185): no file created when WAL disabled
 - **C API `grafeo_current_schema` memory leak**: returned caller-owned pointer but docs said not to free; now uses thread-local storage
-- **C API `out_count` uninitialized on error**: `vector_search`, `mmr_search`, and `batch_create_nodes` now zero `out_count` before the main operation
+- **C API `out_count` uninitialized on error**: `vector_search`, `mmr_search`, `batch_create_nodes`, and `find_nodes_by_property` now zero all output pointers (`out_count`, `out_ids`, `out_distances`) before the main operation
 - **Windows read-only file ops failure**: skipped `sync_all()` on read-only handles in both `close()` and `sync()`
-- **Adjacency benchmark regression** (~2x): reduced `SmallVec` inline capacity from 16 to 4
+- **Adjacency inline capacity**: raised `SmallVec` from 4 to 8, balancing L1 cache residency with fewer heap allocations for typical node degrees
+- **ORDER BY complex expressions leaked columns**: `RETURN n.name ORDER BY labels(n)[0]` included a synthetic `__expr_` column in results. Complex ORDER BY expressions are now computed inside the augmented Return and stripped after sorting
+- **GROUP BY on list-valued keys**: `GROUP BY labels(n)` on multi-label nodes produced extra rows because `GroupKeyPart` lacked a `List` variant. Added recursive `List(Vec<GroupKeyPart>)` with proper Hash/Eq, and fixed push-based aggregator `hash_value()` which mapped all lists to `0u8`
+- **SPARQL GROUP BY/ORDER BY with expressions**: `GROUP BY (STR(?s))` and `ORDER BY ASC(STR(?s))` failed with "Store required for expression evaluation". RDF planner now passes a `NullGraphStore` to `ProjectOperator` for expression evaluation
 
 ## [0.5.26] - 2026-03-25
 

@@ -51,7 +51,7 @@ metrics = ["grafeo-engine/metrics"]  # Lock-free query, transaction, and session
 tracing = ["grafeo-engine/tracing"]  # Observability spans and events
 
 # Named profiles (ecosystem-aligned)
-embedded = ["gql", "ai", "algos", "parallel", "regex"]  # Python libs, MCP, in-process (default)
+embedded = ["gql", "ai", "algos", "parallel", "regex", "grafeo-file"]  # Python libs, MCP, in-process (default)
 browser = ["gql", "regex-lite"]  # WASM / grafeo-web
 server = ["embedded", "languages", "storage", "rdf", "cdc", "tracing"]  # grafeo-server
 full = ["server"]  # Everything (except embed)

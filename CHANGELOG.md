@@ -2,6 +2,14 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.28] - 2026-03-27
+
+Hotfix: single-file `.grafeo` storage was silently disabled in all bindings.
+
+### Fixed
+
+- **Single-file storage broken in bindings** (#185): `grafeo-file` feature was missing from the `embedded` profile, causing `grafeo_open_single_file` and `.grafeo` auto-detection to silently fall back to WAL directory format. Added `grafeo-file` to engine defaults, `embedded` profile, and all binding crates (C, Python, Node.js, facade)
+
 ## [0.5.27] - 2026-03-27
 
 C FFI overhaul, Dart expansion, binding-wide usability audit, grafeo-memory engine support.

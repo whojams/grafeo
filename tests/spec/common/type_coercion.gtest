@@ -1,0 +1,119 @@
+# Common: Type coercion
+#
+# Covers: Cross-type comparisons (Int64 vs Float64), mixed-type arithmetic,
+# mixed-type aggregation, and type identity edge cases.
+# These are data-model-agnostic and apply to all LPG languages.
+
+meta:
+  language: gql
+  model: lpg
+  section: coercion
+  title: Type coercion
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Integer vs Float comparison
+  # ---------------------------------------------------------------------------
+
+  - name: int_gt_float
+    setup:
+      - "INSERT (:Num {v: 3})"
+    query: MATCH (n:Num) WHERE n.v > 2.5 RETURN n.v AS v
+    expect:
+      rows:
+        - [3]
+
+  - name: int_lt_float
+    setup:
+      - "INSERT (:Num {v: 2})"
+    query: MATCH (n:Num) WHERE n.v < 2.5 RETURN n.v AS v
+    expect:
+      rows:
+        - [2]
+
+  - name: int_eq_float
+    setup:
+      - "INSERT (:Num {v: 5})"
+    query: MATCH (n:Num) WHERE n.v = 5.0 RETURN n.v AS v
+    expect:
+      rows:
+        - [5]
+
+  - name: same_type_int_comparison
+    setup:
+      - "INSERT (:Num {v: 3})"
+    query: MATCH (n:Num) WHERE n.v > 2 RETURN n.v AS v
+    expect:
+      rows:
+        - [3]
+
+  - name: same_type_float_comparison
+    setup:
+      - "INSERT (:Num {v: 3.5})"
+    query: MATCH (n:Num) WHERE n.v > 2.0 RETURN n.v AS v
+    expect:
+      rows:
+        - [3.5]
+
+  # ---------------------------------------------------------------------------
+  # Mixed-type arithmetic
+  # ---------------------------------------------------------------------------
+
+  - name: int_plus_float
+    setup:
+      - "INSERT (:Num {v: 3})"
+    query: MATCH (n:Num) RETURN n.v + 0.5 AS result
+    expect:
+      rows:
+        - [3.5]
+
+  # ---------------------------------------------------------------------------
+  # Mixed-type aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: sum_mixed_int_float
+    setup:
+      - "INSERT (:Val {n: 10})"
+      - "INSERT (:Val {n: 20.5})"
+      - "INSERT (:Val {n: 30})"
+    query: MATCH (v:Val) RETURN sum(v.n) AS total
+    expect:
+      rows:
+        - [60.5]
+
+  # ---------------------------------------------------------------------------
+  # Type identity edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: string_false_is_not_boolean_false
+    setup:
+      - "INSERT (:T {v: false})"
+    query: "MATCH (t:T) WHERE t.v = 'false' RETURN t.v"
+    expect:
+      empty: true
+
+  - name: empty_string_is_not_null
+    setup:
+      - "INSERT (:T {v: ''})"
+    query: MATCH (t:T) WHERE t.v IS NOT NULL RETURN t.v IS NOT NULL AS result
+    expect:
+      rows:
+        - [true]
+
+  - name: zero_is_not_null
+    setup:
+      - "INSERT (:T {v: 0})"
+    query: MATCH (t:T) WHERE t.v IS NOT NULL RETURN t.v IS NOT NULL AS result
+    expect:
+      rows:
+        - [true]
+
+  - name: boolean_false_is_not_null
+    setup:
+      - "INSERT (:T {v: false})"
+    query: MATCH (t:T) WHERE t.v IS NOT NULL RETURN t.v IS NOT NULL AS result
+    expect:
+      rows:
+        - [true]

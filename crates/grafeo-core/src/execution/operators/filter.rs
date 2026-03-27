@@ -1304,7 +1304,7 @@ impl ExpressionPredicate {
                         Some(Value::Timestamp(ts.add_duration(dur)))
                     }
                     (Value::Duration(a), Value::Duration(b)) => Some(Value::Duration(a.add(*b))),
-                    _ => self.eval_arithmetic(left, right, |a, b| a + b, |a, b| a + b),
+                    _ => self.eval_arithmetic(left, right, i64::checked_add, |a, b| a + b),
                 }
             }
             BinaryFilterOp::Sub => match (left, right) {
@@ -1335,19 +1335,19 @@ impl ExpressionPredicate {
                     )))
                 }
                 (Value::Duration(a), Value::Duration(b)) => Some(Value::Duration(a.sub(*b))),
-                _ => self.eval_arithmetic(left, right, |a, b| a - b, |a, b| a - b),
+                _ => self.eval_arithmetic(left, right, i64::checked_sub, |a, b| a - b),
             },
             BinaryFilterOp::Mul => match (left, right) {
                 (Value::Duration(d), Value::Int64(n)) | (Value::Int64(n), Value::Duration(d)) => {
                     Some(Value::Duration(d.mul(*n)))
                 }
-                _ => self.eval_arithmetic(left, right, |a, b| a * b, |a, b| a * b),
+                _ => self.eval_arithmetic(left, right, i64::checked_mul, |a, b| a * b),
             },
             BinaryFilterOp::Div => match (left, right) {
                 (Value::Duration(d), Value::Int64(n)) if *n != 0 => {
                     Some(Value::Duration(d.div(*n)))
                 }
-                _ => self.eval_arithmetic(left, right, |a, b| a / b, |a, b| a / b),
+                _ => self.eval_arithmetic(left, right, i64::checked_div, |a, b| a / b),
             },
             BinaryFilterOp::Mod => self.eval_modulo(left, right),
             // String operators
@@ -1473,11 +1473,11 @@ impl ExpressionPredicate {
         float_op: F2,
     ) -> Option<Value>
     where
-        F1: Fn(i64, i64) -> i64,
+        F1: Fn(i64, i64) -> Option<i64>,
         F2: Fn(f64, f64) -> f64,
     {
         match (left, right) {
-            (Value::Int64(a), Value::Int64(b)) => Some(Value::Int64(int_op(*a, *b))),
+            (Value::Int64(a), Value::Int64(b)) => int_op(*a, *b).map(Value::Int64),
             (Value::Float64(a), Value::Float64(b)) => Some(Value::Float64(float_op(*a, *b))),
             (Value::Int64(a), Value::Float64(b)) => Some(Value::Float64(float_op(*a as f64, *b))),
             (Value::Float64(a), Value::Int64(b)) => Some(Value::Float64(float_op(*a, *b as f64))),
@@ -1487,7 +1487,7 @@ impl ExpressionPredicate {
 
     fn eval_modulo(&self, left: &Value, right: &Value) -> Option<Value> {
         match (left, right) {
-            (Value::Int64(a), Value::Int64(b)) if *b != 0 => Some(Value::Int64(a % b)),
+            (Value::Int64(a), Value::Int64(b)) if *b != 0 => a.checked_rem(*b).map(Value::Int64),
             (Value::Float64(a), Value::Float64(b)) if *b != 0.0 => Some(Value::Float64(a % b)),
             (Value::Int64(a), Value::Float64(b)) if *b != 0.0 => {
                 Some(Value::Float64(*a as f64 % b))
@@ -3254,7 +3254,7 @@ impl ExpressionPredicate {
                 val.is_some() && !matches!(val, Some(Value::Null)),
             )),
             UnaryFilterOp::Neg => match val? {
-                Value::Int64(i) => Some(Value::Int64(-i)),
+                Value::Int64(i) => i.checked_neg().map(Value::Int64),
                 Value::Float64(f) => Some(Value::Float64(-f)),
                 _ => None,
             },

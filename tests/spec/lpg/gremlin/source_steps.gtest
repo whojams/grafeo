@@ -1,0 +1,109 @@
+# Gremlin source steps: g.V(), g.E(), addV(), addE() with properties
+#
+# Covers: vertex scan, edge scan, vertex creation, edge creation.
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "source"
+  title: Source Steps
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # g.V() - vertex scan
+  # ---------------------------------------------------------------------------
+
+  - name: g_v_all
+    query: g.V()
+    expect:
+      count: 4
+
+  - name: g_v_count
+    query: g.V().count()
+    expect:
+      rows:
+        - [4]
+
+  - name: g_v_has_label_person
+    query: g.V().hasLabel('Person')
+    expect:
+      count: 3
+
+  - name: g_v_has_label_company
+    query: g.V().hasLabel('Company')
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # g.E() - edge scan
+  # ---------------------------------------------------------------------------
+
+  - name: g_e_all
+    query: g.E()
+    expect:
+      count: 3
+
+  - name: g_e_count
+    query: g.E().count()
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # g.addV() - vertex creation
+  # ---------------------------------------------------------------------------
+
+  - name: add_v_basic
+    setup:
+      - "g.addV('Robot')"
+    query: g.V().hasLabel('Robot').count()
+    expect:
+      rows:
+        - [1]
+
+  - name: add_v_with_properties
+    setup:
+      - "g.addV('Robot').property('name', 'R2D2').property('height', 96)"
+    query: "g.V().has('Robot', 'name', 'R2D2').values('height')"
+    expect:
+      rows:
+        - [96]
+
+  - name: add_v_multiple
+    setup:
+      - "g.addV('Sensor').property('name', 'Temp')"
+      - "g.addV('Sensor').property('name', 'Humidity')"
+    query: g.V().hasLabel('Sensor').count()
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # addE() - edge creation (step-level)
+  # ---------------------------------------------------------------------------
+
+  - name: add_e_step_level
+    setup:
+      - "g.V().has('Person', 'name', 'Vincent').addE('KNOWS').to(g.V().has('Person', 'name', 'Alix'))"
+    query: "g.V().has('Person', 'name', 'Vincent').out('KNOWS').values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: add_e_with_property
+    setup:
+      - "g.V().has('Person', 'name', 'Vincent').addE('KNOWS').to(g.V().has('Person', 'name', 'Alix')).property('since', 2024)"
+    query: "g.V().has('Person', 'name', 'Vincent').outE('KNOWS').has('since', 2024).count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: add_e_source_level
+    setup:
+      - "g.addE('KNOWS').from(g.V().has('Person', 'name', 'Vincent')).to(g.V().has('Person', 'name', 'Alix'))"
+    query: "g.V().has('Person', 'name', 'Vincent').out('KNOWS').values('name')"
+    expect:
+      rows:
+        - [Alix]

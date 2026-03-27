@@ -1,0 +1,86 @@
+# GQL REMOVE and DELETE: ISO/IEC 39075:2024 sec 15.3
+
+meta:
+  language: gql
+  model: lpg
+  section: "15.3"
+  title: REMOVE and DELETE clauses
+  dataset: empty
+
+tests:
+
+  - name: remove_property
+    setup:
+      - "INSERT (:Person {name: 'Alix', temp: 'delete_me'})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) REMOVE n.temp"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.temp"
+    expect:
+      rows:
+        - [null]
+
+  - name: remove_property_preserves_others
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30, temp: 'delete_me'})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) REMOVE n.temp"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: remove_label
+    setup:
+      - "INSERT (:Person:Admin {name: 'Alix'})"
+    statements:
+      - "MATCH (n:Admin {name: 'Alix'}) REMOVE n:Admin"
+      - "MATCH (n:Admin) RETURN n"
+    expect:
+      empty: true
+
+  - name: delete_isolated_node
+    setup:
+      - "INSERT (:Temp {name: 'ToDelete'})"
+    statements:
+      - "MATCH (n:Temp) DELETE n"
+      - "MATCH (n:Temp) RETURN n"
+    expect:
+      empty: true
+
+  - name: delete_edge
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'})-[r:KNOWS]->(b:Person {name: 'Gus'}) DELETE r"
+      - "MATCH ()-[r:KNOWS]->() RETURN r"
+    expect:
+      empty: true
+
+  - name: delete_edge_preserves_nodes
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'})-[r:KNOWS]->(b:Person {name: 'Gus'}) DELETE r"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: detach_delete_node_with_edges
+    setup:
+      - "INSERT (:Temp {name: 'A'})-[:REL]->(:Temp {name: 'B'})"
+    statements:
+      - "MATCH (n:Temp {name: 'A'}) DETACH DELETE n"
+      - "MATCH (n:Temp) RETURN n.name"
+    expect:
+      rows:
+        - [B]
+
+  - name: detach_delete_removes_edges
+    setup:
+      - "INSERT (:Temp {name: 'A'})-[:REL]->(:Temp {name: 'B'})"
+    statements:
+      - "MATCH (n:Temp {name: 'A'}) DETACH DELETE n"
+      - "MATCH ()-[r:REL]->() RETURN r"
+    expect:
+      empty: true

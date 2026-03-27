@@ -1,0 +1,218 @@
+//! Runtime support for .gtest spec tests.
+//!
+//! Provides helper functions called by the build.rs-generated test code:
+//! dataset loading, query execution, and result comparison.
+
+use std::fs;
+use std::path::PathBuf;
+
+use grafeo_common::types::Value;
+use grafeo_common::utils::error::Result;
+use grafeo_engine::GrafeoDB;
+use grafeo_engine::database::QueryResult;
+
+/// Root directory of the grafeo repository.
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+/// Load a dataset .setup file into the database.
+pub fn load_dataset(db: &GrafeoDB, relative_path: &str) {
+    let path = repo_root().join(relative_path);
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read dataset {}: {e}", path.display()));
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        db.execute(trimmed)
+            .unwrap_or_else(|e| panic!("Dataset query failed: {trimmed}\nError: {e}"));
+    }
+}
+
+/// Execute a query in the specified language, panicking on failure.
+pub fn execute_query(db: &GrafeoDB, language: &str, query: &str) {
+    execute_query_result(db, language, query)
+        .unwrap_or_else(|e| panic!("Query failed: {query}\nLanguage: {language}\nError: {e}"));
+}
+
+/// Execute a query in the specified language, returning the Result.
+pub fn execute_query_result(db: &GrafeoDB, language: &str, query: &str) -> Result<QueryResult> {
+    match language {
+        "gql" | "" => db.execute(query),
+        #[cfg(feature = "cypher")]
+        "cypher" => db.execute_cypher(query),
+        // SPARQL needs rdf feature on grafeo-engine (not enabled by default)
+        // #[cfg(feature = "sparql")]
+        // "sparql" => db.execute_sparql(query),
+        #[cfg(feature = "gremlin")]
+        "gremlin" => db.execute_gremlin(query),
+        #[cfg(feature = "graphql")]
+        "graphql" => db.execute_graphql(query),
+        #[cfg(feature = "sql-pgq")]
+        "sql-pgq" | "sql_pgq" => db.execute_sql(query),
+        other => panic!("Unsupported language: {other}"),
+    }
+}
+
+/// Convert a QueryResult into rows of string values for comparison.
+pub fn result_to_strings(result: &QueryResult) -> Vec<Vec<String>> {
+    result
+        .rows
+        .iter()
+        .map(|row| row.iter().map(value_to_string).collect())
+        .collect()
+}
+
+/// Convert a Value to its canonical string representation for comparison.
+pub fn value_to_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Int64(n) => n.to_string(),
+        Value::Float64(f) => {
+            if f.is_infinite() {
+                if f.is_sign_positive() {
+                    "Infinity".to_string()
+                } else {
+                    "-Infinity".to_string()
+                }
+            } else if f.is_nan() {
+                "NaN".to_string()
+            } else {
+                format!("{f}")
+            }
+        }
+        Value::String(s) => s.to_string(),
+        Value::List(items) => {
+            let inner: Vec<String> = items.iter().map(value_to_string).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::Map(map) => {
+            let mut entries: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", value_to_string(v)))
+                .collect();
+            entries.sort();
+            format!("{{{}}}", entries.join(", "))
+        }
+        Value::Date(d) => d.to_string(),
+        Value::Time(t) => t.to_string(),
+        Value::Timestamp(ts) => ts.to_string(),
+        Value::ZonedDatetime(zdt) => zdt.to_string(),
+        Value::Duration(d) => d.to_string(),
+        Value::Vector(v) => format!("{v:?}"),
+        Value::Bytes(b) => format!("bytes[{}]", b.len()),
+        Value::Path { nodes, edges } => {
+            format!("path[{} nodes, {} edges]", nodes.len(), edges.len())
+        }
+        Value::GCounter(counts) => {
+            let total: u64 = counts.values().sum();
+            format!("{total}")
+        }
+        Value::OnCounter { pos, neg } => {
+            let pos_sum: u64 = pos.values().sum();
+            let neg_sum: u64 = neg.values().sum();
+            format!("{}", pos_sum as i64 - neg_sum as i64)
+        }
+    }
+}
+
+/// Assert rows match after sorting both sides.
+pub fn assert_rows_sorted(result: &QueryResult, expected: &[Vec<String>]) {
+    let mut actual = result_to_strings(result);
+    let mut expected = expected.to_vec();
+
+    // Sort both
+    actual.sort();
+    expected.sort();
+
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "Row count mismatch: got {} rows, expected {}\nActual: {actual:?}\nExpected: {expected:?}",
+        actual.len(),
+        expected.len()
+    );
+
+    for (i, (act, exp)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(
+            act.len(),
+            exp.len(),
+            "Column count mismatch at row {i}: got {} cols, expected {}\nActual row: {act:?}\nExpected row: {exp:?}",
+            act.len(),
+            exp.len()
+        );
+        for (j, (a, e)) in act.iter().zip(exp.iter()).enumerate() {
+            assert_eq!(
+                a, e,
+                "Mismatch at sorted row {i}, col {j}: got '{a}', expected '{e}'\nFull actual row: {act:?}\nFull expected row: {exp:?}"
+            );
+        }
+    }
+}
+
+/// Assert rows match in exact order.
+pub fn assert_rows_ordered(result: &QueryResult, expected: &[Vec<String>]) {
+    let actual = result_to_strings(result);
+
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "Row count mismatch: got {} rows, expected {}\nActual: {actual:?}\nExpected: {expected:?}",
+        actual.len(),
+        expected.len()
+    );
+
+    for (i, (act, exp)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(
+            act.len(),
+            exp.len(),
+            "Column count mismatch at row {i}: got {} cols, expected {}\nActual row: {act:?}\nExpected row: {exp:?}",
+            act.len(),
+            exp.len()
+        );
+        for (j, (a, e)) in act.iter().zip(exp.iter()).enumerate() {
+            assert_eq!(
+                a, e,
+                "Mismatch at row {i}, col {j}: got '{a}', expected '{e}'\nFull actual row: {act:?}\nFull expected row: {exp:?}"
+            );
+        }
+    }
+}
+
+/// Assert result hash matches (MD5 of sorted, pipe-delimited rows).
+pub fn assert_hash(result: &QueryResult, expected_hash: &str) {
+    use md5::{Digest, Md5};
+
+    let mut rows = result_to_strings(result);
+    rows.sort();
+
+    let mut hasher = Md5::new();
+    for row in &rows {
+        hasher.update(row.join("|").as_bytes());
+        hasher.update(b"\n");
+    }
+    let hash = format!("{:x}", hasher.finalize());
+
+    assert_eq!(
+        hash, expected_hash,
+        "Hash mismatch: got '{hash}', expected '{expected_hash}'\nRows: {rows:?}"
+    );
+}
+
+// Include the generated test code
+#[cfg(test)]
+mod generated {
+    use super::*;
+    use grafeo_engine::GrafeoDB;
+
+    include!(concat!(env!("OUT_DIR"), "/spec_tests.rs"));
+}

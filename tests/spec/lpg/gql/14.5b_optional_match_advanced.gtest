@@ -1,0 +1,300 @@
+# GQL Advanced OPTIONAL MATCH: ISO/IEC 39075:2024 sec 14.5 (extended)
+#
+# Covers: NULL semantics (IS NOT NULL, COALESCE, CASE WHEN),
+# aggregation after OPTIONAL MATCH (count, collect, sum, per-group),
+# chained OPTIONAL MATCHHes, cross-predicates, label filters.
+#
+# The social network fixture:
+# Alix(30, NYC) -KNOWS-> Gus(25, NYC) -KNOWS-> Harm(35, London)
+# Alix -KNOWS-> Harm
+# Alix -WORKS_AT-> TechCorp
+# Gus -WORKS_AT-> TechCorp
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.5b"
+  title: Advanced OPTIONAL MATCH
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # IS NOT NULL after OPTIONAL MATCH
+  # Alix and Gus have WORKS_AT edges, Harm does not.
+  # ---------------------------------------------------------------------------
+
+  - name: is_not_null_after_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30, city: 'NYC'})"
+      - "INSERT (:Person {name: 'Gus', age: 25, city: 'NYC'})"
+      - "INSERT (:Person {name: 'Harm', age: 35, city: 'London'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}), (h:Person {name: 'Harm'}) INSERT (a)-[:KNOWS]->(g)"
+      - "MATCH (a:Person {name: 'Alix'}), (h:Person {name: 'Harm'}) INSERT (a)-[:KNOWS]->(h)"
+      - "MATCH (g:Person {name: 'Gus'}), (h:Person {name: 'Harm'}) INSERT (g)-[:KNOWS]->(h)"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) RETURN a.name, c IS NOT NULL AS has_job ORDER BY a.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, true]
+        - [Gus, true]
+        - [Harm, false]
+
+  # ---------------------------------------------------------------------------
+  # COALESCE after OPTIONAL MATCH
+  # Returns company name for employed persons, 'unemployed' for Harm.
+  # ---------------------------------------------------------------------------
+
+  - name: coalesce_after_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) RETURN a.name, COALESCE(c.name, 'unemployed') AS employer ORDER BY a.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, TechCorp]
+        - [Gus, TechCorp]
+        - [Harm, unemployed]
+
+  # ---------------------------------------------------------------------------
+  # CASE WHEN after OPTIONAL MATCH
+  # Returns company name or 'none' based on NULL check.
+  # ---------------------------------------------------------------------------
+
+  - name: case_when_after_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) RETURN a.name, CASE WHEN c IS NOT NULL THEN c.name ELSE 'none' END AS employer ORDER BY a.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, TechCorp]
+        - [Gus, TechCorp]
+        - [Harm, none]
+
+  # ---------------------------------------------------------------------------
+  # count(*) vs count(expr) after OPTIONAL MATCH
+  # count(*) counts all rows (including NULL optional side),
+  # count(c.name) skips NULLs from unmatched optional side.
+  # ---------------------------------------------------------------------------
+
+  - name: count_star_vs_count_expr_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) RETURN COUNT(*) AS total, COUNT(c.name) AS with_job"
+    expect:
+      rows:
+        - [3, 2]
+
+  # ---------------------------------------------------------------------------
+  # collect() after OPTIONAL MATCH skips NULLs
+  # Only TechCorp entries appear (no NULLs in the collected list).
+  # ---------------------------------------------------------------------------
+
+  - name: collect_skips_nulls_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) RETURN COLLECT(c.name) AS employers"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # sum() after OPTIONAL MATCH skips NULLs
+  # TechCorp has headcount=100. Alix and Gus see it, Harm sees NULL.
+  # SUM = 100 + 100 = 200
+  # ---------------------------------------------------------------------------
+
+  - name: sum_skips_nulls_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp', headcount: 100})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) RETURN SUM(c.headcount) AS total_headcount"
+    expect:
+      rows:
+        - [200]
+
+  # ---------------------------------------------------------------------------
+  # count per group after OPTIONAL MATCH
+  # Alix knows Gus and Harm (2), Gus knows Harm (1), Harm knows nobody (0).
+  # ---------------------------------------------------------------------------
+
+  - name: count_per_group_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+      - "MATCH (a:Person {name: 'Alix'}), (h:Person {name: 'Harm'}) INSERT (a)-[:KNOWS]->(h)"
+      - "MATCH (g:Person {name: 'Gus'}), (h:Person {name: 'Harm'}) INSERT (g)-[:KNOWS]->(h)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) RETURN a.name AS person, COUNT(b.name) AS friend_count ORDER BY person"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 2]
+        - [Gus, 1]
+        - [Harm, 0]
+
+  # ---------------------------------------------------------------------------
+  # Boolean NULL comparison after OPTIONAL MATCH
+  # Comparing a NULL property to true should produce NULL (falsy).
+  # Alix has active=true, Gus has no active prop. Neither should match.
+  # ---------------------------------------------------------------------------
+
+  - name: boolean_null_comparison_optional
+    setup:
+      - "INSERT (:Person {name: 'Alix', active: true})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person) WHERE m.active = true RETURN a.name, m.name ORDER BY a.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, null]
+        - [Gus, null]
+
+  # ---------------------------------------------------------------------------
+  # WHERE cross-predicate preserves NULL rows
+  # b.age < a.age references both sides. Harm has no outgoing KNOWS,
+  # so right side is NULL and the row must still be preserved.
+  # ---------------------------------------------------------------------------
+
+  - name: where_cross_predicate_preserves_nulls
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "INSERT (:Person {name: 'Gus', age: 25})"
+      - "INSERT (:Person {name: 'Harm', age: 40})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) WHERE b.age < a.age RETURN a.name, b.name ORDER BY a.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Gus]
+        - [Gus, null]
+        - [Harm, null]
+
+  # ---------------------------------------------------------------------------
+  # Chained OPTIONAL MATCHHes: both optional sides are NULL
+  # Harm has no WORKS_AT and no outgoing KNOWS edges.
+  # ---------------------------------------------------------------------------
+
+  - name: chained_optional_both_null
+    setup:
+      - "INSERT (:Person {name: 'Harm'})"
+    query: "MATCH (a:Person {name: 'Harm'}) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) RETURN a.name, c.name, b.name"
+    expect:
+      rows:
+        - [Harm, null, null]
+
+  # ---------------------------------------------------------------------------
+  # Independent OPTIONAL MATCHHes: one matches, one does not
+  # Alix has WORKS_AT->TechCorp but no MANAGES edges.
+  # ---------------------------------------------------------------------------
+
+  - name: independent_optional_mixed
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person {name: 'Alix'}) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) OPTIONAL MATCH (a)-[:MANAGES]->(m) RETURN a.name, c.name, m"
+    expect:
+      rows:
+        - [Alix, TechCorp, null]
+
+  # ---------------------------------------------------------------------------
+  # Dependent OPTIONAL chains: second depends on first's result
+  # Harm has no outgoing KNOWS, so b is NULL, and c (from b) must also be NULL.
+  # ---------------------------------------------------------------------------
+
+  - name: dependent_optional_chain_null
+    setup:
+      - "INSERT (:Person {name: 'Harm'})"
+    query: "MATCH (a:Person {name: 'Harm'}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) OPTIONAL MATCH (b)-[:WORKS_AT]->(c:Company) RETURN a.name, b.name, c.name"
+    expect:
+      rows:
+        - [Harm, null, null]
+
+  # ---------------------------------------------------------------------------
+  # Dependent OPTIONAL chain with partial match
+  # Alix knows Gus (who works at TechCorp) and Harm (who does not).
+  # ---------------------------------------------------------------------------
+
+  - name: dependent_optional_chain_partial
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+      - "MATCH (a:Person {name: 'Alix'}), (h:Person {name: 'Harm'}) INSERT (a)-[:KNOWS]->(h)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person {name: 'Alix'}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) OPTIONAL MATCH (b)-[:WORKS_AT]->(c:Company) RETURN a.name, b.name, c.name ORDER BY b.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Gus, TechCorp]
+        - [Alix, Harm, null]
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL MATCH with node label filter
+  # Only Gus is a Developer, so only one match despite two KNOWS edges.
+  # ---------------------------------------------------------------------------
+
+  - name: optional_match_label_filter
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person:Developer {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+      - "MATCH (a:Person {name: 'Alix'}), (h:Person {name: 'Harm'}) INSERT (a)-[:KNOWS]->(h)"
+    query: "MATCH (a:Person {name: 'Alix'}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Developer) RETURN a.name, m.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # WHERE on right-side variable preserves all left rows
+  # c.name = 'TechCorp' is a right-side predicate, must not filter Harm.
+  # ---------------------------------------------------------------------------
+
+  - name: where_right_side_preserves_left
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Harm'})"
+      - "INSERT (:Company {name: 'TechCorp'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'TechCorp'}) INSERT (a)-[:WORKS_AT]->(c)"
+      - "MATCH (g:Person {name: 'Gus'}), (c:Company {name: 'TechCorp'}) INSERT (g)-[:WORKS_AT]->(c)"
+    query: "MATCH (a:Person) OPTIONAL MATCH (a)-[:WORKS_AT]->(c:Company) WHERE c.name = 'TechCorp' RETURN a.name, c.name ORDER BY a.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix, TechCorp]
+        - [Gus, TechCorp]
+        - [Harm, null]

@@ -1,0 +1,236 @@
+# Cypher patterns: node patterns, relationship patterns, variable-length paths, named paths
+#
+# Converted from Python spec tests (test_04_patterns.py).
+
+meta:
+  language: cypher
+  model: lpg
+  section: "4"
+  title: Patterns
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Node Patterns
+  # ---------------------------------------------------------------------------
+
+  - name: anonymous_node
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: MATCH () RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  - name: variable_binding
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: MATCH (n) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: single_label
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Animal {name: 'Rex'})"
+    query: MATCH (n:Person) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: multiple_labels
+    setup:
+      - "CREATE (:Person:Developer {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: MATCH (n:Person:Developer) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: property_filter
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "CREATE (:Person {name: 'Gus', age: 25})"
+    query: "MATCH (n:Person {age: 30}) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Relationship Patterns
+  # ---------------------------------------------------------------------------
+
+  - name: outgoing_relationship
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a)-[r:KNOWS]->(b) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: incoming_relationship
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (b)<-[r:KNOWS]-(a) RETURN a.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: undirected_relationship
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a:Person {name: 'Gus'})-[r:KNOWS]-(b) RETURN b.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: multiple_relationship_types
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "CREATE (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Person {name: 'Vincent'}) CREATE (a)-[:FOLLOWS]->(c)"
+    query: "MATCH (a:Person {name: 'Alix'})-[:KNOWS|FOLLOWS]->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: relationship_properties
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})"
+    query: "MATCH (a)-[r:KNOWS {since: 2020}]->(b) RETURN a.name, r.since"
+    expect:
+      rows:
+        - [Alix, 2020]
+
+  - name: untyped_relationship
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a:Person {name: 'Alix'})-[r]->(b) RETURN type(r) AS t"
+    expect:
+      rows:
+        - [KNOWS]
+
+  - name: anonymous_relationship
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a:Person {name: 'Alix'})-->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # Variable-Length Paths
+  # ---------------------------------------------------------------------------
+
+  - name: variable_length_unbounded
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})-[:KNOWS]->(:Person {name: 'Vincent'})"
+    query: "MATCH (a:Person {name: 'Alix'})-[:KNOWS*]->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: variable_length_exact
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})-[:NEXT]->(:N {v: 4})"
+    query: "MATCH (a:N {v: 1})-[:NEXT*3]->(b) RETURN b.v"
+    expect:
+      rows:
+        - [4]
+
+  - name: variable_length_range
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+    query: "MATCH (a:N {v: 1})-[:NEXT*1..2]->(b) RETURN b.v"
+    expect:
+      rows:
+        - [2]
+        - [3]
+
+  - name: variable_length_max_only
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+    query: "MATCH (a:N {v: 1})-[:NEXT*..2]->(b) RETURN b.v"
+    expect:
+      rows:
+        - [2]
+        - [3]
+
+  - name: variable_length_min_only
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+    query: "MATCH (a:N {v: 1})-[:NEXT*2..]->(b) RETURN b.v"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Named Paths
+  # ---------------------------------------------------------------------------
+
+  - name: path_alias
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [1]
+
+  - name: shortest_path
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+      - "MATCH (a:N {v: 1}), (c:N {v: 3}) CREATE (a)-[:NEXT]->(c)"
+    query: "MATCH p = shortestPath((a:N {v: 1})-[:NEXT*]->(b:N {v: 3})) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [1]
+
+  - name: all_shortest_paths
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+      - "MATCH (a:N {v: 1}), (c:N {v: 3}) CREATE (a)-[:NEXT]->(c)"
+    query: "MATCH p = allShortestPaths((a:N {v: 1})-[:NEXT*]->(b:N {v: 3})) RETURN length(p) AS len"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Advanced Patterns
+  # ---------------------------------------------------------------------------
+
+  - name: pattern_comprehension
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}) CREATE (a)-[:KNOWS]->(:Person {name: 'Vincent'})"
+    query: "MATCH (a:Person {name: 'Alix'}) RETURN [(a)-[:KNOWS]->(b) | b.name] AS friends"
+    expect:
+      count: 1
+
+  - name: exists_subquery
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "CREATE (:Person {name: 'Vincent'})"
+    query: "MATCH (p:Person) WHERE EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: not_exists
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (p:Person) WHERE NOT EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: count_subquery
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}) CREATE (a)-[:KNOWS]->(:Person {name: 'Vincent'})"
+    query: "MATCH (p:Person) WHERE COUNT { MATCH (p)-[:KNOWS]->() } > 1 RETURN p.name"
+    expect:
+      rows:
+        - [Alix]

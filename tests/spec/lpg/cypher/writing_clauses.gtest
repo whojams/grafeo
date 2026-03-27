@@ -1,0 +1,306 @@
+# Cypher writing clauses: CREATE, DELETE, SET, REMOVE, MERGE
+#
+# Converted from Python spec tests (test_03_writing_clauses.py).
+
+meta:
+  language: cypher
+  model: lpg
+  section: "3"
+  title: Writing Clauses
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # CREATE
+  # ---------------------------------------------------------------------------
+
+  - name: create_node
+    query: "CREATE (n:Person {name: 'Alix'}) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: create_node_multi_label
+    statements:
+      - "CREATE (n:Person:Developer {name: 'Alix'}) RETURN n.name"
+      - "MATCH (n:Person:Developer) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: create_relationship
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: |
+      MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
+      CREATE (a)-[r:KNOWS]->(b) RETURN type(r) AS t
+    expect:
+      rows:
+        - [KNOWS]
+
+  - name: create_relationship_with_properties
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: |
+      MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})
+      CREATE (a)-[r:KNOWS {since: 2020}]->(b) RETURN r.since
+    expect:
+      rows:
+        - [2020]
+
+  - name: create_path_pattern
+    query: |
+      CREATE (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person {name: 'Gus'})-[:KNOWS]->(c:Person {name: 'Vincent'})
+      RETURN a.name, b.name, c.name
+    expect:
+      rows:
+        - [Alix, Gus, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # DELETE
+  # ---------------------------------------------------------------------------
+
+  - name: delete_node
+    statements:
+      - "CREATE (:Temp {v: 1})"
+      - "MATCH (n:Temp) DELETE n"
+      - "MATCH (n:Temp) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: delete_multiple
+    statements:
+      - "CREATE (:Temp {v: 1})"
+      - "CREATE (:Temp {v: 2})"
+      - "MATCH (n:Temp) DELETE n"
+      - "MATCH (n:Temp) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: detach_delete
+    statements:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (n:Person {name: 'Alix'}) DETACH DELETE n"
+      - "MATCH (n:Person) RETURN n.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: detach_delete_with_return
+    statements:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (n:Person {name: 'Alix'}) DETACH DELETE n RETURN count(n) AS deleted"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # SET
+  # ---------------------------------------------------------------------------
+
+  - name: set_property
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n.age = 30"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age"
+    expect:
+      rows:
+        - [30]
+
+  - name: set_multiple_properties
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n.age = 30, n.city = 'Amsterdam'"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age, n.city"
+    expect:
+      rows:
+        - [30, Amsterdam]
+
+  - name: set_replace_all
+    statements:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n = {name: 'Alix', city: 'Amsterdam'}"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.city, n.age"
+    expect:
+      rows:
+        - [Amsterdam, null]
+
+  - name: set_merge_map
+    statements:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n += {city: 'Amsterdam'}"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age, n.city"
+    expect:
+      rows:
+        - [30, Amsterdam]
+
+  - name: set_label
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n:Developer"
+      - "MATCH (n:Developer) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: set_multiple_labels
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n:Developer:Senior"
+      - "MATCH (n:Developer:Senior) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: set_label_preserves_variable_binding
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person {name: 'Alix'}) SET n:Employee RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: count_star_after_set_label
+    setup:
+      - "CREATE (:Node {id: '1'})"
+      - "CREATE (:Node {id: '2'})"
+      - "CREATE (:Node {id: '3'})"
+    query: MATCH (n:Node) SET n:Tagged RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  - name: count_var_after_set_label
+    setup:
+      - "CREATE (:Node {id: '1'})"
+      - "CREATE (:Node {id: '2'})"
+    query: MATCH (n:Node) SET n:Tagged RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # REMOVE
+  # ---------------------------------------------------------------------------
+
+  - name: remove_property
+    statements:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "MATCH (n:Person {name: 'Alix'}) REMOVE n.age"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age"
+    expect:
+      rows:
+        - [null]
+
+  - name: remove_label
+    statements:
+      - "CREATE (:Person:Developer {name: 'Alix'})"
+      - "MATCH (n:Person {name: 'Alix'}) REMOVE n:Developer"
+      - "MATCH (n:Developer) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: remove_label_preserves_variable_binding
+    setup:
+      - "CREATE (:Person:Employee {name: 'Alix'})"
+    query: "MATCH (n:Person {name: 'Alix'}) REMOVE n:Employee RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # MATCH + CREATE edge (phantom node regression, #181)
+  # ---------------------------------------------------------------------------
+
+  - name: match_create_edge_no_phantoms
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) CREATE (a)-[:KNOWS]->(b)"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: match_create_edge_correct_endpoints
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) CREATE (a)-[:KNOWS]->(b)"
+      - "MATCH (s)-[:KNOWS]->(t) RETURN s.name AS src, t.name AS dst"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # MERGE
+  # ---------------------------------------------------------------------------
+
+  - name: merge_create
+    statements:
+      - "MERGE (n:Person {name: 'Alix'})"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: merge_match
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "MERGE (n:Person {name: 'Alix'})"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: merge_on_create_set
+    statements:
+      - "MERGE (n:Person {name: 'Alix'}) ON CREATE SET n.created = true"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.created"
+    expect:
+      rows:
+        - [true]
+
+  - name: merge_on_match_set
+    statements:
+      - "CREATE (:Person {name: 'Alix', visits: 1})"
+      - "MERGE (n:Person {name: 'Alix'}) ON MATCH SET n.visits = 2"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.visits"
+    expect:
+      rows:
+        - [2]
+
+  - name: merge_relationship
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) MERGE (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: merge_relationship_set
+    statements:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) MERGE (a)-[r:KNOWS {since: 2020}]->(b) SET r.weight = 0.5"
+      - "MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) RETURN r.weight"
+    expect:
+      rows:
+        - [0.5]
+
+  - name: foreach_create
+    statements:
+      - "CREATE (:Anchor {v: 1})"
+      - "MATCH (a:Anchor) FOREACH (name IN ['Alix', 'Gus', 'Vincent'] | CREATE (:Person {name: name}))"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]

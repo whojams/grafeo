@@ -1,0 +1,152 @@
+# GQL Aggregation: ISO/IEC 39075:2024 sec 19.1
+
+meta:
+  language: gql
+  model: lpg
+  section: "19.1"
+  title: Aggregation functions
+  dataset: empty
+
+tests:
+
+  - name: count_star
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 3})"
+    query: MATCH (n:N) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  - name: count_expr_excludes_null
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {})"
+    query: MATCH (n:N) RETURN count(n.v) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  - name: count_distinct
+    setup:
+      - "INSERT (:N {v: 'a'})"
+      - "INSERT (:N {v: 'a'})"
+      - "INSERT (:N {v: 'b'})"
+    query: MATCH (n:N) RETURN count(DISTINCT n.v) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: sum_integers
+    setup:
+      - "INSERT (:N {v: 10})"
+      - "INSERT (:N {v: 20})"
+      - "INSERT (:N {v: 30})"
+    query: MATCH (n:N) RETURN sum(n.v) AS s
+    expect:
+      rows:
+        - [60]
+
+  - name: avg_integers
+    setup:
+      - "INSERT (:N {v: 10})"
+      - "INSERT (:N {v: 20})"
+    query: MATCH (n:N) RETURN avg(n.v) AS a
+    expect:
+      rows:
+        - [15]
+
+  - name: min_value
+    setup:
+      - "INSERT (:N {v: 10})"
+      - "INSERT (:N {v: 5})"
+      - "INSERT (:N {v: 20})"
+    query: MATCH (n:N) RETURN min(n.v) AS m
+    expect:
+      rows:
+        - [5]
+
+  - name: max_value
+    setup:
+      - "INSERT (:N {v: 10})"
+      - "INSERT (:N {v: 5})"
+      - "INSERT (:N {v: 20})"
+    query: MATCH (n:N) RETURN max(n.v) AS m
+    expect:
+      rows:
+        - [20]
+
+  - name: min_max_integers_multi
+    setup:
+      - "INSERT (:N {v: 3})"
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 7})"
+    query: MATCH (n:N) RETURN min(n.v) AS lo, max(n.v) AS hi
+    expect:
+      rows:
+        - [1, 7]
+
+  - name: collect_to_list
+    setup:
+      - "INSERT (:N {v: 10})"
+      - "INSERT (:N {v: 20})"
+      - "INSERT (:N {v: 30})"
+    query: MATCH (n:N) RETURN collect(n.v) AS items
+    expect:
+      count: 1
+
+  - name: count_empty_set
+    query: MATCH (n:Nothing) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  - name: sum_empty_set
+    query: MATCH (n:Nothing) RETURN sum(n.v) AS s
+    expect:
+      rows:
+        - [null]
+
+  - name: avg_empty_set_is_null
+    query: MATCH (n:Nothing) RETURN avg(n.v) AS a
+    expect:
+      rows:
+        - [null]
+
+  - name: min_empty_set_is_null
+    query: MATCH (n:Nothing) RETURN min(n.v) AS m
+    expect:
+      rows:
+        - [null]
+
+  - name: max_empty_set_is_null
+    query: MATCH (n:Nothing) RETURN max(n.v) AS m
+    expect:
+      rows:
+        - [null]
+
+  - name: collect_empty_set
+    query: MATCH (n:Nothing) RETURN collect(n.v) AS items
+    expect:
+      rows:
+        - ["[]"]
+
+  - name: group_by_with_count
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+    query: MATCH (p:Person) RETURN p.city AS city, count(p) AS cnt
+    expect:
+      rows:
+        - [Amsterdam, 2]
+        - [Berlin, 1]
+
+  - name: aggregate_comparison_in_return
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: MATCH (n:N) RETURN count(n) > 0 AS has_data
+    expect:
+      rows:
+        - [true]

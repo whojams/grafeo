@@ -1,0 +1,101 @@
+# GQL Set Operations: ISO/IEC 39075:2024 sec 14.2
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.2"
+  title: Set operations
+  dataset: empty
+
+tests:
+
+  - name: union_all_keeps_duplicates
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Alix'})"
+    query: MATCH (n:Person) RETURN n.name UNION ALL MATCH (n:City) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Alix]
+
+  - name: union_distinct_deduplicates
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Alix'})"
+    query: MATCH (n:Person) RETURN n.name UNION DISTINCT MATCH (n:City) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: union_all_different_values
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: MATCH (n:Person) RETURN n.name UNION ALL MATCH (n:City) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Amsterdam]
+
+  - name: except_set_difference
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 3})"
+      - "INSERT (:M {v: 2})"
+    query: MATCH (n:N) RETURN n.v EXCEPT MATCH (m:M) RETURN m.v
+    expect:
+      rows:
+        - [1]
+        - [3]
+
+  - name: except_all_multiset
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 3})"
+      - "INSERT (:M {v: 2})"
+    query: MATCH (n:N) RETURN n.v EXCEPT ALL MATCH (m:M) RETURN m.v
+    expect:
+      rows:
+        - [1]
+        - [2]
+        - [3]
+
+  - name: intersect_set
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 3})"
+      - "INSERT (:M {v: 2})"
+      - "INSERT (:M {v: 3})"
+      - "INSERT (:M {v: 4})"
+    query: MATCH (n:N) RETURN n.v INTERSECT MATCH (m:M) RETURN m.v
+    expect:
+      rows:
+        - [2]
+        - [3]
+
+  - name: otherwise_uses_right_when_left_empty
+    setup:
+      - "INSERT (:Fallback {v: 'default'})"
+    query: MATCH (n:NonExistent) RETURN n.v OTHERWISE MATCH (n:Fallback) RETURN n.v
+    expect:
+      rows:
+        - [default]
+
+  - name: otherwise_uses_left_when_non_empty
+    setup:
+      - "INSERT (:Primary {v: 'main'})"
+      - "INSERT (:Fallback {v: 'default'})"
+    query: MATCH (n:Primary) RETURN n.v OTHERWISE MATCH (n:Fallback) RETURN n.v
+    expect:
+      rows:
+        - [main]
+
+  - name: otherwise_both_empty
+    query: MATCH (n:Nothing1) RETURN n.v OTHERWISE MATCH (n:Nothing2) RETURN n.v
+    expect:
+      empty: true

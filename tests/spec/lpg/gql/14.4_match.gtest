@@ -1,0 +1,232 @@
+# GQL MATCH clause: ISO/IEC 39075:2024 sec 14.4
+#
+# Covers: basic node matching, label filters, property filters,
+# edge patterns, direction, multi-hop, WHERE clause integration.
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.4"
+  title: MATCH clause
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic node matching
+  # ---------------------------------------------------------------------------
+
+  - name: match_all_nodes
+    query: MATCH (n) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [4]
+
+  - name: match_by_label
+    query: MATCH (n:Person) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: match_by_label_no_results
+    query: MATCH (n:Animal) RETURN n.name
+    expect:
+      empty: true
+
+  - name: match_by_property_inline
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: match_by_multiple_properties
+    query: "MATCH (n:Person {name: 'Alix', age: 30}) RETURN n.city"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  # ---------------------------------------------------------------------------
+  # Label expressions (sec 16.8)
+  # ---------------------------------------------------------------------------
+
+  - name: match_is_label
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: MATCH (n IS Person) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: match_label_conjunction
+    setup:
+      - "INSERT (:Person:Developer {name: 'Django'})"
+    query: MATCH (n IS Person & Developer) RETURN n.name
+    expect:
+      rows:
+        - [Django]
+
+  - name: match_label_disjunction
+    query: MATCH (n IS Person | Company) RETURN n.name
+    expect:
+      rows:
+        - [Grafeo OSS]
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: match_label_negation
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: MATCH (n IS !Person) RETURN n.name
+    expect:
+      rows:
+        - [Grafeo OSS]
+        - [Amsterdam]
+
+  - name: match_label_wildcard
+    query: MATCH (n IS %) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [4]
+
+  # ---------------------------------------------------------------------------
+  # WHERE clause
+  # ---------------------------------------------------------------------------
+
+  - name: match_where_greater_than
+    query: MATCH (n:Person) WHERE n.age > 28 RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: match_where_equals_string
+    query: "MATCH (n:Person) WHERE n.city = 'Berlin' RETURN n.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: match_where_and
+    query: "MATCH (n:Person) WHERE n.age > 28 AND n.city = 'Amsterdam' RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: match_where_or
+    query: "MATCH (n:Person) WHERE n.city = 'Amsterdam' OR n.city = 'Paris' RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: match_where_not
+    query: "MATCH (n:Person) WHERE NOT n.city = 'Berlin' RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: match_where_is_null
+    setup:
+      - "INSERT (:Sensor {name: 'Temp', reading: 42.5})"
+      - "INSERT (:Sensor {name: 'Humidity'})"
+    query: MATCH (s:Sensor) WHERE s.reading IS NULL RETURN s.name
+    expect:
+      rows:
+        - [Humidity]
+
+  - name: match_where_is_not_null
+    setup:
+      - "INSERT (:Sensor {name: 'Temp', reading: 42.5})"
+      - "INSERT (:Sensor {name: 'Humidity'})"
+    query: MATCH (s:Sensor) WHERE s.reading IS NOT NULL RETURN s.name, s.reading
+    expect:
+      rows:
+        - [Temp, 42.5]
+
+  - name: match_element_where
+    query: MATCH (n:Person WHERE n.age > 30) RETURN n.name
+    expect:
+      rows:
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Edge patterns
+  # ---------------------------------------------------------------------------
+
+  - name: match_outgoing_edge
+    query: "MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: match_incoming_edge
+    query: "MATCH (b:Person {name: 'Gus'})<-[:KNOWS]-(a) RETURN a.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: match_undirected_edge
+    query: "MATCH (a:Person {name: 'Gus'})-[:KNOWS]-(b) RETURN b.name"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: match_edge_with_type_filter
+    query: "MATCH (a:Person {name: 'Alix'})-[:WORKS_AT]->(c) RETURN c.name"
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  - name: match_edge_property_filter
+    query: "MATCH (a)-[e:KNOWS {since: 2020}]->(b) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: match_edge_element_where
+    query: "MATCH (a:Person {name: 'Alix'})-[e:KNOWS WHERE e.since >= 2020]->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # Multi-hop patterns
+  # ---------------------------------------------------------------------------
+
+  - name: match_two_hop
+    query: MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, c.name
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: match_mixed_edge_types
+    query: |
+      MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person),
+            (a)-[:WORKS_AT]->(co:Company)
+      RETURN a.name, c.name, co.name
+    expect:
+      rows:
+        - [Alix, Vincent, Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # Multiple MATCH clauses
+  # ---------------------------------------------------------------------------
+
+  - name: match_comma_separated_patterns
+    query: "MATCH (p:Person {name: 'Alix'}), (c:Company) RETURN p.name, c.name"
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+
+  - name: match_cross_product_with_where
+    query: "MATCH (p:Person), (c:Company) WHERE p.age > 28 RETURN p.name, c.name"
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+        - [Vincent, Grafeo OSS]

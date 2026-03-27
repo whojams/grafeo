@@ -2,7 +2,7 @@
 
 use super::{
     Direction, Error, ExpandDirection, ExpandOp, FilterExpression, LogicalExpression,
-    LogicalOperator, Result, convert_binary_op, convert_unary_op,
+    LogicalOperator, Result, Value, convert_binary_op, convert_unary_op,
 };
 
 impl super::Planner {
@@ -342,11 +342,39 @@ impl super::Planner {
                     ))
                 }
             }
-            // Filters (inner WHERE, label constraints) are not supported by the
-            // simple fast path. The semi-join rewrite handles them correctly.
+            // A Filter wrapping an Expand typically arises from a label constraint
+            // on the anonymous endpoint, e.g. EXISTS { (u)<-[:AUTH]-(:Identity) }.
+            // Extract the inner Expand pattern and fold the label filter into end_labels.
+            LogicalOperator::Filter(filter_op) => {
+                let (start_var, direction, edge_types, _) =
+                    self.extract_exists_pattern(&filter_op.input)?;
+                // Extract end_labels from the filter predicate (hasLabel function call)
+                let end_labels = self.extract_labels_from_filter_predicate(&filter_op.predicate);
+                Ok((start_var, direction, edge_types, end_labels))
+            }
             _ => Err(Error::Internal(
                 "Unsupported EXISTS subquery pattern".to_string(),
             )),
+        }
+    }
+
+    /// Extracts label names from a hasLabel filter predicate.
+    ///
+    /// Given `FunctionCall { name: "hasLabel", args: [Variable(x), Literal("Label")] }`,
+    /// returns `Some(vec!["Label"])`.
+    fn extract_labels_from_filter_predicate(
+        &self,
+        predicate: &LogicalExpression,
+    ) -> Option<Vec<String>> {
+        match predicate {
+            LogicalExpression::FunctionCall { name, args, .. } if name == "hasLabel" => {
+                if let Some(LogicalExpression::Literal(Value::String(label))) = args.get(1) {
+                    Some(vec![label.to_string()])
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 

@@ -12,6 +12,7 @@ members = [
     "crates/bindings/c",
     "crates/bindings/wasm",
     "crates/bindings/common",
+    "crates/grafeo-spec-tests",
     "examples/rust",
 ]
 

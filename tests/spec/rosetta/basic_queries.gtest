@@ -1,0 +1,68 @@
+# Rosetta: cross-language equivalence tests
+#
+# Verifies that the same semantic query returns the same result
+# regardless of which query language is used.
+
+meta:
+  model: lpg
+  section: rosetta
+  title: Basic cross-language query equivalence
+  dataset: social_network
+  requires: [cypher]
+
+tests:
+
+  - name: count_all_nodes
+    variants:
+      gql: MATCH (n) RETURN count(*) AS cnt
+      cypher: MATCH (n) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [4]
+
+  - name: match_by_label
+    variants:
+      gql: MATCH (n:Person) RETURN n.name
+      cypher: MATCH (n:Person) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: filter_by_age
+    variants:
+      gql: MATCH (n:Person) WHERE n.age > 28 RETURN n.name
+      cypher: MATCH (n:Person) WHERE n.age > 28 RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: edge_traversal
+    variants:
+      gql: "MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(b) RETURN b.name"
+      cypher: "MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: two_hop_path
+    variants:
+      gql: MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, c.name
+      cypher: MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, c.name
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: aggregation_group_by
+    variants:
+      gql: |
+        MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+        RETURN c.name, count(p) AS employees
+      cypher: |
+        MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+        RETURN c.name, count(p) AS employees
+    expect:
+      rows:
+        - [Grafeo OSS, 1]

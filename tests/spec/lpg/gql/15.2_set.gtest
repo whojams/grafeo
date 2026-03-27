@@ -1,0 +1,78 @@
+# GQL SET clause: ISO/IEC 39075:2024 sec 15.2
+
+meta:
+  language: gql
+  model: lpg
+  section: "15.2"
+  title: SET clause
+  dataset: empty
+
+tests:
+
+  - name: set_property_value
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) SET n.age = 31"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age"
+    expect:
+      rows:
+        - [31]
+
+  - name: set_multiple_properties
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30, city: 'Amsterdam'})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) SET n.age = 31, n.city = 'Berlin'"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age, n.city"
+    expect:
+      rows:
+        - [31, Berlin]
+
+  - name: set_new_property
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) SET n.email = 'alix@test.com'"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.email"
+    expect:
+      rows:
+        - [alix@test.com]
+
+  - name: set_label
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) SET n:Admin"
+      - "MATCH (n:Admin) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: set_label_preserves_variable_binding
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person {name: 'Alix'}) SET n:Employee RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: count_star_after_set_label
+    setup:
+      - "INSERT (:Node {id: '1'})"
+      - "INSERT (:Node {id: '2'})"
+      - "INSERT (:Node {id: '3'})"
+    query: "MATCH (n:Node) SET n:Tagged RETURN count(*) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  - name: set_map_merge
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    statements:
+      - "MATCH (n:Person {name: 'Alix'}) SET n += {city: 'Berlin', role: 'admin'}"
+      - "MATCH (n:Person {name: 'Alix'}) RETURN n.age, n.city, n.role"
+    expect:
+      rows:
+        - [30, Berlin, admin]

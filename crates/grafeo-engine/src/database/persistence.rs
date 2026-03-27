@@ -1,6 +1,6 @@
 //! Persistence, snapshots, and data export for GrafeoDB.
 
-#[cfg(feature = "wal")]
+#[cfg(any(feature = "wal", feature = "grafeo-file"))]
 use std::path::Path;
 
 #[cfg(any(feature = "vector-index", feature = "text-index"))]

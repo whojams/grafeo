@@ -13,7 +13,6 @@ use crate::storage::{BitPackedInts, DeltaBitPacked};
 use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
-use smallvec::SmallVec;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default chunk capacity (number of edges per chunk).
@@ -222,10 +221,11 @@ struct AdjacencyList {
     /// Cold chunks (immutable, compressed) - for older data.
     cold_chunks: Vec<CompressedAdjacencyChunk>,
     /// Delta buffer for recent insertions.
-    /// Uses SmallVec with 8 inline entries: fits most real-world node degrees
-    /// without heap allocation while keeping AdjacencyList under 4 cache lines
-    /// (~256 bytes) for L1 residency during concurrent traversals.
-    delta_inserts: SmallVec<[(NodeId, EdgeId); 8]>,
+    /// Plain Vec keeps struct small (~144 bytes) for better DashMap/FxHashMap
+    /// cache density. Auto-compaction drains this buffer at 64 entries, so it
+    /// stays short-lived; the one-per-node heap allocation on first edge is
+    /// negligible with jemalloc/mimalloc thread-local arenas.
+    delta_inserts: Vec<(NodeId, EdgeId)>,
     /// Set of deleted edge IDs.
     deleted: FxHashSet<EdgeId>,
     /// Zone map skip index over cold chunks, sorted by `min_destination`.
@@ -239,13 +239,13 @@ impl AdjacencyList {
         Self {
             hot_chunks: Vec::new(),
             cold_chunks: Vec::new(),
-            delta_inserts: SmallVec::new(),
+            delta_inserts: Vec::new(),
             deleted: FxHashSet::default(),
             skip_index: Vec::new(),
         }
     }
 
-    fn add_edge(&mut self, dst: NodeId, edge_id: EdgeId) {
+    fn add_edge(&mut self, dst: NodeId, edge_id: EdgeId, chunk_capacity: usize) {
         // Try to add to the last hot chunk
         if let Some(last) = self.hot_chunks.last_mut()
             && last.push(dst, edge_id)
@@ -255,6 +255,11 @@ impl AdjacencyList {
 
         // Add to delta buffer
         self.delta_inserts.push((dst, edge_id));
+
+        // Auto-compact when delta buffer exceeds threshold
+        if self.delta_inserts.len() >= DELTA_COMPACTION_THRESHOLD {
+            self.compact(chunk_capacity);
+        }
     }
 
     fn mark_deleted(&mut self, edge_id: EdgeId) {
@@ -558,7 +563,7 @@ impl ChunkedAdjacency {
         lists
             .entry(src)
             .or_insert_with(AdjacencyList::new)
-            .add_edge(dst, edge_id);
+            .add_edge(dst, edge_id, self.chunk_capacity);
         self.edge_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -577,16 +582,9 @@ impl ChunkedAdjacency {
             lists
                 .entry(src)
                 .or_insert_with(AdjacencyList::new)
-                .add_edge(dst, edge_id);
+                .add_edge(dst, edge_id, self.chunk_capacity);
         }
         self.edge_count.fetch_add(edges.len(), Ordering::Relaxed);
-
-        // Compact any lists that overflowed their delta buffer
-        for list in lists.values_mut() {
-            if list.delta_inserts.len() >= DELTA_COMPACTION_THRESHOLD {
-                list.compact(self.chunk_capacity);
-            }
-        }
     }
 
     /// Marks an edge as deleted.
@@ -780,10 +778,8 @@ impl ChunkedAdjacency {
             for cold in &list.cold_chunks {
                 list_bytes += cold.memory_size();
             }
-            // Delta buffer (SmallVec inline when < 8 entries)
-            if list.delta_inserts.spilled() {
-                list_bytes += list.delta_inserts.capacity() * 16;
-            }
+            // Delta buffer
+            list_bytes += list.delta_inserts.capacity() * 16;
             // Deleted set
             list_bytes += list.deleted.capacity() * (std::mem::size_of::<EdgeId>() + 1);
             // Skip index
@@ -1147,9 +1143,9 @@ mod tests {
     fn test_adjacency_list_memory_size() {
         let mut list = AdjacencyList::new();
 
-        // Add edges
+        // Add edges (use large chunk_capacity to avoid auto-compaction here)
         for i in 0..50 {
-            list.add_edge(NodeId::new(i + 1), EdgeId::new(i));
+            list.add_edge(NodeId::new(i + 1), EdgeId::new(i), 64);
         }
 
         // Compact with small chunk capacity to get multiple chunks

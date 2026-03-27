@@ -1,0 +1,157 @@
+# Regression tests: aggregation edge cases
+#
+# Covers AVG precision with large values, count after OPTIONAL MATCH,
+# NULL column grouping, ORDER BY with NULLs, and mixing aggregate
+# with bare columns.
+
+meta:
+  language: gql
+  model: lpg
+  section: regression
+  title: Aggregation edge cases
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # AVG precision with large identical values (inspired by ArangoDB #21096)
+  # ---------------------------------------------------------------------------
+
+  - name: avg_of_identical_large_values_equals_itself
+    # AVG of three identical values must equal that value (no overflow).
+    setup:
+      - "INSERT (:M {val: 389916982198384})"
+      - "INSERT (:M {val: 389916982198384})"
+      - "INSERT (:M {val: 389916982198384})"
+    query: MATCH (m:M) RETURN avg(m.val) AS a
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # count after OPTIONAL MATCH (inspired by Memgraph #3970)
+  # ---------------------------------------------------------------------------
+
+  - name: count_after_optional_match_preserves_all_rows
+    # All persons should appear, even those without outgoing :FRIEND edges.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:FRIEND]->(:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+    query: |
+      MATCH (p:Person)
+      OPTIONAL MATCH (p)-[:FRIEND]->(f:Person)
+      RETURN p.name, count(f) AS fc
+      ORDER BY p.name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 1]
+        - [Gus, 0]
+        - [Vincent, 0]
+
+  # ---------------------------------------------------------------------------
+  # NULL column does not collapse groups (inspired by ArangoDB #14672)
+  # ---------------------------------------------------------------------------
+
+  - name: null_column_does_not_collapse_groups
+    # A uniform NULL column should not merge distinct values from another column.
+    setup:
+      - "INSERT (:Q {status: 'ok'})"
+      - "INSERT (:Q {status: 'ok'})"
+      - "INSERT (:Q {status: 'reject'})"
+    query: |
+      MATCH (q:Q)
+      RETURN q.status AS status, q.extra AS extra, count(*) AS cnt
+      ORDER BY status
+    expect:
+      ordered: true
+      rows:
+        - [ok, null, 2]
+        - [reject, null, 1]
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY with NULL property values (JanusGraph #3269)
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_with_some_null_properties
+    # All rows should appear, NULLs sorted to end.
+    setup:
+      - "INSERT (:N {name: 'Alix', score: 90})"
+      - "INSERT (:N {name: 'Gus'})"
+      - "INSERT (:N {name: 'Vincent', score: 80})"
+    query: MATCH (n:N) RETURN n.name, n.score ORDER BY n.score
+    expect:
+      ordered: true
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Mixed aggregate and bare column (inspired by FalkorDB #1451)
+  # ---------------------------------------------------------------------------
+
+  - name: mixing_aggregate_and_bare_column
+    # Mixing aggregate and non-aggregate should either error or return
+    # grouped result (implicit GROUP BY), never silent NULL.
+    setup:
+      - "INSERT (:P {n: 'a'})"
+      - "INSERT (:P {n: 'b'})"
+    query: MATCH (p:P) RETURN p.n, count(p) AS cnt
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Empty aggregation edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: avg_on_empty_returns_null
+    query: MATCH (n:NonExistent) RETURN avg(n.val) AS average
+    expect:
+      rows:
+        - [null]
+
+  - name: min_max_on_empty_returns_null
+    query: MATCH (n:NonExistent) RETURN min(n.val) AS lo, max(n.val) AS hi
+    expect:
+      rows:
+        - [null, null]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation with labels() and type() as grouping keys
+  # (from user Imaclean74: schema introspection via grouping)
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_labels_with_count
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY label
+    expect:
+      ordered: true
+      rows:
+        - [City, 1]
+        - [Person, 2]
+
+  - name: group_by_type_with_count
+    setup:
+      - "INSERT (:A)-[:FOLLOWS]->(:B)"
+      - "INSERT (:C)-[:FOLLOWS]->(:D)"
+      - "INSERT (:E)-[:BLOCKS]->(:F)"
+    query: MATCH ()-[r]->() RETURN type(r) AS t, count(r) AS cnt ORDER BY t
+    expect:
+      ordered: true
+      rows:
+        - [BLOCKS, 1]
+        - [FOLLOWS, 2]
+
+  # ---------------------------------------------------------------------------
+  # SUM inside CALL subquery
+  # ---------------------------------------------------------------------------
+
+  - name: sum_inside_call_subquery
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "INSERT (:Person {name: 'Gus', age: 25})"
+      - "INSERT (:Person {name: 'Vincent', age: 40})"
+    query: "CALL { MATCH (n:Person) RETURN sum(n.age) AS total } RETURN total"
+    expect:
+      rows:
+        - [95]

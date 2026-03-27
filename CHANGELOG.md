@@ -2,6 +2,26 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.29] - Unreleased
+
+Query engine correctness improvements and unified declarative test suite.
+
+### Added
+
+- **Declarative `.gtest` spec test framework**: new `grafeo-spec-tests` crate with a YAML-based test format, build.rs code generator, and runtime comparison library. 1000+ tests across all 7 language/model combinations (GQL, Cypher, Gremlin, GraphQL, SQL/PGQ, SPARQL, Rosetta cross-language) from a single source of truth
+- **EXISTS subquery in RETURN**: `RETURN EXISTS { MATCH (n)-[:R]->(:Label) } AS flag` now works for single-hop correlated patterns, including label-filtered endpoints
+- **Aggregate detection in GQL WITH**: `WITH count(n) AS cnt, max(n.val) AS mx` now correctly produces an aggregate operator instead of treating aggregates as scalar expressions
+
+### Changed
+
+- **Adjacency list memory**: replaced `SmallVec<8>` with `Vec` (struct 256 to ~144 bytes), added auto-compaction in `add_edge()` to fix unbounded delta buffer growth
+
+### Fixed
+
+- **Integer arithmetic overflow**: `9223372036854775807 + 1` no longer panics; checked arithmetic returns NULL on overflow (SQL semantics) for all operations (+, -, *, /, %, unary negation)
+- **Label intersection across MATCH clauses**: `MATCH (n:A) MATCH (n:B)` now correctly filters to nodes with both labels instead of ignoring the second label constraint
+- **CASE WHEN with NULL aggregate**: `WITH count(c) AS cc RETURN CASE WHEN cc = 0 THEN 0 ELSE ... END` no longer returns NULL when the WHEN branch is true
+
 ## [0.5.28] - 2026-03-27
 
 Hotfix: single-file `.grafeo` storage was silently disabled in all bindings.

@@ -1,0 +1,53 @@
+# GraphQL mutation support for Grafeo LPG
+#
+# Covers: createNode, updateNode, deleteNode mutations.
+# Uses dataset for baseline, then mutates via GraphQL.
+
+meta:
+  language: graphql
+  model: lpg
+  title: GraphQL mutations
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Create mutations
+  # ---------------------------------------------------------------------------
+
+  - name: create_person_node
+    statements:
+      - "mutation { createPerson(name: \"Django\", age: 28) { name } }"
+      - "{ person { name } }"
+    expect:
+      count: 4
+
+  - name: create_company_node
+    statements:
+      - "mutation { createCompany(name: \"Acme Corp\", founded: 2020) { name } }"
+      - "{ company { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Update mutations
+  # ---------------------------------------------------------------------------
+
+  - name: update_person_age
+    statements:
+      - "mutation { updatePerson(name: \"Alix\", age: 31) { name age } }"
+      - "{ person(name: \"Alix\") { name age } }"
+    expect:
+      rows:
+        - [Alix, 31]
+
+  # ---------------------------------------------------------------------------
+  # Delete mutations
+  # ---------------------------------------------------------------------------
+
+  - name: delete_person_node
+    statements:
+      - "mutation { deletePerson(name: \"Vincent\") { success } }"
+      - "{ person { name } }"
+    expect:
+      count: 2

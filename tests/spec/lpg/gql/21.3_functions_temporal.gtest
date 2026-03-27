@@ -1,0 +1,124 @@
+# GQL Temporal Functions: ISO/IEC 39075:2024 sec 21.3
+#
+# Covers: DATE/TIME/DURATION/DATETIME typed literals, year/month/day
+# extraction, date arithmetic.
+
+meta:
+  language: gql
+  model: lpg
+  section: "21.3"
+  title: Temporal functions
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # DATE typed literal
+  # ---------------------------------------------------------------------------
+
+  - name: date_typed_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-03-15' AS d"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # TIME typed literal
+  # ---------------------------------------------------------------------------
+
+  - name: time_typed_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN TIME '14:30:00' AS t"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # DURATION typed literal
+  # ---------------------------------------------------------------------------
+
+  - name: duration_typed_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DURATION 'P1Y2M3D' AS d"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # DATETIME typed literal
+  # ---------------------------------------------------------------------------
+
+  - name: datetime_typed_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATETIME '2024-03-15T14:30:00Z' AS dt"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Year/month/day extraction from DATE
+  # ---------------------------------------------------------------------------
+
+  - name: year_extraction
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN year(DATE '2024-03-15') AS y"
+    expect:
+      rows:
+        - [2024]
+
+  - name: month_extraction
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN month(DATE '2024-03-15') AS m"
+    expect:
+      rows:
+        - [3]
+
+  - name: day_extraction
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN day(DATE '2024-03-15') AS d"
+    expect:
+      rows:
+        - [15]
+
+  # ---------------------------------------------------------------------------
+  # Date stored as property
+  # ---------------------------------------------------------------------------
+
+  - name: date_property_comparison
+    setup:
+      - "INSERT (:Person {name: 'Alix', birthday: DATE '1990-06-15'})"
+      - "INSERT (:Person {name: 'Gus', birthday: DATE '2000-01-01'})"
+    query: "MATCH (p:Person) WHERE p.birthday > DATE '1995-01-01' RETURN p.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: date_property_year_extraction
+    setup:
+      - "INSERT (:Event {name: 'launch', date: DATE '2024-11-01'})"
+    query: "MATCH (e:Event) RETURN year(e.date) AS y"
+    expect:
+      rows:
+        - [2024]
+
+  # ---------------------------------------------------------------------------
+  # Duration simple
+  # ---------------------------------------------------------------------------
+
+  - name: duration_literal_basic
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DURATION 'P1Y' AS d"
+    expect:
+      count: 1
+
+  - name: duration_components
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DURATION 'P2Y6M' AS d"
+    expect:
+      count: 1

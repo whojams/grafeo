@@ -260,7 +260,8 @@ impl super::Planner {
                     | LogicalExpression::Reduce { .. }
                     | LogicalExpression::PatternComprehension { .. }
                     | LogicalExpression::ListComprehension { .. }
-                    | LogicalExpression::ListPredicate { .. } => {
+                    | LogicalExpression::ListPredicate { .. }
+                    | LogicalExpression::ExistsSubquery(_) => {
                         // Convert complex expressions to FilterExpression for evaluation
                         let filter_expr = self.convert_expression(&item.expression)?;
                         projections.push(ProjectExpr::Expression {

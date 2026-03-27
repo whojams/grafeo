@@ -1,0 +1,149 @@
+# GQL MERGE clause: ISO/IEC 39075:2024 sec 15.5
+#
+# MERGE matches existing elements or creates new ones.
+# Covers: basic merge, composite keys, UNWIND interaction,
+# ON CREATE SET, ON MATCH SET.
+
+meta:
+  language: gql
+  model: lpg
+  section: "15.5"
+  title: MERGE clause
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic MERGE
+  # ---------------------------------------------------------------------------
+
+  - name: merge_creates_when_not_exists
+    statements:
+      - "MERGE (:City {name: 'Amsterdam'})"
+      - "MATCH (c:City) RETURN c.name"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: merge_does_not_duplicate
+    statements:
+      - "MERGE (:City {name: 'Amsterdam'})"
+      - "MERGE (:City {name: 'Amsterdam'})"
+      - "MATCH (c:City) RETURN count(c) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: merge_different_values_create_multiple
+    statements:
+      - "MERGE (:City {name: 'Amsterdam'})"
+      - "MERGE (:City {name: 'Berlin'})"
+      - "MATCH (c:City) RETURN count(c) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Composite keys
+  # ---------------------------------------------------------------------------
+
+  - name: merge_composite_key_no_duplicate
+    statements:
+      - "MERGE (:City {name: 'Amsterdam', country: 'NL'})"
+      - "MERGE (:City {name: 'Amsterdam', country: 'NL'})"
+      - "MATCH (c:City) RETURN count(c) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: merge_composite_key_partial_match_creates_new
+    # Same name, different country: should create a second node
+    statements:
+      - "MERGE (:City {name: 'Amsterdam', country: 'NL'})"
+      - "MERGE (:City {name: 'Amsterdam', country: 'US'})"
+      - "MATCH (c:City) RETURN count(c) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: merge_three_property_key
+    statements:
+      - "MERGE (:Place {city: 'Berlin', country: 'DE', district: 'Mitte'})"
+      - "MERGE (:Place {city: 'Berlin', country: 'DE', district: 'Mitte'})"
+      - "MERGE (:Place {city: 'Berlin', country: 'DE', district: 'Kreuzberg'})"
+      - "MATCH (p:Place) RETURN count(p) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # MERGE with UNWIND
+  # ---------------------------------------------------------------------------
+
+  - name: unwind_merge_returns_one_row_per_input
+    # GrafeoDB/grafeo#185
+    # MERGE in a loop must return one row per UNWIND input,
+    # even when the node already exists after the first iteration.
+    query: UNWIND [1, 1, 1] AS i MERGE (:Item {val: i}) RETURN i
+    expect:
+      count: 3
+
+  - name: unwind_merge_creates_single_node
+    statements:
+      - "UNWIND [1, 1, 1] AS i MERGE (:Item {val: i})"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: unwind_merge_distinct_creates_multiple
+    statements:
+      - "UNWIND [1, 2, 3] AS i MERGE (:Item {val: i})"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  - name: unwind_merge_mixed_create_and_match
+    setup:
+      - "INSERT (:Item {val: 2})"
+    statements:
+      - "UNWIND [1, 2, 3] AS i MERGE (:Item {val: i})"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # ON CREATE SET / ON MATCH SET
+  # ---------------------------------------------------------------------------
+
+  - name: merge_on_create_set
+    statements:
+      - "MERGE (n:Item {val: 1}) ON CREATE SET n.status = 'new'"
+      - "MATCH (n:Item) RETURN n.val, n.status"
+    expect:
+      rows:
+        - [1, new]
+
+  - name: merge_on_match_set
+    setup:
+      - "INSERT (:Item {val: 1, status: 'old'})"
+    statements:
+      - "MERGE (n:Item {val: 1}) ON MATCH SET n.status = 'updated'"
+      - "MATCH (n:Item) RETURN n.val, n.status"
+    expect:
+      rows:
+        - [1, updated]
+
+  - name: merge_on_create_and_on_match
+    setup:
+      - "INSERT (:Item {val: 1, status: 'old'})"
+    statements:
+      - "UNWIND [1, 2] AS i MERGE (n:Item {val: i}) ON CREATE SET n.status = 'new' ON MATCH SET n.status = 'updated'"
+      - "MATCH (n:Item) RETURN n.val, n.status ORDER BY n.val"
+    expect:
+      ordered: true
+      rows:
+        - [1, updated]
+        - [2, new]

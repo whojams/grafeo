@@ -1,0 +1,106 @@
+# GQL String Functions: ISO/IEC 39075:2024 sec 21.1
+
+meta:
+  language: gql
+  model: lpg
+  section: "21.1"
+  title: String functions
+  dataset: empty
+
+tests:
+
+  - name: to_upper
+    setup:
+      - "INSERT (:N {v: 'hello'})"
+    query: MATCH (n:N) RETURN toUpper(n.v) AS r
+    expect:
+      rows:
+        - [HELLO]
+
+  - name: to_lower
+    setup:
+      - "INSERT (:N {v: 'HELLO'})"
+    query: MATCH (n:N) RETURN toLower(n.v) AS r
+    expect:
+      rows:
+        - [hello]
+
+  - name: trim_both
+    setup:
+      - "INSERT (:N {v: '  hello  '})"
+    query: MATCH (n:N) RETURN trim(n.v) AS r
+    expect:
+      rows:
+        - [hello]
+
+  - name: replace_word
+    setup:
+      - "INSERT (:N {v: 'hello world'})"
+    query: "MATCH (n:N) RETURN replace(n.v, 'world', 'grafeo') AS r"
+    expect:
+      rows:
+        - [hello grafeo]
+
+  - name: substring_with_length
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+    query: MATCH (n:N) RETURN substring(n.v, 0, 5) AS r
+    expect:
+      rows:
+        - [Amste]
+
+  - name: split_by_comma
+    setup:
+      - "INSERT (:N {v: 'a,b,c'})"
+    query: "MATCH (n:N) RETURN split(n.v, ',') AS r"
+    expect:
+      rows:
+        - ["[a, b, c]"]
+
+  - name: left_chars
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+    query: MATCH (n:N) RETURN left(n.v, 3) AS r
+    expect:
+      rows:
+        - [Ams]
+
+  - name: right_chars
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+    query: MATCH (n:N) RETURN right(n.v, 3) AS r
+    expect:
+      rows:
+        - [dam]
+
+  - name: char_length
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+    query: MATCH (n:N) RETURN char_length(n.v) AS r
+    expect:
+      rows:
+        - [9]
+
+  - name: reverse_string
+    setup:
+      - "INSERT (:N {v: 'abc'})"
+    query: MATCH (n:N) RETURN reverse(n.v) AS r
+    expect:
+      rows:
+        - [cba]
+
+  - name: to_string_from_int
+    setup:
+      - "INSERT (:N {v: 42})"
+    query: MATCH (n:N) RETURN toString(n.v) AS r
+    expect:
+      rows:
+        - [42]
+
+  - name: string_join_list
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN string_join(['a', 'b', 'c'], '-') AS r"
+    expect:
+      rows:
+        - [a-b-c]

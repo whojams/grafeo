@@ -1,0 +1,243 @@
+# SPARQL regression tests
+#
+# Bug regressions inspired by issues in Oxigraph, Blazegraph, Jena,
+# and RDF4J. Each test documents the source of the bug pattern.
+
+meta:
+  language: sparql
+  model: rdf
+  section: regression
+  title: Regression tests from other RDF databases
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Oxigraph #1200: second OPTIONAL hides first result
+  # ---------------------------------------------------------------------------
+
+  - name: oxigraph_1200_optional_unmatched_null_binding
+    # OPTIONAL that matches nothing must produce unbound (null) variable,
+    # not drop the entire row.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?name ?age WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/alix> <http://ex.org/age> ?age }
+      }
+    expect:
+      rows:
+        - [Alix, null]
+
+  - name: oxigraph_1200_optional_matched_returns_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+        }
+    query: |
+      SELECT ?name ?age WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/alix> <http://ex.org/age> ?age }
+      }
+    expect:
+      count: 1
+
+  - name: oxigraph_1200_multiple_optionals_preserve_base_row
+    # Two OPTIONALLs where the second has no match must not eliminate
+    # the base row or the first OPTIONAL binding.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/name> "X" .
+          <http://ex.org/x> <http://ex.org/age> "10" .
+        }
+    query: |
+      SELECT ?name ?age ?extra WHERE {
+        <http://ex.org/x> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/x> <http://ex.org/age> ?age }
+        OPTIONAL { <http://ex.org/x> <http://ex.org/extra> ?extra }
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # RDF4J #1978: aggregate on empty set returns wrong result
+  # ---------------------------------------------------------------------------
+
+  - name: rdf4j_1978_count_empty_set_returns_zero
+    # COUNT over an empty pattern must return a single row with 0,
+    # not an empty result set.
+    query: "SELECT (COUNT(?s) AS ?cnt) WHERE { ?s <http://ex.org/nonexistent> ?o }"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # Blazegraph: DISTINCT not deduplicating identical bindings
+  # ---------------------------------------------------------------------------
+
+  - name: blazegraph_distinct_deduplicates
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/type> "Person" .
+          <http://ex.org/b> <http://ex.org/type> "Person" .
+          <http://ex.org/c> <http://ex.org/type> "City" .
+        }
+    query: "SELECT DISTINCT ?t WHERE { ?s <http://ex.org/type> ?t }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Jena: DELETE DATA not removing triple
+  # ---------------------------------------------------------------------------
+
+  - name: jena_delete_data_removes_triple
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "hello" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/x> <http://ex.org/p> "hello" .
+        }
+    query: "SELECT ?o WHERE { <http://ex.org/x> <http://ex.org/p> ?o }"
+    expect:
+      empty: true
+
+  - name: jena_delete_then_reinsert
+    # After DELETE DATA + INSERT DATA, only the new value should be visible.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "old" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/x> <http://ex.org/p> "old" .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "new" .
+        }
+    query: "SELECT ?o WHERE { <http://ex.org/x> <http://ex.org/p> ?o }"
+    expect:
+      rows:
+        - [new]
+
+  # ---------------------------------------------------------------------------
+  # Oxigraph #646: GROUP BY with HAVING returns 0 rows
+  # ---------------------------------------------------------------------------
+
+  - name: oxigraph_646_group_by_having
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/b> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/c> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?city (COUNT(?s) AS ?cnt) WHERE {
+        ?s <http://ex.org/city> ?city
+      } GROUP BY ?city
+      HAVING (COUNT(?s) > 1)
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # RDF4J: ORDER BY not sorting string literals correctly
+  # ---------------------------------------------------------------------------
+
+  - name: rdf4j_order_by_string_ascending
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/c> <http://ex.org/name> "Vincent" .
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+        }
+    query: "SELECT ?n WHERE { ?s <http://ex.org/name> ?n } ORDER BY ?n"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Blazegraph: FILTER NOT EXISTS with multiple patterns
+  # ---------------------------------------------------------------------------
+
+  - name: blazegraph_filter_not_exists
+    # Only subjects with name but no age should be returned.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n .
+        FILTER NOT EXISTS { ?s <http://ex.org/age> ?a }
+      }
+    expect:
+      rows:
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Jena: LIMIT and OFFSET combined with ORDER BY
+  # ---------------------------------------------------------------------------
+
+  - name: jena_limit_offset_with_order
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+          <http://ex.org/c> <http://ex.org/name> "Jules" .
+          <http://ex.org/d> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n
+      } ORDER BY ?n LIMIT 2 OFFSET 1
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Jules]
+
+  # ---------------------------------------------------------------------------
+  # Oxigraph: UNION with one empty branch
+  # ---------------------------------------------------------------------------
+
+  - name: oxigraph_union_one_empty_branch
+    # UNION where one branch matches nothing should still return
+    # results from the other branch.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        { <http://ex.org/a> <http://ex.org/name> ?val }
+        UNION
+        { <http://ex.org/a> <http://ex.org/nonexistent> ?val }
+      }
+    expect:
+      rows:
+        - [Alix]

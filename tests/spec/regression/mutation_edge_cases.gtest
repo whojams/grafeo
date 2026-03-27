@@ -1,0 +1,176 @@
+# Regression tests: mutation edge cases
+#
+# Covers idempotent SET, float precision roundtrip, repeated edge updates,
+# UNWIND+MERGE composite dedup, batch upsert, sequential statements,
+# negative int/float inserts, and multi-clause MATCH+CREATE relationship.
+
+meta:
+  language: gql
+  model: lpg
+  section: regression
+  title: Mutation edge cases
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Idempotent property SET (inspired by Dgraph #9519)
+  # ---------------------------------------------------------------------------
+
+  - name: set_property_to_same_value_is_noop
+    # Re-setting a property to its current value should not break other updates.
+    setup:
+      - "INSERT (:N {code: 'X', note: 'initial'})"
+    statements:
+      - "MATCH (n:N {code: 'X'}) SET n.code = 'X', n.note = 'updated'"
+      - "MATCH (n:N {code: 'X'}) RETURN n.note"
+    expect:
+      rows:
+        - [updated]
+
+  # ---------------------------------------------------------------------------
+  # Float precision roundtrip (inspired by Dgraph #9491)
+  # ---------------------------------------------------------------------------
+
+  - name: float64_full_precision_roundtrip
+    # Float64 must preserve full precision (not truncated to 6 digits).
+    setup:
+      - "INSERT (:M {val: 0.123456789012345})"
+    query: MATCH (m:M) RETURN m.val
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Repeated edge updates: no stale values
+  # ---------------------------------------------------------------------------
+
+  - name: repeated_edge_updates_no_stale_values
+    # After two edge replacements, only the final target should be visible.
+    setup:
+      - "INSERT (:Host {name: 'h1'})-[:NESTS]->(:Nest {name: 'n1'})"
+      - "INSERT (:Nest {name: 'n2'})"
+      - "INSERT (:Nest {name: 'n3'})"
+      - "MATCH (:Host {name: 'h1'})-[r:NESTS]->() DELETE r"
+      - "MATCH (h:Host {name: 'h1'}), (n:Nest {name: 'n2'}) INSERT (h)-[:NESTS]->(n)"
+      - "MATCH (:Host {name: 'h1'})-[r:NESTS]->() DELETE r"
+      - "MATCH (h:Host {name: 'h1'}), (n:Nest {name: 'n3'}) INSERT (h)-[:NESTS]->(n)"
+    query: MATCH (:Host {name: 'h1'})-[:NESTS]->(n) RETURN n.name
+    expect:
+      rows:
+        - [n3]
+
+  # ---------------------------------------------------------------------------
+  # UNWIND + MERGE composite key dedup (inspired by Neo4j #13729)
+  # ---------------------------------------------------------------------------
+
+  - name: unwind_merge_composite_key_deduplicates
+    # Duplicate values in UNWIND should MERGE into distinct nodes.
+    statements:
+      - "UNWIND [1, 2, 1, 3, 2] AS i MERGE (:Item {a: i})"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # UNWIND + MERGE + SET: batch upsert (from user Imaclean74)
+  # ---------------------------------------------------------------------------
+
+  - name: unwind_merge_set_property
+    # UNWIND + MERGE + SET should create nodes with updated properties.
+    statements:
+      - "UNWIND [1, 2, 3] AS i MERGE (n:Item {key: i}) SET n.updated = true"
+      - "MATCH (n:Item) WHERE n.updated = true RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  - name: unwind_merge_second_pass_updates
+    # Second MERGE pass should update, not duplicate.
+    statements:
+      - "UNWIND [1, 2, 3] AS i MERGE (n:Item {key: i}) SET n.ver = 1"
+      - "UNWIND [1, 2, 3] AS i MERGE (n:Item {key: i}) SET n.ver = 2"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  - name: unwind_merge_second_pass_all_updated
+    statements:
+      - "UNWIND [1, 2, 3] AS i MERGE (n:Item {key: i}) SET n.ver = 1"
+      - "UNWIND [1, 2, 3] AS i MERGE (n:Item {key: i}) SET n.ver = 2"
+      - "MATCH (n:Item) WHERE n.ver = 2 RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Sequential statements (inspired by LadybugDB #333)
+  # ---------------------------------------------------------------------------
+
+  - name: sequential_statements_all_execute
+    # All sequential INSERT statements should execute and be visible.
+    statements:
+      - "INSERT (:Item {val: 1})"
+      - "INSERT (:Item {val: 2})"
+      - "INSERT (:Item {val: 3})"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Insert negative integer and float (from user janit)
+  # ---------------------------------------------------------------------------
+
+  - name: insert_negative_int
+    setup:
+      - "INSERT (:Location {lat: -33, lon: 151})"
+    query: MATCH (l:Location) RETURN l.lat, l.lon
+    expect:
+      rows:
+        - [-33, 151]
+
+  - name: insert_negative_float
+    setup:
+      - "INSERT (:Location {lat: -33.8688, lon: 151.2093})"
+    query: MATCH (l:Location) RETURN l.lat, l.lon
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Multi-clause MATCH + CREATE relationship (from user josema-xyz)
+  # ---------------------------------------------------------------------------
+
+  - name: match_match_create_relationship
+    # MATCH(a), MATCH(b) then INSERT edge: 2 nodes, 1 edge.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: MATCH ()-[r:KNOWS]->() RETURN count(r) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  - name: match_match_create_relationship_preserves_nodes
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: MATCH (n:Person) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: match_match_create_multiple_edges
+    # Create edges from Alix to all others.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person) WHERE b.name <> 'Alix' INSERT (a)-[:KNOWS]->(b)"
+    query: MATCH (:Person {name: 'Alix'})-[r:KNOWS]->() RETURN count(r) AS cnt
+    expect:
+      rows:
+        - [2]

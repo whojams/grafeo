@@ -1,0 +1,128 @@
+# SQL/PGQ pattern matching: node labels, directed edges,
+# edge properties, variable-length paths, path functions.
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: Pattern matching
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Node label patterns
+  # ---------------------------------------------------------------------------
+
+  - name: match_person_label
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: match_company_label
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (c:Company)
+        COLUMNS (c.name AS name, c.founded AS founded)
+      )
+    expect:
+      rows:
+        - [Grafeo OSS, 2025]
+
+  # ---------------------------------------------------------------------------
+  # Directed edge patterns
+  # ---------------------------------------------------------------------------
+
+  - name: directed_knows_edge
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Gus, Vincent]
+
+  - name: directed_works_at_edge
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS employee, c.name AS company, w.role AS role)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS, Engineer]
+
+  # ---------------------------------------------------------------------------
+  # Edge properties in COLUMNS
+  # ---------------------------------------------------------------------------
+
+  - name: edge_property_since
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        COLUMNS (a.name AS from_name, e.since AS year, b.name AS to_name)
+      )
+    expect:
+      rows:
+        - [Alix, 2020, Gus]
+        - [Gus, 2021, Vincent]
+
+  - name: edge_property_role
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, w.role AS role, w.since AS since)
+      )
+    expect:
+      rows:
+        - [Alix, Engineer, 2019]
+
+  # ---------------------------------------------------------------------------
+  # Variable-length paths
+  # ---------------------------------------------------------------------------
+
+  - name: variable_length_1_to_2
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..2]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Alix, Vincent]
+        - [Gus, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # LENGTH path function
+  # ---------------------------------------------------------------------------
+
+  - name: length_path_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..2]->(dst:Person)
+        COLUMNS (src.name AS source, LENGTH(p) AS distance, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, 1, Gus]
+        - [Alix, 2, Vincent]
+        - [Gus, 1, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Graph name reference
+  # ---------------------------------------------------------------------------
+
+  - name: graph_name_reference
+    query: "SELECT * FROM GRAPH_TABLE (social_graph, MATCH (a:Person) COLUMNS (a.name AS name))"
+    expect:
+      count: 3

@@ -1,0 +1,115 @@
+# SPARQL UPDATE operations
+#
+# Covers: INSERT DATA, DELETE DATA, delete-then-reinsert roundtrip.
+# Verifies basic RDF triple mutation correctness.
+
+meta:
+  language: sparql
+  model: rdf
+  section: update
+  title: INSERT DATA and DELETE DATA
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # INSERT DATA
+  # ---------------------------------------------------------------------------
+
+  - name: insert_data_single_triple
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "hello" .
+        }
+    query: "SELECT ?o WHERE { <http://ex.org/x> <http://ex.org/p> ?o }"
+    expect:
+      rows:
+        - [hello]
+
+  - name: insert_data_multiple_triples
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: "SELECT ?n WHERE { ?s <http://ex.org/name> ?n }"
+    expect:
+      count: 3
+
+  - name: insert_data_multiple_properties_same_subject
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?name ?age ?city WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        <http://ex.org/alix> <http://ex.org/age> ?age .
+        <http://ex.org/alix> <http://ex.org/city> ?city .
+      }
+    expect:
+      rows:
+        - [Alix, 30, Amsterdam]
+
+  # ---------------------------------------------------------------------------
+  # DELETE DATA
+  # ---------------------------------------------------------------------------
+
+  - name: delete_data_removes_triple
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "hello" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/x> <http://ex.org/p> "hello" .
+        }
+    query: "SELECT ?o WHERE { <http://ex.org/x> <http://ex.org/p> ?o }"
+    expect:
+      empty: true
+
+  - name: delete_data_partial_removal
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/a> "one" .
+          <http://ex.org/x> <http://ex.org/b> "two" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/x> <http://ex.org/a> "one" .
+        }
+    query: "SELECT ?p ?o WHERE { <http://ex.org/x> ?p ?o }"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Delete then reinsert
+  # ---------------------------------------------------------------------------
+
+  - name: delete_then_reinsert_roundtrip
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "old" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/x> <http://ex.org/p> "old" .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/p> "new" .
+        }
+    query: "SELECT ?o WHERE { <http://ex.org/x> <http://ex.org/p> ?o }"
+    expect:
+      rows:
+        - [new]

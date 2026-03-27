@@ -1,0 +1,113 @@
+# GraphQL query support for Grafeo LPG
+#
+# Covers: type-based node queries, field selection, filters,
+# nested traversals, pagination (first/skip), ordering.
+
+meta:
+  language: graphql
+  model: lpg
+  title: GraphQL queries
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic node queries by type
+  # ---------------------------------------------------------------------------
+
+  - name: query_all_persons
+    query: "query { person { name } }"
+    expect:
+      count: 3
+
+  - name: query_all_companies
+    query: "query { company { name } }"
+    expect:
+      count: 1
+
+  - name: query_person_with_fields
+    query: "query { person { name age } }"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Shorthand query syntax (no "query" keyword)
+  # ---------------------------------------------------------------------------
+
+  - name: shorthand_query
+    query: "{ person { name } }"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Filter arguments
+  # ---------------------------------------------------------------------------
+
+  - name: filter_by_name
+    query: "{ person(name: \"Alix\") { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: filter_by_age
+    query: "{ person(age: 25) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_age_gt
+    query: "{ person(age_gt: 28) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: filter_age_lt
+    query: "{ person(age_lt: 30) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_by_city
+    query: "{ person(city: \"Amsterdam\") { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Filter object syntax
+  # ---------------------------------------------------------------------------
+
+  - name: filter_object_age_gt
+    query: "query { person(filter: { age_gt: 28 }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Pagination
+  # ---------------------------------------------------------------------------
+
+  - name: first_limits_results
+    query: "{ person(first: 2) { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Nested traversals
+  # ---------------------------------------------------------------------------
+
+  - name: nested_knows_traversal
+    query: "query { person { name knows { name } } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Error cases
+  # ---------------------------------------------------------------------------
+
+  - name: empty_selection_set_error
+    query: "query { }"
+    expect:
+      error: "Empty selection set"

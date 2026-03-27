@@ -570,22 +570,57 @@ impl GqlTranslator {
         // Handle WITH clauses (projection for query chaining)
         for with_clause in &query.with_clauses {
             if !with_clause.is_wildcard {
-                let projections: Vec<Projection> = with_clause
+                // Check if WITH contains aggregate functions (e.g. WITH count(n) AS cnt)
+                let has_aggregates = with_clause
                     .items
                     .iter()
-                    .map(|item| {
-                        Ok(Projection {
-                            expression: self.translate_expression(&item.expression)?,
-                            alias: item.alias.clone(),
-                        })
-                    })
-                    .collect::<Result<_>>()?;
+                    .any(|item| contains_aggregate(&item.expression));
 
-                plan = LogicalOperator::Project(ProjectOp {
-                    projections,
-                    input: Box::new(plan),
-                    pass_through_input: false,
-                });
+                if has_aggregates {
+                    let (aggregates, auto_group_by, post_return) =
+                        self.extract_aggregates_and_groups(&with_clause.items)?;
+
+                    plan = LogicalOperator::Aggregate(AggregateOp {
+                        group_by: auto_group_by,
+                        aggregates,
+                        input: Box::new(plan),
+                        having: None,
+                    });
+
+                    // Apply post-aggregate projection if aggregates were wrapped
+                    // in expressions (e.g. WITH count(n) + 1 AS cnt_plus_one)
+                    if let Some(post_items) = post_return {
+                        let post_projections: Vec<Projection> = post_items
+                            .into_iter()
+                            .map(|item| Projection {
+                                expression: item.expression,
+                                alias: item.alias,
+                            })
+                            .collect();
+                        plan = LogicalOperator::Project(ProjectOp {
+                            projections: post_projections,
+                            input: Box::new(plan),
+                            pass_through_input: false,
+                        });
+                    }
+                } else {
+                    let projections: Vec<Projection> = with_clause
+                        .items
+                        .iter()
+                        .map(|item| {
+                            Ok(Projection {
+                                expression: self.translate_expression(&item.expression)?,
+                                alias: item.alias.clone(),
+                            })
+                        })
+                        .collect::<Result<_>>()?;
+
+                    plan = LogicalOperator::Project(ProjectOp {
+                        projections,
+                        input: Box::new(plan),
+                        pass_through_input: false,
+                    });
+                }
             }
             // WITH * skips projection: all variables pass through unchanged
 

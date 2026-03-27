@@ -1,0 +1,68 @@
+# GQL UNWIND clause: ISO/IEC 39075:2024 sec 14.13
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.13"
+  title: UNWIND clause
+  dataset: empty
+
+tests:
+
+  - name: unwind_standalone
+    query: UNWIND [1, 2, 3] AS x RETURN x
+    expect:
+      rows:
+        - [1]
+        - [2]
+        - [3]
+
+  - name: unwind_standalone_strings
+    query: "UNWIND ['Alix', 'Gus', 'Vincent'] AS name RETURN name"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: unwind_empty_list
+    query: UNWIND [] AS x RETURN x
+    expect:
+      empty: true
+
+  - name: unwind_property_list
+    setup:
+      - "INSERT (:Item {tags: ['a', 'b', 'c']})"
+    query: MATCH (n:Item) UNWIND n.tags AS tag RETURN tag
+    expect:
+      rows:
+        - [a]
+        - [b]
+        - [c]
+
+  - name: unwind_then_count
+    query: UNWIND [1, 2, 3, 4, 5] AS x RETURN count(x) AS cnt
+    expect:
+      rows:
+        - [5]
+
+  - name: unwind_then_sum
+    query: UNWIND [10, 20, 30] AS x RETURN sum(x) AS total
+    expect:
+      rows:
+        - [60]
+
+  - name: unwind_with_where_filter
+    query: UNWIND [1, 2, 3, 4, 5] AS x WHERE x > 3 RETURN x
+    expect:
+      rows:
+        - [4]
+        - [5]
+
+  - name: unwind_with_expression
+    query: UNWIND [1, 2, 3] AS x RETURN x * 10 AS val
+    expect:
+      rows:
+        - [10]
+        - [20]
+        - [30]

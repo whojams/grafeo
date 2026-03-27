@@ -1,0 +1,365 @@
+# Cypher regression tests: bug fixes and edge cases
+#
+# Converted from Python tests (test_regression_cypher.py).
+
+meta:
+  language: cypher
+  model: lpg
+  section: "99"
+  title: Regression Tests
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Bug 1: Correlated EXISTS subquery
+  # ---------------------------------------------------------------------------
+
+  - name: not_exists_with_type_filter
+    setup:
+      - "CREATE (a {name: 'Alix'}), (b {name: 'Gus'}), (c {name: 'Vincent'})"
+      - "MATCH (a {name: 'Alix'}), (b {name: 'Gus'}) CREATE (a)-[:KNOWS]->(b)"
+      - "MATCH (a {name: 'Alix'}), (c {name: 'Vincent'}) CREATE (a)-[:WORKS_WITH]->(c)"
+    query: |
+      MATCH (x), (y) WHERE x <> y
+      AND NOT EXISTS { MATCH (x)-[r]->(y) WHERE type(r) = 'KNOWS' }
+      RETURN x.name, y.name
+    expect:
+      count: 5
+
+  # ---------------------------------------------------------------------------
+  # Bug 2: CASE WHEN inside aggregate functions
+  # ---------------------------------------------------------------------------
+
+  - name: sum_case_when
+    setup:
+      - "CREATE (d:Dir {name: 'src'})"
+      - "CREATE (f1:File {name: 'a.py', file_type: 'source'})"
+      - "CREATE (f2:File {name: 'b.md', file_type: 'docs'})"
+      - "CREATE (f3:File {name: 'c.py', file_type: 'source'})"
+      - "MATCH (d:Dir {name: 'src'}), (f:File {name: 'a.py'}) CREATE (d)-[:CONTAINS]->(f)"
+      - "MATCH (d:Dir {name: 'src'}), (f:File {name: 'b.md'}) CREATE (d)-[:CONTAINS]->(f)"
+      - "MATCH (d:Dir {name: 'src'}), (f:File {name: 'c.py'}) CREATE (d)-[:CONTAINS]->(f)"
+    query: |
+      MATCH (d:Dir)-[:CONTAINS]->(f:File)
+      WITH d, count(f) AS total,
+           sum(CASE WHEN f.file_type = 'source' THEN 1 ELSE 0 END) AS source_count
+      RETURN d.name AS name, total, source_count
+    expect:
+      rows:
+        - [src, 3, 2]
+
+  # ---------------------------------------------------------------------------
+  # Bug 3: any() with IN list
+  # ---------------------------------------------------------------------------
+
+  - name: any_labels_in_list_matches
+    setup:
+      - "CREATE (:A:B:C {name: 'Test'})"
+    query: "MATCH (n) WHERE any(lbl IN labels(n) WHERE lbl IN ['A', 'B']) RETURN n.name"
+    expect:
+      rows:
+        - [Test]
+
+  - name: any_labels_in_list_no_match
+    setup:
+      - "CREATE (:A:B:C {name: 'Test'})"
+    query: "MATCH (n) WHERE any(lbl IN labels(n) WHERE lbl IN ['X', 'Y']) RETURN n.name"
+    expect:
+      empty: true
+
+  - name: any_with_single_match
+    setup:
+      - "CREATE (:Model:Component {name: 'Widget'})"
+    query: "MATCH (n) WHERE any(lbl IN labels(n) WHERE lbl IN ['Model', 'Service']) RETURN n.name"
+    expect:
+      rows:
+        - [Widget]
+
+  # ---------------------------------------------------------------------------
+  # Bug 4: CASE WHEN inside reduce()
+  # ---------------------------------------------------------------------------
+
+  - name: reduce_with_case_max
+    query: |
+      WITH [3, 1, 4, 1, 5] AS vals
+      RETURN reduce(acc = 0, x IN vals |
+        CASE WHEN x > acc THEN x ELSE acc END) AS max_val
+    expect:
+      rows:
+        - [5]
+
+  - name: reduce_with_case_min
+    query: |
+      WITH [3, 1, 4, 1, 5] AS vals
+      RETURN reduce(acc = 999, x IN vals |
+        CASE WHEN x < acc THEN x ELSE acc END) AS min_val
+    expect:
+      rows:
+        - [1]
+
+  - name: reduce_with_case_conditional_sum
+    query: |
+      WITH [1, 2, 3, 4, 5] AS vals
+      RETURN reduce(acc = 0, x IN vals |
+        CASE WHEN x > 2 THEN acc + x ELSE acc END) AS big_sum
+    expect:
+      rows:
+        - [12]
+
+  # ---------------------------------------------------------------------------
+  # Bug 5: Target node property filter (#155)
+  # ---------------------------------------------------------------------------
+
+  - name: outgoing_target_property_filter
+    setup:
+      - "CREATE (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) CREATE (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Person {name: 'Vincent'}) CREATE (a)-[:KNOWS]->(c)"
+    query: "MATCH (a)-[r]->(b {name: 'Gus'}) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: target_property_filter_count
+    setup:
+      - "CREATE (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) CREATE (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Person {name: 'Vincent'}) CREATE (a)-[:KNOWS]->(c)"
+    query: "MATCH ()-[r]->(o {name: 'Gus'}) RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: target_property_filter_no_match
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH ()-[r]->(o {name: 'Nobody'}) RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: edge_property_filter
+    setup:
+      - "CREATE (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) CREATE (a)-[:KNOWS {since: 2020}]->(b)"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Person {name: 'Vincent'}) CREATE (a)-[:KNOWS {since: 2023}]->(c)"
+    query: "MATCH (a)-[r {since: 2020}]->(b) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL MATCH + aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: optional_match_count_preserves_all_rows
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:FRIEND]->(:Person {name: 'Gus'})"
+      - "CREATE (:Person {name: 'Vincent'})"
+    query: |
+      MATCH (p:Person)
+      OPTIONAL MATCH (p)-[:FRIEND]->(f:Person)
+      RETURN p.name, count(f) AS fc
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # UNION correctness
+  # ---------------------------------------------------------------------------
+
+  - name: union_deduplicates
+    query: RETURN 1 AS x UNION RETURN 1 AS x
+    expect:
+      rows:
+        - [1]
+
+  - name: union_all_preserves
+    query: RETURN 1 AS x UNION ALL RETURN 1 AS x
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Variable-length path vs explicit hop
+  # ---------------------------------------------------------------------------
+
+  - name: two_hop_equivalence
+    setup:
+      - "CREATE (:N {id: 1})-[:R]->(:N {id: 2})-[:R]->(:N {id: 3})"
+    query: "MATCH (:N {id: 1})-[:R*2]->(c) RETURN count(*) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # MERGE after DELETE
+  # ---------------------------------------------------------------------------
+
+  - name: merge_creates_new_after_delete
+    statements:
+      - "CREATE (:Singleton {key: 'only'})"
+      - "MATCH (n:Singleton) DELETE n"
+      - "MERGE (:Singleton {key: 'only'})"
+      - "MATCH (n:Singleton) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Delete + re-create edge
+  # ---------------------------------------------------------------------------
+
+  - name: replace_edge
+    statements:
+      - "CREATE (:Person {name: 'Alix'})-[:LIKES]->(:Fruit {name: 'apple'})"
+      - "CREATE (:Fruit {name: 'banana'})"
+      - "MATCH (:Person {name: 'Alix'})-[r:LIKES]->() DELETE r"
+      - "MATCH (p:Person {name: 'Alix'}), (f:Fruit {name: 'banana'}) CREATE (p)-[:LIKES]->(f)"
+      - "MATCH (:Person {name: 'Alix'})-[:LIKES]->(f:Fruit) RETURN f.name"
+    expect:
+      rows:
+        - [banana]
+
+  # ---------------------------------------------------------------------------
+  # Relationship direction
+  # ---------------------------------------------------------------------------
+
+  - name: backward_arrow_forward
+    setup:
+      - "CREATE (:A {name: 'Alix'})-[:FOLLOWS]->(:B {name: 'Gus'})"
+    query: "MATCH (a:A)-[:FOLLOWS]->(b:B) RETURN a.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: backward_arrow_reverse
+    setup:
+      - "CREATE (:A {name: 'Alix'})-[:FOLLOWS]->(:B {name: 'Gus'})"
+    query: "MATCH (b:B)<-[:FOLLOWS]-(a:A) RETURN a.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: backward_arrow_wrong_direction
+    setup:
+      - "CREATE (:A {name: 'Alix'})-[:FOLLOWS]->(:B {name: 'Gus'})"
+    query: "MATCH (a:A)<-[:FOLLOWS]-(b:B) RETURN a.name"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # NULL predicate semantics
+  # ---------------------------------------------------------------------------
+
+  - name: null_equals_null_is_unknown
+    setup:
+      - "CREATE (:N {val: 1})"
+    query: MATCH (n:N) WHERE null = null RETURN n
+    expect:
+      empty: true
+
+  - name: null_is_null_is_true
+    setup:
+      - "CREATE (:N {val: 1})"
+    query: MATCH (n:N) WHERE null IS NULL RETURN n.val
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Property type overwrite
+  # ---------------------------------------------------------------------------
+
+  - name: bool_to_string
+    statements:
+      - "CREATE (:Item {flag: true})"
+      - "MATCH (n:Item) SET n.flag = 'yes'"
+      - "MATCH (n:Item) RETURN n.flag"
+    expect:
+      rows:
+        - [yes]
+
+  - name: int_to_string
+    statements:
+      - "CREATE (:Item {val: 42})"
+      - "MATCH (n:Item) SET n.val = 'forty-two'"
+      - "MATCH (n:Item) RETURN n.val"
+    expect:
+      rows:
+        - [forty-two]
+
+  # ---------------------------------------------------------------------------
+  # Type coercion: string vs boolean
+  # ---------------------------------------------------------------------------
+
+  - name: string_false_ne_bool_false
+    setup:
+      - "CREATE (:N {val: false})"
+      - "CREATE (:N {val: 'false'})"
+    query: "MATCH (n:N) WHERE n.val <> 'false' RETURN n.val"
+    expect:
+      rows:
+        - [false]
+
+  # ---------------------------------------------------------------------------
+  # Inequality on missing property
+  # ---------------------------------------------------------------------------
+
+  - name: neq_excludes_null
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+      - "CREATE (:Person {age: 30})"
+    query: "MATCH (n:Person) WHERE n.name <> 'Alix' RETURN n.name"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # SKIP + LIMIT
+  # ---------------------------------------------------------------------------
+
+  - name: skip_plus_limit
+    setup:
+      - "CREATE (:Item {seq: 0})"
+      - "CREATE (:Item {seq: 1})"
+      - "CREATE (:Item {seq: 2})"
+      - "CREATE (:Item {seq: 3})"
+      - "CREATE (:Item {seq: 4})"
+      - "CREATE (:Item {seq: 5})"
+      - "CREATE (:Item {seq: 6})"
+      - "CREATE (:Item {seq: 7})"
+      - "CREATE (:Item {seq: 8})"
+      - "CREATE (:Item {seq: 9})"
+    query: MATCH (n:Item) RETURN n.seq ORDER BY n.seq SKIP 3 LIMIT 2
+    expect:
+      ordered: true
+      rows:
+        - [3]
+        - [4]
+
+  # ---------------------------------------------------------------------------
+  # RETURN DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: distinct_values
+    setup:
+      - "CREATE (:N {val: 1})"
+      - "CREATE (:N {val: 1})"
+      - "CREATE (:N {val: 2})"
+    query: MATCH (n:N) RETURN DISTINCT n.val ORDER BY n.val
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [2]
+
+  - name: distinct_collapses_nulls
+    setup:
+      - "CREATE (:N {val: 1})"
+      - "CREATE (:N {val: 1})"
+      - "CREATE (:N)"
+      - "CREATE (:N)"
+    query: MATCH (n:N) RETURN DISTINCT n.val
+    expect:
+      count: 2

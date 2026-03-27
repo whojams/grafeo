@@ -1,0 +1,121 @@
+# GQL Predicates: ISO/IEC 39075:2024 sec 19
+
+meta:
+  language: gql
+  model: lpg
+  section: "19.3"
+  title: Predicates
+  dataset: empty
+
+tests:
+
+  - name: exists_pattern
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+    query: "MATCH (p:Person) WHERE EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: not_exists
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (p:Person) WHERE NOT EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: is_null_missing_property
+    setup:
+      - "INSERT (:N {name: 'WithProp', v: 1})"
+      - "INSERT (:N {name: 'NoProp'})"
+    query: MATCH (n:N) WHERE n.v IS NULL RETURN n.name
+    expect:
+      rows:
+        - [NoProp]
+
+  - name: is_not_null_existing_property
+    setup:
+      - "INSERT (:N {name: 'WithProp', v: 1})"
+      - "INSERT (:N {name: 'NoProp'})"
+    query: MATCH (n:N) WHERE n.v IS NOT NULL RETURN n.name
+    expect:
+      rows:
+        - [WithProp]
+
+  - name: is_typed_int64
+    setup:
+      - "INSERT (:N {v: 42})"
+      - "INSERT (:N {v: 'text'})"
+    query: MATCH (n:N) WHERE n.v IS TYPED INT64 RETURN n.v
+    expect:
+      rows:
+        - [42]
+
+  - name: is_typed_string
+    setup:
+      - "INSERT (:N {v: 'hello'})"
+      - "INSERT (:N {v: 42})"
+    query: MATCH (n:N) WHERE n.v IS TYPED STRING RETURN n.v
+    expect:
+      rows:
+        - [hello]
+
+  - name: is_typed_boolean
+    setup:
+      - "INSERT (:N {v: true})"
+      - "INSERT (:N {v: 42})"
+    query: MATCH (n:N) WHERE n.v IS TYPED BOOLEAN RETURN n.v
+    expect:
+      rows:
+        - [true]
+
+  - name: is_labeled
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: MATCH (n) WHERE n IS LABELED Person RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: is_not_labeled
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: MATCH (n) WHERE n IS NOT LABELED Person RETURN n.name
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: is_source_of
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: MATCH (a)-[e:KNOWS]->(b) WHERE a IS SOURCE OF e RETURN a.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: is_destination_of
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: MATCH (a)-[e:KNOWS]->(b) WHERE b IS DESTINATION OF e RETURN b.name
+    expect:
+      rows:
+        - [Gus]
+
+  - name: property_exists_true
+    setup:
+      - "INSERT (:N {name: 'Alix', age: 30})"
+    query: "MATCH (n:N) WHERE PROPERTY_EXISTS(n, 'age') RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: property_exists_false
+    setup:
+      - "INSERT (:N {name: 'Alix'})"
+    query: "MATCH (n:N) WHERE PROPERTY_EXISTS(n, 'age') RETURN n.name"
+    expect:
+      empty: true

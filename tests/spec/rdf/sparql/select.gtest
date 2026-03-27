@@ -1,0 +1,130 @@
+# SPARQL SELECT query basics
+#
+# Covers: SELECT with named variables, multiple variables, SELECT DISTINCT,
+# type patterns via rdf:type, and wildcard SELECT *.
+# Inspired by SPARQL 1.1 Query Language specification.
+
+meta:
+  language: sparql
+  model: rdf
+  section: select
+  title: SELECT basics
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic SELECT
+  # ---------------------------------------------------------------------------
+
+  - name: select_single_variable
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 3
+
+  - name: select_multiple_variables
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+        }
+    query: |
+      SELECT ?name ?age WHERE {
+        ?person <http://ex.org/name> ?name .
+        ?person <http://ex.org/age> ?age .
+      }
+    expect:
+      count: 2
+
+  - name: select_with_type_pattern
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/amsterdam> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/City> .
+          <http://ex.org/amsterdam> <http://ex.org/name> "Amsterdam" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+        ?s <http://ex.org/name> ?name .
+      }
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # SELECT DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: select_distinct_deduplicates
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/type> "Person" .
+          <http://ex.org/b> <http://ex.org/type> "Person" .
+          <http://ex.org/c> <http://ex.org/type> "City" .
+        }
+    query: |
+      SELECT DISTINCT ?t WHERE {
+        ?s <http://ex.org/type> ?t
+      }
+    expect:
+      count: 2
+
+  - name: select_distinct_no_effect_when_unique
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT DISTINCT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Join on two triple patterns
+  # ---------------------------------------------------------------------------
+
+  - name: join_two_triple_patterns
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name ?age WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/age> ?age
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]

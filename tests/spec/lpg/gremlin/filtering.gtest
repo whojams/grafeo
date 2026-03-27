@@ -1,0 +1,184 @@
+# Gremlin filter steps: has(), hasLabel(), hasNot(), and(), or(), not(),
+#                      where(), dedup(), limit(), range()
+#
+# Covers: property filters, label filters, boolean combinators,
+# deduplication, pagination.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Edges: Alix-KNOWS->Gus, Gus-KNOWS->Vincent, Alix-WORKS_AT->Grafeo OSS
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "filter"
+  title: Filter Steps
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # has() variants
+  # ---------------------------------------------------------------------------
+
+  - name: has_key_value
+    query: "g.V().has('name', 'Alix').values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: has_label_key_value
+    query: "g.V().has('Person', 'name', 'Alix').values('age')"
+    expect:
+      rows:
+        - [30]
+
+  - name: has_key_predicate_gt
+    query: "g.V().has('age', gt(30)).values('name')"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: has_key_predicate_gte
+    query: "g.V().has('age', gte(30)).values('name')"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: has_key_predicate_lt
+    query: "g.V().has('age', lt(30)).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: has_key_predicate_lte
+    query: "g.V().has('age', lte(25)).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # hasLabel()
+  # ---------------------------------------------------------------------------
+
+  - name: has_label_person
+    query: g.V().hasLabel('Person').count()
+    expect:
+      rows:
+        - [3]
+
+  - name: has_label_company
+    query: g.V().hasLabel('Company').count()
+    expect:
+      rows:
+        - [1]
+
+  - name: has_label_no_results
+    query: g.V().hasLabel('Animal')
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # hasNot()
+  # ---------------------------------------------------------------------------
+
+  - name: has_not_age
+    query: g.V().hasNot('age').count()
+    expect:
+      rows:
+        - [1]
+
+  - name: has_not_founded
+    query: g.V().hasNot('founded').count()
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # and()
+  # ---------------------------------------------------------------------------
+
+  - name: and_step
+    query: "g.V().and(has('age', gt(24)), has('city', 'Amsterdam')).values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # or()
+  # ---------------------------------------------------------------------------
+
+  - name: or_step
+    query: "g.V().or(has('city', 'Berlin'), has('city', 'Paris')).values('name')"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # not()
+  # ---------------------------------------------------------------------------
+
+  - name: not_step
+    query: "g.V().hasLabel('Person').not(has('city', 'Amsterdam')).values('name')"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # where()
+  # ---------------------------------------------------------------------------
+
+  - name: where_out_knows
+    query: "g.V().hasLabel('Person').where(out('KNOWS')).values('name')"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: where_out_works_at
+    query: "g.V().hasLabel('Person').where(out('WORKS_AT')).values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # dedup()
+  # ---------------------------------------------------------------------------
+
+  - name: dedup_after_out
+    query: g.V().hasLabel('Person').out('KNOWS').dedup().count()
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # limit()
+  # ---------------------------------------------------------------------------
+
+  - name: limit_vertices
+    query: g.V().hasLabel('Person').limit(2)
+    expect:
+      count: 2
+
+  - name: limit_one
+    query: g.V().limit(1)
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # range()
+  # ---------------------------------------------------------------------------
+
+  - name: range_vertices
+    query: g.V().hasLabel('Person').range(0, 2)
+    expect:
+      count: 2
+
+  - name: range_skip_one
+    query: g.V().hasLabel('Person').range(1, 3)
+    expect:
+      count: 2

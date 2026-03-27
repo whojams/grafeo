@@ -1,8 +1,8 @@
 //! Node scan planning.
 
 use super::{
-    Arc, GraphStore, LogicalType, NestedLoopJoinOperator, NodeScanOp, Operator, PhysicalJoinType,
-    Result, ScanOperator,
+    Arc, ExpressionPredicate, FilterExpression, FilterOperator, GraphStore, HashMap, LogicalType,
+    NestedLoopJoinOperator, NodeScanOp, Operator, PhysicalJoinType, Result, ScanOperator, Value,
 };
 
 impl super::Planner {
@@ -29,6 +29,30 @@ impl super::Planner {
             // correlated ParameterScan), skip the redundant scan and reuse the
             // bound value. This avoids a cross product in CALL { WITH var MATCH (var)... }.
             if input_columns.contains(&scan.variable) {
+                // If the second MATCH clause has a label constraint, enforce it
+                // as a filter on the already-bound variable.
+                if let Some(label) = &scan.label {
+                    let variable_columns: HashMap<String, usize> = input_columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| (name.clone(), i))
+                        .collect();
+                    let filter_expr = FilterExpression::FunctionCall {
+                        name: "hasLabel".to_string(),
+                        args: vec![
+                            FilterExpression::Variable(scan.variable.clone()),
+                            FilterExpression::Literal(Value::String(label.as_str().into())),
+                        ],
+                    };
+                    let predicate = ExpressionPredicate::new(
+                        filter_expr,
+                        variable_columns,
+                        Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                    )
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id);
+                    let filtered = Box::new(FilterOperator::new(input_op, Box::new(predicate)));
+                    return Ok((filtered, input_columns));
+                }
                 return Ok((input_op, input_columns));
             }
 

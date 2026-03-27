@@ -1,0 +1,202 @@
+# GQL Statistical Aggregation Functions: ISO/IEC 39075:2024 sec 19.4
+#
+# Covers: COVAR_SAMP, COVAR_POP, CORR, REGR_* family,
+# stddev edge cases, variance edge cases, binary NULL pair skipping.
+#
+# Data: (x, y) = (1,2), (2,4), (3,6), (4,8), (5,10), a perfect linear y = 2x.
+
+meta:
+  language: gql
+  model: lpg
+  section: "19.4"
+  title: Statistical aggregation functions
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # COVAR_SAMP: sample covariance
+  # For y=2x data, Cov_s(y,x) = 2 * Var_s(x) = 2 * 2.5 = 5.0
+  # ---------------------------------------------------------------------------
+
+  - name: covar_samp_perfect_linear
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN COVAR_SAMP(p.y, p.x) AS cov"
+    expect:
+      rows:
+        - [5]
+
+  # ---------------------------------------------------------------------------
+  # COVAR_POP: population covariance
+  # CovarPop = CovarSamp * (n-1)/n = 5.0 * 4/5 = 4.0
+  # ---------------------------------------------------------------------------
+
+  - name: covar_pop_perfect_linear
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN COVAR_POP(p.y, p.x) AS cov"
+    expect:
+      rows:
+        - [4]
+
+  # ---------------------------------------------------------------------------
+  # CORR: Pearson correlation coefficient
+  # Perfect linear relationship gives CORR = 1.0
+  # ---------------------------------------------------------------------------
+
+  - name: corr_perfect_positive
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN CORR(p.y, p.x) AS r"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # REGR_SLOPE and REGR_INTERCEPT
+  # y = 2x + 0, so slope = 2.0 and intercept = 0.0
+  # ---------------------------------------------------------------------------
+
+  - name: regr_slope_and_intercept
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN REGR_SLOPE(p.y, p.x) AS slope, REGR_INTERCEPT(p.y, p.x) AS intercept"
+    expect:
+      rows:
+        - [2, 0]
+
+  # ---------------------------------------------------------------------------
+  # REGR_R2: coefficient of determination
+  # Perfect fit gives R^2 = 1.0
+  # ---------------------------------------------------------------------------
+
+  - name: regr_r2_perfect_fit
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN REGR_R2(p.y, p.x) AS r2"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # REGR_COUNT: number of non-null pairs
+  # All 5 points have both x and y, so count = 5
+  # ---------------------------------------------------------------------------
+
+  - name: regr_count_all_pairs
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN REGR_COUNT(p.y, p.x) AS cnt"
+    expect:
+      rows:
+        - [5]
+
+  # ---------------------------------------------------------------------------
+  # REGR_SXX, REGR_SYY, REGR_SXY
+  # SXX = sum((xi - mean_x)^2) = 10.0
+  # SYY = sum((yi - mean_y)^2) = 40.0
+  # SXY = sum((xi - mean_x)*(yi - mean_y)) = 20.0
+  # ---------------------------------------------------------------------------
+
+  - name: regr_sxx_syy_sxy
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN REGR_SXX(p.y, p.x) AS sxx, REGR_SYY(p.y, p.x) AS syy, REGR_SXY(p.y, p.x) AS sxy"
+    expect:
+      rows:
+        - [10, 40, 20]
+
+  # ---------------------------------------------------------------------------
+  # REGR_AVGX and REGR_AVGY
+  # mean_x = 3.0, mean_y = 6.0
+  # ---------------------------------------------------------------------------
+
+  - name: regr_avgx_avgy
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0, y: 4.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+      - "INSERT (:Point {x: 4.0, y: 8.0})"
+      - "INSERT (:Point {x: 5.0, y: 10.0})"
+    query: "MATCH (p:Point) RETURN REGR_AVGX(p.y, p.x) AS ax, REGR_AVGY(p.y, p.x) AS ay"
+    expect:
+      rows:
+        - [3, 6]
+
+  # ---------------------------------------------------------------------------
+  # Binary aggregate NULL pair skipping
+  # When one value in a pair is NULL, that pair is excluded from computation.
+  # 3 points, one missing y: only 2 valid pairs counted.
+  # ---------------------------------------------------------------------------
+
+  - name: binary_null_pair_skipping
+    setup:
+      - "INSERT (:Point {x: 1.0, y: 2.0})"
+      - "INSERT (:Point {x: 2.0})"
+      - "INSERT (:Point {x: 3.0, y: 6.0})"
+    query: "MATCH (p:Point) RETURN REGR_COUNT(p.y, p.x) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Binary aggregate on empty set returns NULL
+  # ---------------------------------------------------------------------------
+
+  - name: binary_aggregate_empty_set
+    setup: []
+    query: "MATCH (p:Point) RETURN COVAR_SAMP(p.y, p.x) AS cov"
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # stddev on single value: sample stddev is 0 or null (n=1, n-1=0)
+  # ---------------------------------------------------------------------------
+
+  - name: stdev_single_value
+    setup:
+      - "INSERT (:Val {x: 42})"
+    query: "MATCH (v:Val) RETURN stdev(v.x) AS s"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # variance on empty set returns null
+  # ---------------------------------------------------------------------------
+
+  - name: variance_empty_set_null
+    setup: []
+    query: "MATCH (v:Val) RETURN variance(v.x) AS v"
+    expect:
+      rows:
+        - [null]

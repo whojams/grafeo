@@ -24,13 +24,14 @@ On the [LDBC Social Network Benchmark](https://github.com/GrafeoDB/graph-bench),
 
 Grafeo supports both **Labeled Property Graph (LPG)** and **Resource Description Framework (RDF)** data models and all major query languages.
 
-## Features
+<details>
+<summary><strong>Features</strong></summary>
 
 ### Core Capabilities
 
 - **Dual data model support**: LPG and RDF with optimized storage for each
 - **Multi-language queries**: GQL, Cypher, Gremlin, GraphQL, SPARQL and SQL/PGQ
-- Embeddable with zero external dependencies - no JVM, no Docker, no external processes
+- Embeddable with zero external dependencies: no JVM, no Docker, no external processes
 - **Multi-language bindings**: Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), C (FFI), C# (.NET 8 P/Invoke), Dart (dart:ffi), WebAssembly (wasm-bindgen)
 - In-memory and persistent storage modes
 - MVCC transactions with snapshot isolation
@@ -68,7 +69,10 @@ Grafeo supports both **Labeled Property Graph (LPG)** and **Resource Description
 - **Transparent spilling** for out-of-core processing
 - **Bloom filters** for efficient membership tests
 
-### Benchmarks
+</details>
+
+<details>
+<summary><strong>Benchmarks</strong></summary>
 
 Tested with the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmarks/snb/) via [graph-bench](https://github.com/GrafeoDB/graph-bench):
 
@@ -90,6 +94,8 @@ Tested with the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmark
 | ArangoDB | 40,043 ms | 22,739 ms |
 
 Full results: [embedded](https://github.com/GrafeoDB/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/GrafeoDB/graph-bench/blob/main/RESULTS_SERVER.md)
+
+</details>
 
 ## Query Language & Data Model Support
 

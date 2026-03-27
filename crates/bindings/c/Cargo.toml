@@ -37,7 +37,7 @@ languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
 storage = ["grafeo-engine/storage"]
 # Named profiles
-embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
+embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex", "grafeo-engine/grafeo-file"]
 full = ["languages", "ai", "algos", "rdf"]
 
 [lints]

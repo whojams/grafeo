@@ -271,8 +271,9 @@ function runTestCase(db, tc, language, setupLanguage) {
     rawResult = executeQueryRaw(db, language, queries[i])
   }
 
-  // Wrap for the comparator functions
+  // Wrap eagerly and release the WASM reference to avoid borrow conflicts on db.free()
   const result = wrapRawResult(rawResult)
+  rawResult = null
 
   // Column assertion (checked before value assertions)
   if (exp.columns && exp.columns.length > 0) {

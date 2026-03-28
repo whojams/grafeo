@@ -376,27 +376,63 @@ public class SpecTests : IDisposable
         }
         if (value is Dictionary<string, object?> dict)
         {
+            // Temporal type-tagged objects from C FFI: {"$date": "2024-06-15"}
+            if (dict.Count == 1)
+            {
+                var kvp = dict.First();
+                switch (kvp.Key)
+                {
+                    case "$date":
+                    case "$time":
+                    case "$datetime":
+                    case "$zoned_datetime":
+                    case "$duration":
+                        return kvp.Value?.ToString() ?? "null";
+                    case "$timestamp_us":
+                        return Convert.ToInt64(kvp.Value ?? 0).ToString();
+                }
+            }
             if (IsDurationDict(dict))
                 return DurationToIso(dict);
             var entries = dict
-                .Select(kvp => $"{kvp.Key}: {ValueToCanonical(kvp.Value)}")
+                .Select(kv => $"{kv.Key}: {ValueToCanonical(kv.Value)}")
                 .OrderBy(e => e)
                 .ToList();
             return "{" + string.Join(", ", entries) + "}";
         }
         if (value is IReadOnlyDictionary<string, object?> roDict)
         {
+            // Same type-tag check for readonly dictionaries
+            if (roDict.Count == 1)
+            {
+                var kvp = roDict.First();
+                switch (kvp.Key)
+                {
+                    case "$date":
+                    case "$time":
+                    case "$datetime":
+                    case "$zoned_datetime":
+                    case "$duration":
+                        return kvp.Value?.ToString() ?? "null";
+                    case "$timestamp_us":
+                        return Convert.ToInt64(kvp.Value ?? 0).ToString();
+                }
+            }
             if (roDict.Count == 3 && roDict.ContainsKey("months") && roDict.ContainsKey("days") && roDict.ContainsKey("nanos"))
-                return DurationToIso(roDict.ToDictionary(kvp => kvp.Key, kvp => kvp.Value));
+                return DurationToIso(roDict.ToDictionary(kv => kv.Key, kv => kv.Value));
             var entries = roDict
-                .Select(kvp => $"{kvp.Key}: {ValueToCanonical(kvp.Value)}")
+                .Select(kv => $"{kv.Key}: {ValueToCanonical(kv.Value)}")
                 .OrderBy(e => e)
                 .ToList();
             return "{" + string.Join(", ", entries) + "}";
         }
         if (value is byte[] bytes)
             return $"bytes[{bytes.Length}]";
-        // DateTime, DateOnly, TimeOnly, TimeSpan: use ToString for ISO format
+        // DateTime/DateTimeOffset: force ISO 8601 format (system locale may differ)
+        if (value is DateTime dt)
+            return dt.ToString("yyyy-MM-dd");
+        if (value is DateTimeOffset dto)
+            return dto.ToString("yyyy-MM-ddTHH:mm:ssK");
         return value.ToString() ?? "null";
     }
 

@@ -26,7 +26,12 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
                 Value::Null
             }
         }
-        serde_json::Value::String(s) => Value::String(s.as_str().into()),
+        serde_json::Value::String(s) => match s.as_str() {
+            "Infinity" => Value::Float64(f64::INFINITY),
+            "-Infinity" => Value::Float64(f64::NEG_INFINITY),
+            "NaN" => Value::Float64(f64::NAN),
+            _ => Value::String(s.as_str().into()),
+        },
         serde_json::Value::Array(arr) => {
             let items: Vec<Value> = arr.iter().map(json_to_value).collect();
             Value::List(items.into())
@@ -81,7 +86,20 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Int64(i) => serde_json::json!(*i),
-        Value::Float64(f) => serde_json::json!(*f),
+        Value::Float64(f) => {
+            // JSON does not support Infinity/NaN, encode as strings
+            if f.is_infinite() {
+                serde_json::Value::String(if f.is_sign_positive() {
+                    "Infinity".to_string()
+                } else {
+                    "-Infinity".to_string()
+                })
+            } else if f.is_nan() {
+                serde_json::Value::String("NaN".to_string())
+            } else {
+                serde_json::json!(*f)
+            }
+        }
         Value::String(s) => serde_json::Value::String(s.to_string()),
         Value::Bytes(b) => {
             let arr: Vec<serde_json::Value> =

@@ -3165,11 +3165,7 @@ mod tests {
         let filter = find_filter(&plan).expect("Expected Filter for edge hasLabel");
         // The predicate should be Type(e0) IN [KNOWS, FOLLOWS]
         match &filter.predicate {
-            LogicalExpression::Binary {
-                left,
-                op,
-                right,
-            } => {
+            LogicalExpression::Binary { left, op, right } => {
                 assert_eq!(*op, BinaryOp::In, "Multi-label edge filter should use IN");
                 assert!(
                     matches!(left.as_ref(), LogicalExpression::Type(var) if var == "e0"),
@@ -3215,7 +3211,10 @@ mod tests {
         // The result should be a NodeScan with input set
         match &plan {
             LogicalOperator::NodeScan(scan) => {
-                assert_eq!(scan.variable, var, "NodeScan variable should match returned var");
+                assert_eq!(
+                    scan.variable, var,
+                    "NodeScan variable should match returned var"
+                );
                 assert!(scan.label.is_none(), "MidV(None) should not set a label");
                 assert!(
                     scan.input.is_some(),

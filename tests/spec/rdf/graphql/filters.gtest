@@ -1,0 +1,189 @@
+# GraphQL filter operators on RDF-like data
+#
+# Covers: equality, comparison operators (_gt, _gte, _lt, _lte, _ne),
+# string operators (_contains, _starts_with, _ends_with),
+# list membership (_in), compound filters, filter object syntax.
+
+meta:
+  language: graphql
+  model: rdf
+  section: filters
+  title: GraphQL filter operators on RDF data
+  dataset: rdf_social
+  requires: [graphql]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Comparison operators
+  # ---------------------------------------------------------------------------
+
+  - name: filter_age_gt
+    query: "{ person(age_gt: 30) { name age } }"
+    expect:
+      count: 2
+
+  - name: filter_age_gte
+    query: "{ person(age_gte: 30) { name age } }"
+    expect:
+      count: 3
+
+  - name: filter_age_lt
+    query: "{ person(age_lt: 30) { name age } }"
+    expect:
+      count: 2
+
+  - name: filter_age_lte
+    query: "{ person(age_lte: 30) { name age } }"
+    expect:
+      count: 3
+
+  - name: filter_age_ne
+    query: "{ person(age_ne: 30) { name } }"
+    expect:
+      count: 4
+
+  # ---------------------------------------------------------------------------
+  # String operators
+  # ---------------------------------------------------------------------------
+
+  - name: filter_name_contains
+    query: "{ person(name_contains: \"li\") { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: filter_name_starts_with
+    query: "{ person(name_starts_with: \"Ju\") { name } }"
+    expect:
+      rows:
+        - [Jules]
+
+  - name: filter_name_ends_with
+    query: "{ person(name_ends_with: \"us\") { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_city_contains
+    query: "{ person(city_contains: \"am\") { name } }"
+    expect:
+      count: 2
+
+  - name: filter_email_ends_with
+    query: "{ person(email_ends_with: \"@example.org\") { name } }"
+    expect:
+      count: 5
+
+  - name: filter_uri_contains
+    query: |
+      query {
+        resource(uri_contains: "person/alix") {
+          name
+        }
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # List membership (_in)
+  # ---------------------------------------------------------------------------
+
+  - name: filter_age_in
+    query: "{ person(age_in: [25, 30, 35]) { name } }"
+    expect:
+      count: 3
+
+  - name: filter_city_in
+    query: "{ person(city_in: [\"Amsterdam\", \"Berlin\"]) { name } }"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Compound filters (multiple arguments = AND)
+  # ---------------------------------------------------------------------------
+
+  - name: compound_city_and_age_gt
+    query: "{ person(city: \"Amsterdam\", age_gt: 28) { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: compound_age_range
+    query: "{ person(age_gte: 28, age_lte: 32) { name } }"
+    expect:
+      count: 3
+
+  - name: compound_three_filters
+    query: "{ person(city: \"Amsterdam\", age_gte: 25, age_lte: 30) { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Filter object syntax with operators
+  # ---------------------------------------------------------------------------
+
+  - name: filter_object_age_gt
+    query: "query { person(filter: { age_gt: 30 }) { name } }"
+    expect:
+      count: 2
+
+  - name: filter_object_name_contains
+    query: "query { person(filter: { name_contains: \"in\" }) { name } }"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: filter_object_compound
+    query: "query { person(filter: { age_gte: 25, city: \"Berlin\" }) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # Filters on nested traversals
+  # ---------------------------------------------------------------------------
+
+  - name: nested_filter_age_gt
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows(age_gt: 30) {
+            name
+            age
+          }
+        }
+      }
+    expect:
+      rows:
+        - [Alix, Vincent, 35]
+
+  - name: nested_filter_city
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows(city: "Berlin") {
+            name
+          }
+        }
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Filters on Organization type
+  # ---------------------------------------------------------------------------
+
+  - name: filter_org_by_name
+    query: "{ organization(name: \"Grafeo OSS\") { name founded } }"
+    expect:
+      rows:
+        - [Grafeo OSS, 2025]
+
+  - name: filter_org_founded_gte
+    query: "{ organization(founded_gte: 2020) { name } }"
+    expect:
+      count: 1

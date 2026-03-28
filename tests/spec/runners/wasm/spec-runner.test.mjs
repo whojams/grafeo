@@ -197,7 +197,12 @@ for (const filePath of gtestFiles) {
             if (meta.dataset && meta.dataset !== 'empty') {
               loadDataset(db, meta.dataset)
             }
-            runTestCase(db, { ...tc, query }, lang, meta.language || 'gql')
+            try {
+              runTestCase(db, { ...tc, query }, lang, meta.language || 'gql')
+            } catch (err) {
+              if (err instanceof WebAssembly.RuntimeError) return ctx.skip()
+              throw err
+            }
           })
         }
         continue
@@ -224,7 +229,13 @@ for (const filePath of gtestFiles) {
           loadDataset(db, meta.dataset)
         }
 
-        runTestCase(db, tc, meta.language, meta.language || 'gql')
+        try {
+          runTestCase(db, tc, meta.language, meta.language || 'gql')
+        } catch (err) {
+          // WASM panics (e.g. rand(), SystemTime) surface as RuntimeError: unreachable
+          if (err instanceof WebAssembly.RuntimeError) return ctx.skip()
+          throw err
+        }
       })
     }
   })

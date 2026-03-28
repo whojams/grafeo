@@ -984,6 +984,123 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_backslash_in_iri() {
+        // The IRI reader skips backslash-escaped pairs (covers the `\\` branch in read_iri_ref).
+        // The raw escape characters are preserved in the IRI string.
+        let input = r#"
+            <http://example.org/\u0041> <http://example.org/p> "value" .
+        "#;
+        let triples = TurtleParser::new().parse(input).unwrap();
+        assert_eq!(triples.len(), 1);
+        // The IRI reader passes through escape sequences without decoding.
+        assert_eq!(
+            triples[0].subject(),
+            &Term::iri("http://example.org/\\u0041")
+        );
+    }
+
+    #[test]
+    fn test_parse_unicode_escape_in_string() {
+        // \u0048 is 'H'
+        let input = r#"
+            <http://example.org/s> <http://example.org/p> "\u0048ello" .
+        "#;
+        let triples = TurtleParser::new().parse(input).unwrap();
+        assert_eq!(triples.len(), 1);
+        assert_eq!(triples[0].object(), &Term::literal("Hello"));
+    }
+
+    #[test]
+    fn test_parse_long_string_literal() {
+        let input = "<http://example.org/s> <http://example.org/p> \"\"\"Hello\nWorld\"\"\" .";
+        let triples = TurtleParser::new().parse(input).unwrap();
+        assert_eq!(triples.len(), 1);
+        assert_eq!(triples[0].object(), &Term::literal("Hello\nWorld"));
+    }
+
+    #[test]
+    fn test_parse_collection_syntax() {
+        let input = r#"
+            @prefix ex: <http://example.org/> .
+            ex:s ex:p (1 2 3) .
+        "#;
+        let triples = TurtleParser::new().parse(input).unwrap();
+
+        // A collection (1 2 3) produces 6 triples:
+        //   _:g1 rdf:first 1 ; rdf:rest _:g2 .
+        //   _:g2 rdf:first 2 ; rdf:rest _:g3 .
+        //   _:g3 rdf:first 3 ; rdf:rest rdf:nil .
+        // Plus the top-level: ex:s ex:p _:g1 .
+        // Total: 7
+        assert_eq!(triples.len(), 7);
+
+        // The top-level triple should link subject to the collection head.
+        let top = &triples[6];
+        assert_eq!(top.subject(), &Term::iri("http://example.org/s"));
+        assert_eq!(top.predicate(), &Term::iri("http://example.org/p"));
+        assert!(top.object().is_blank_node());
+
+        // Verify rdf:first chain values.
+        let rdf_first = Term::iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#first");
+        let rdf_rest = Term::iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest");
+        let rdf_nil = Term::iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil");
+
+        let first_values: Vec<_> = triples
+            .iter()
+            .filter(|t| t.predicate() == &rdf_first)
+            .map(|t| t.object().clone())
+            .collect();
+        assert_eq!(first_values.len(), 3);
+        assert_eq!(
+            first_values[0],
+            Term::typed_literal("1", Literal::XSD_INTEGER)
+        );
+        assert_eq!(
+            first_values[1],
+            Term::typed_literal("2", Literal::XSD_INTEGER)
+        );
+        assert_eq!(
+            first_values[2],
+            Term::typed_literal("3", Literal::XSD_INTEGER)
+        );
+
+        // The last rdf:rest should point to rdf:nil.
+        let rest_objects: Vec<_> = triples
+            .iter()
+            .filter(|t| t.predicate() == &rdf_rest)
+            .map(|t| t.object().clone())
+            .collect();
+        assert_eq!(rest_objects.len(), 3);
+        assert_eq!(rest_objects[2], rdf_nil);
+    }
+
+    #[test]
+    fn test_parse_escape_cr_backslash_single_quote() {
+        let input = r#"
+            <http://example.org/s> <http://example.org/p1> "line1\rline2" .
+            <http://example.org/s> <http://example.org/p2> "back\\slash" .
+            <http://example.org/s> <http://example.org/p3> "single\'quote" .
+        "#;
+        let triples = TurtleParser::new().parse(input).unwrap();
+        assert_eq!(triples.len(), 3);
+        assert_eq!(triples[0].object(), &Term::literal("line1\rline2"));
+        assert_eq!(triples[1].object(), &Term::literal("back\\slash"));
+        assert_eq!(triples[2].object(), &Term::literal("single'quote"));
+    }
+
+    #[test]
+    fn test_parse_language_tag_with_subtag() {
+        let input = r#"
+            <http://example.org/s> <http://example.org/p1> "chat"@fr .
+            <http://example.org/s> <http://example.org/p2> "hello"@en-US .
+        "#;
+        let triples = TurtleParser::new().parse(input).unwrap();
+        assert_eq!(triples.len(), 2);
+        assert_eq!(triples[0].object(), &Term::lang_literal("chat", "fr"));
+        assert_eq!(triples[1].object(), &Term::lang_literal("hello", "en-US"));
+    }
+
+    #[test]
     fn test_roundtrip() {
         let input = r#"
             @prefix foaf: <http://xmlns.com/foaf/0.1/> .

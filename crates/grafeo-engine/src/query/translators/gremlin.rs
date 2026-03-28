@@ -3134,4 +3134,146 @@ mod tests {
             "groupCount() should have a group_by expression"
         );
     }
+
+    // === Edge HasLabel with multiple labels ===
+
+    #[test]
+    fn test_edge_has_label_multiple_labels_produces_in() {
+        // hasLabel with multiple labels on an edge should produce Type(var) IN [labels]
+        let translator = GremlinTranslator::new();
+        let step = ast::Step::HasLabel(vec!["KNOWS".into(), "FOLLOWS".into()]);
+
+        // Create a simple NodeScan as input
+        let input = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "v0".to_string(),
+            label: None,
+            input: None,
+        });
+
+        let (plan, _) = translator
+            .translate_step(&step, input, "e0", true)
+            .expect("translate_step should succeed");
+
+        // Should produce a Filter wrapping the input
+        fn find_filter(op: &LogicalOperator) -> Option<&FilterOp> {
+            match op {
+                LogicalOperator::Filter(f) => Some(f),
+                _ => None,
+            }
+        }
+
+        let filter = find_filter(&plan).expect("Expected Filter for edge hasLabel");
+        // The predicate should be Type(e0) IN [KNOWS, FOLLOWS]
+        match &filter.predicate {
+            LogicalExpression::Binary {
+                left,
+                op,
+                right,
+            } => {
+                assert_eq!(*op, BinaryOp::In, "Multi-label edge filter should use IN");
+                assert!(
+                    matches!(left.as_ref(), LogicalExpression::Type(var) if var == "e0"),
+                    "Left side should be Type('e0'), got: {:?}",
+                    left
+                );
+                match right.as_ref() {
+                    LogicalExpression::Literal(Value::List(items)) => {
+                        assert_eq!(items.len(), 2, "Should have 2 labels in list");
+                        assert_eq!(items[0], Value::String("KNOWS".into()));
+                        assert_eq!(items[1], Value::String("FOLLOWS".into()));
+                    }
+                    other => panic!("Right side should be a List literal, got: {other:?}"),
+                }
+            }
+            other => panic!("Expected Binary expression, got: {other:?}"),
+        }
+    }
+
+    // === MidV step translation ===
+
+    #[test]
+    fn test_mid_v_none_produces_node_scan_with_input() {
+        // MidV(None) should produce a new NodeScan with the previous plan as input
+        let translator = GremlinTranslator::new();
+        let step = ast::Step::MidV(None);
+
+        let input = LogicalOperator::NodeScan(NodeScanOp {
+            variable: "v0".to_string(),
+            label: None,
+            input: None,
+        });
+
+        let (plan, new_var) = translator
+            .translate_step(&step, input, "v0", false)
+            .expect("translate_step should succeed for MidV");
+
+        // Should return a new variable
+        assert!(new_var.is_some(), "MidV should produce a new variable");
+        let var = new_var.unwrap();
+        assert_ne!(var, "v0", "New variable should differ from original");
+
+        // The result should be a NodeScan with input set
+        match &plan {
+            LogicalOperator::NodeScan(scan) => {
+                assert_eq!(scan.variable, var, "NodeScan variable should match returned var");
+                assert!(scan.label.is_none(), "MidV(None) should not set a label");
+                assert!(
+                    scan.input.is_some(),
+                    "MidV NodeScan should chain the previous plan as input"
+                );
+                // Verify the input is the original NodeScan
+                match scan.input.as_deref() {
+                    Some(LogicalOperator::NodeScan(inner)) => {
+                        assert_eq!(inner.variable, "v0");
+                    }
+                    other => panic!("Expected inner NodeScan, got: {other:?}"),
+                }
+            }
+            other => panic!("Expected NodeScan for MidV, got: {other:?}"),
+        }
+    }
+
+    // === value_to_expr with parameter resolution ===
+
+    #[test]
+    fn test_value_to_expr_parameter_reference() {
+        // A "$name" string should resolve to a Parameter expression
+        let value = Value::String("$name".into());
+        let expr = GremlinTranslator::value_to_expr(&value);
+
+        match expr {
+            LogicalExpression::Parameter(name) => {
+                assert_eq!(name, "name", "Parameter name should strip the '$' prefix");
+            }
+            other => panic!("Expected Parameter expression, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_to_expr_regular_string() {
+        // A regular string (no $ prefix) should become a Literal
+        let value = Value::String("regular".into());
+        let expr = GremlinTranslator::value_to_expr(&value);
+
+        match expr {
+            LogicalExpression::Literal(Value::String(s)) => {
+                assert_eq!(s.as_str(), "regular");
+            }
+            other => panic!("Expected Literal(String) expression, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_value_to_expr_int64() {
+        // Non-string values should always become Literals
+        let value = Value::Int64(42);
+        let expr = GremlinTranslator::value_to_expr(&value);
+
+        match expr {
+            LogicalExpression::Literal(Value::Int64(n)) => {
+                assert_eq!(n, 42);
+            }
+            other => panic!("Expected Literal(Int64) expression, got: {other:?}"),
+        }
+    }
 }

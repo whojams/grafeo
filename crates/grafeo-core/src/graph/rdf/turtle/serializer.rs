@@ -450,6 +450,57 @@ mod tests {
     }
 
     #[test]
+    fn test_serialize_escape_cr_and_backslash() {
+        let triples = vec![
+            Arc::new(Triple::new(
+                Term::iri("http://example.org/s"),
+                Term::iri("http://example.org/p1"),
+                Term::literal("line1\rline2"),
+            )),
+            Arc::new(Triple::new(
+                Term::iri("http://example.org/s"),
+                Term::iri("http://example.org/p2"),
+                Term::literal("back\\slash"),
+            )),
+        ];
+
+        let serializer = TurtleSerializer::new();
+        let output = serializer.to_string(&triples).unwrap();
+
+        // Carriage return should be escaped as \r
+        assert!(output.contains("\\r"));
+        // Backslash should be escaped as \\
+        assert!(output.contains("\\\\"));
+    }
+
+    #[test]
+    fn test_serialize_double_shorthand() {
+        let triples = vec![
+            Arc::new(Triple::new(
+                Term::iri("http://example.org/s"),
+                Term::iri("http://example.org/negpi"),
+                Term::typed_literal("-3.14", Literal::XSD_DOUBLE),
+            )),
+            Arc::new(Triple::new(
+                Term::iri("http://example.org/s"),
+                Term::iri("http://example.org/tiny"),
+                Term::typed_literal("1e-5", Literal::XSD_DOUBLE),
+            )),
+        ];
+
+        let serializer = TurtleSerializer::new();
+        let output = serializer.to_string(&triples).unwrap();
+
+        // Double shorthand: bare value without datatype annotation.
+        assert!(output.contains("-3.14"));
+        assert!(output.contains("1e-5"));
+        assert!(
+            !output.contains("^^"),
+            "double shorthand should not have ^^ annotation"
+        );
+    }
+
+    #[test]
     fn test_serialize_boolean_shorthand() {
         let triples = vec![Arc::new(Triple::new(
             Term::iri("http://example.org/s"),

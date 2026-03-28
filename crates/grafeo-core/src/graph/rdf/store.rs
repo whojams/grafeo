@@ -1875,6 +1875,73 @@ mod tests {
     }
 
     #[test]
+    fn test_load_turtle_roundtrip() {
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+            ex:alix a foaf:Person ;
+                foaf:name "Alix" ;
+                foaf:knows ex:gus .
+
+            ex:gus foaf:name "Gus" .
+        "#;
+
+        let store = RdfStore::new();
+        let result = store.load_turtle(turtle).unwrap();
+        assert_eq!(result.triple_count, 4);
+        assert_eq!(store.len(), 4);
+
+        // Verify subject/predicate indexes are populated.
+        let alix = Term::iri("http://example.org/alix");
+        assert_eq!(store.triples_with_subject(&alix).len(), 3);
+    }
+
+    #[test]
+    fn test_to_turtle_roundtrip() {
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+            ex:alix foaf:name "Alix" ;
+                foaf:knows ex:gus .
+
+            ex:gus foaf:name "Gus" .
+        "#;
+
+        let store = RdfStore::new();
+        store.load_turtle(turtle).unwrap();
+        assert_eq!(store.len(), 3);
+
+        // Serialize to Turtle and re-parse.
+        let output = store.to_turtle().unwrap();
+        assert!(!output.is_empty());
+
+        let store2 = RdfStore::new();
+        let result2 = store2.load_turtle(&output).unwrap();
+        assert_eq!(result2.triple_count, 3);
+
+        // Verify structural equivalence: same subject/predicate/object triples exist.
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: None,
+        };
+        let results = store2.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object(), &Term::literal("Alix"));
+
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/gus")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: None,
+        };
+        let results = store2.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object(), &Term::literal("Gus"));
+    }
+
+    #[test]
     fn test_load_ntriples_parse_error() {
         let bad_ntriples = "\
 <http://example.org/s> <http://example.org/p> \"ok\" .

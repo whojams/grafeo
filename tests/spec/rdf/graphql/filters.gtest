@@ -187,3 +187,29 @@ tests:
     query: "{ organization(founded_gte: 2020) { name } }"
     expect:
       count: 1
+
+  # ---------------------------------------------------------------------------
+  # Where object syntax
+  # ---------------------------------------------------------------------------
+
+  - name: where_object_equality
+    query: "{ person(where: { name: \"Alix\" }) { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: where_object_age_equality
+    query: "{ person(where: { age: 25 }) { name age } }"
+    expect:
+      rows:
+        - [Gus, 25]
+
+  # ---------------------------------------------------------------------------
+  # Mixed where + direct args
+  # ---------------------------------------------------------------------------
+
+  - name: mixed_where_and_direct_args
+    query: "{ person(age: 30, where: { city: \"Amsterdam\" }) { name } }"
+    expect:
+      rows:
+        - [Alix]

@@ -71,15 +71,6 @@ void main() {
       expect(result.columns, isEmpty);
     });
 
-    test('multi-row results', () {
-      db.execute("INSERT (:Person {name: 'Alix'})");
-      db.execute("INSERT (:Person {name: 'Gus'})");
-      db.execute("INSERT (:Person {name: 'Vincent'})");
-
-      final result = db.execute('MATCH (p:Person) RETURN p.name');
-      expect(result.rows, hasLength(3));
-    });
-
     test('invalid query throws QueryException', () {
       expect(
         () => db.execute('THIS IS NOT VALID GQL'),

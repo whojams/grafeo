@@ -7,8 +7,11 @@
 # (first, skip, limit, offset), ordering (orderBy), nested relationship
 # traversals, empty result cases, fragment spreads, inline fragments with type
 # conditions, aliased root fields, mixed where + direct args, nested traversal
-# aliases, delete nonexistent nodes, boolean/float property values, and where
-# with bare equality.
+# aliases, delete nonexistent nodes, boolean/float property values, where with
+# bare equality, multi-key orderBy, orderBy combined with where, nested field
+# compound filters, deeply nested traversals, multiple fragment spreads,
+# fragments with nested fields, inline fragments without type condition, and
+# edge case property values (zero, false, empty string).
 
 meta:
   language: graphql

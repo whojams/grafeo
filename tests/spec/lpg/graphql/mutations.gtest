@@ -1,7 +1,8 @@
 # GraphQL mutation support for Grafeo LPG
 #
-# Covers: createNode, updateNode, deleteNode mutations, and end-to-end
-# workflows combining mutations with verification queries.
+# Covers: createNode, updateNode, deleteNode mutations, end-to-end workflows
+# combining mutations with verification queries, create without selection set,
+# multi-property updates, and delete with count verification.
 # Uses the social_network dataset as baseline, then mutates via GraphQL.
 
 meta:

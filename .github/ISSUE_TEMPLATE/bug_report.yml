@@ -17,7 +17,17 @@ body:
     id: reproduction
     attributes:
       label: How to reproduce
-      description: Minimal code or steps to reproduce the issue.
+      description: |
+        Minimal code or steps to reproduce the issue.
+        You can also submit a `.gtest` test case (see [tests/spec/README.md](https://github.com/GrafeoDB/grafeo/blob/main/tests/spec/README.md)):
+        ```yaml
+        - name: my_bug
+          skip: "describe the wrong behavior"
+          query: "MATCH (n:A:B) RETURN n"
+          expect:
+            rows:
+              - [expected_value]
+        ```
       placeholder: |
         ```rust
         let db = GrafeoDB::open("test")?;

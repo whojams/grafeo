@@ -1,0 +1,588 @@
+# SPARQL Expression Evaluation Gaps (Section 17)
+#
+# Covers: functions in SELECT projections, IF/COALESCE evaluation,
+# arithmetic in projections, nested function calls.
+# Targets the biggest implementation gap: functions that parse but
+# do not evaluate in SELECT/BIND contexts.
+# Based on W3C SPARQL 1.1 Query Language specification, Section 17.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "17"
+  title: Expression Evaluation
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Projection expressions: functions in SELECT ... AS
+  # ---------------------------------------------------------------------------
+
+  - name: strlen_in_select_projection
+    skip: "STRLEN not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name (STRLEN(?name) AS ?len) WHERE {
+        ?s <http://ex.org/name> ?name
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 4]
+        - [Gus, 3]
+        - [Vincent, 7]
+
+  - name: ucase_in_select_projection
+    skip: "UCASE not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name (UCASE(?name) AS ?upper) WHERE {
+        ?s <http://ex.org/name> ?name
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, ALIX]
+        - [Gus, GUS]
+
+  - name: lcase_in_select_projection
+    skip: "LCASE not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name (LCASE(?name) AS ?lower) WHERE {
+        ?s <http://ex.org/name> ?name
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Jules, jules]
+        - [Vincent, vincent]
+
+  - name: concat_in_select_projection
+    skip: "CONCAT not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/first> "Alix" .
+          <http://ex.org/alix> <http://ex.org/last> "Vega" .
+          <http://ex.org/gus> <http://ex.org/first> "Gus" .
+          <http://ex.org/gus> <http://ex.org/last> "Fring" .
+        }
+    query: |
+      SELECT (CONCAT(?first, " ", ?last) AS ?full) WHERE {
+        ?s <http://ex.org/first> ?first .
+        ?s <http://ex.org/last> ?last .
+      } ORDER BY ?full
+    expect:
+      ordered: true
+      rows:
+        - ["Alix Vega"]
+        - ["Gus Fring"]
+
+  - name: substr_in_select_projection
+    skip: "SUBSTR not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?name (SUBSTR(?name, 1, 3) AS ?prefix) WHERE {
+        ?s <http://ex.org/name> ?name
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Butch, But]
+        - [Vincent, Vin]
+
+  # ---------------------------------------------------------------------------
+  # Arithmetic in projections
+  # ---------------------------------------------------------------------------
+
+  - name: addition_in_projection
+    skip: "arithmetic not evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "80"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/gus> <http://ex.org/score> "65"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+    query: |
+      SELECT ?s (?val + 10 AS ?result) WHERE {
+        ?s <http://ex.org/score> ?val
+      } ORDER BY ?s
+    expect:
+      ordered: true
+      rows:
+        - ["<http://ex.org/alix>", 90]
+        - ["<http://ex.org/gus>", 75]
+
+  - name: multiplication_in_projection
+    skip: "arithmetic not evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/item1> <http://ex.org/price> "25"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/item1> <http://ex.org/qty> "4"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/item2> <http://ex.org/price> "10"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/item2> <http://ex.org/qty> "7"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+    query: |
+      SELECT (?price * ?qty AS ?total) WHERE {
+        ?item <http://ex.org/price> ?price .
+        ?item <http://ex.org/qty> ?qty .
+      } ORDER BY ?total
+    expect:
+      ordered: true
+      rows:
+        - [70]
+        - [100]
+
+  # ---------------------------------------------------------------------------
+  # IF function (Section 17.4.1.2)
+  # ---------------------------------------------------------------------------
+
+  - name: if_true_branch
+    skip: "IF() not yet evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT (IF(true, "yes", "no") AS ?result) WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - [yes]
+
+  - name: if_false_branch
+    skip: "IF() not yet evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT (IF(false, "yes", "no") AS ?result) WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - [no]
+
+  - name: if_with_comparison
+    skip: "IF() not yet evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/age> "35" .
+        }
+    query: |
+      SELECT ?name ?cat WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/age> ?age .
+        BIND(IF(?age > "30", "senior", "junior") AS ?cat)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, junior]
+        - [Gus, junior]
+        - [Vincent, senior]
+
+  - name: if_in_filter_context
+    skip: "IF() not evaluated in FILTER context"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/val> "5" .
+          <http://ex.org/gus> <http://ex.org/val> "15" .
+          <http://ex.org/vincent> <http://ex.org/val> "25" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        ?s <http://ex.org/val> ?val .
+        FILTER(IF(?val > "10", true, false))
+      } ORDER BY ?val
+    expect:
+      ordered: true
+      rows:
+        - [15]
+        - [25]
+
+  # ---------------------------------------------------------------------------
+  # COALESCE function (Section 17.4.1.3)
+  # ---------------------------------------------------------------------------
+
+  - name: coalesce_returns_first_bound
+    skip: "COALESCE() not yet evaluated in BIND"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/nick> "Lix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name ?display WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/nick> ?nick }
+        BIND(COALESCE(?nick, ?name) AS ?display)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Lix]
+        - [Gus, Gus]
+
+  - name: coalesce_with_constant_fallback
+    skip: "COALESCE() not yet evaluated in BIND"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name ?val WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/city> ?city }
+        BIND(COALESCE(?city, "unknown") AS ?val)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Amsterdam]
+        - [Gus, unknown]
+
+  - name: coalesce_all_unbound
+    skip: "COALESCE() not yet evaluated in BIND"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?name ?val WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/nick> ?a }
+        OPTIONAL { ?s <http://ex.org/alias> ?b }
+        OPTIONAL { ?s <http://ex.org/handle> ?c }
+        BIND(COALESCE(?a, ?b, ?c) AS ?val)
+      }
+    expect:
+      rows:
+        - [Alix, null]
+
+  # ---------------------------------------------------------------------------
+  # Nested function calls
+  # ---------------------------------------------------------------------------
+
+  - name: nested_strlen_concat
+    skip: "nested function composition not evaluated in projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/first> "Alix" .
+          <http://ex.org/alix> <http://ex.org/last> "Vega" .
+          <http://ex.org/gus> <http://ex.org/first> "Gus" .
+          <http://ex.org/gus> <http://ex.org/last> "Fring" .
+        }
+    query: |
+      SELECT (STRLEN(CONCAT(?first, ?last)) AS ?len) WHERE {
+        ?s <http://ex.org/first> ?first .
+        ?s <http://ex.org/last> ?last .
+      } ORDER BY ?len
+    expect:
+      ordered: true
+      rows:
+        - [8]
+        - [8]
+
+  - name: nested_ucase_substr
+    skip: "nested function composition not evaluated in projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT ?name (UCASE(SUBSTR(?name, 1, 1)) AS ?initial) WHERE {
+        ?s <http://ex.org/name> ?name
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, A]
+        - [Jules, J]
+        - [Mia, M]
+
+  - name: nested_concat_ucase_lcase
+    skip: "nested function composition not evaluated in projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/first> "Alix" .
+          <http://ex.org/alix> <http://ex.org/last> "Vega" .
+        }
+    query: |
+      SELECT (CONCAT(UCASE(?first), " ", LCASE(?last)) AS ?formatted) WHERE {
+        <http://ex.org/alix> <http://ex.org/first> ?first .
+        <http://ex.org/alix> <http://ex.org/last> ?last .
+      }
+    expect:
+      rows:
+        - ["ALIX vega"]
+
+  - name: nested_if_strlen
+    skip: "nested function composition not evaluated in projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name (IF(STRLEN(?name) > 3, "long", "short") AS ?length_cat) WHERE {
+        ?s <http://ex.org/name> ?name
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, long]
+        - [Gus, short]
+        - [Vincent, long]
+
+  # ---------------------------------------------------------------------------
+  # Functions that DO work in FILTER (contrast tests, no skip)
+  # ---------------------------------------------------------------------------
+
+  - name: strlen_works_in_filter
+    # STRLEN evaluates correctly in FILTER context, contrast with projection gap.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STRLEN(?name) > 3)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: contains_works_in_filter
+    # CONTAINS evaluates correctly in FILTER context.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(CONTAINS(?name, "lix"))
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: strstarts_works_in_filter
+    # STRSTARTS evaluates correctly in FILTER context.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STRSTARTS(?name, "J"))
+      }
+    expect:
+      rows:
+        - [Jules]
+
+  - name: regex_works_in_filter
+    # REGEX evaluates correctly in FILTER context.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/amsterdam> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/berlin> <http://ex.org/city> "Berlin" .
+          <http://ex.org/barcelona> <http://ex.org/city> "Barcelona" .
+          <http://ex.org/paris> <http://ex.org/city> "Paris" .
+          <http://ex.org/prague> <http://ex.org/city> "Prague" .
+        }
+    query: |
+      SELECT ?city WHERE {
+        ?s <http://ex.org/city> ?city
+        FILTER(REGEX(?city, "^B"))
+      } ORDER BY ?city
+    expect:
+      ordered: true
+      rows:
+        - [Barcelona]
+        - [Berlin]
+
+  # ---------------------------------------------------------------------------
+  # Additional projection expression gaps
+  # ---------------------------------------------------------------------------
+
+  - name: str_in_select_projection
+    skip: "STR() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT (STR(<http://ex.org/alix>) AS ?iri_str) WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - ["http://ex.org/alix"]
+
+  - name: replace_in_select_projection
+    skip: "REPLACE not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/amsterdam> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/berlin> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?city (REPLACE(?city, "dam", "DAM") AS ?replaced) WHERE {
+        ?s <http://ex.org/city> ?city
+      } ORDER BY ?city
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, AmsterDAM]
+        - [Berlin, Berlin]
+
+  - name: subtraction_in_projection
+    skip: "arithmetic not evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "90"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/gus> <http://ex.org/score> "75"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+    query: |
+      SELECT ?s (?val - 5 AS ?adjusted) WHERE {
+        ?s <http://ex.org/score> ?val
+      } ORDER BY ?s
+    expect:
+      ordered: true
+      rows:
+        - ["<http://ex.org/alix>", 85]
+        - ["<http://ex.org/gus>", 70]
+
+  - name: coalesce_in_select_projection
+    skip: "COALESCE() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+          <http://ex.org/mia> <http://ex.org/nick> "Wallace" .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?name (COALESCE(?nick, ?name) AS ?display) WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/nick> ?nick }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Butch, Butch]
+        - [Mia, Wallace]
+
+  - name: if_in_select_projection
+    skip: "IF() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/amsterdam> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/amsterdam> <http://ex.org/pop> "900000"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/prague> <http://ex.org/city> "Prague" .
+          <http://ex.org/prague> <http://ex.org/pop> "1300000"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/paris> <http://ex.org/city> "Paris" .
+          <http://ex.org/paris> <http://ex.org/pop> "2100000"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+    query: |
+      SELECT ?city (IF(?pop > 1000000, "large", "small") AS ?size) WHERE {
+        ?s <http://ex.org/city> ?city .
+        ?s <http://ex.org/pop> ?pop .
+      } ORDER BY ?city
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, small]
+        - [Paris, large]
+        - [Prague, large]
+
+  - name: nested_coalesce_if
+    skip: "nested function composition not evaluated in projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/nick> "Lix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name (IF(COALESCE(?nick, "none") = "none", "no nickname", ?nick) AS ?display) WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/nick> ?nick }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Lix]
+        - [Gus, "no nickname"]

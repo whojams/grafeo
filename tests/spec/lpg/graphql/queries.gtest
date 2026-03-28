@@ -923,3 +923,104 @@ tests:
     expect:
       rows:
         - [Jules, ""]
+
+  # ---------------------------------------------------------------------------
+  # 30. Null argument behavior
+  # ---------------------------------------------------------------------------
+
+  - name: filter_null_matches_nothing
+    # Filtering by null matches nodes where property is literally null, not missing
+    query: "{ person(city: null) { name } }"
+    expect:
+      empty: true
+
+  - name: query_after_create_with_null_property
+    statements:
+      - "mutation { createPerson(name: \"Jules\", nickname: null) { name } }"
+      - "{ person(name: \"Jules\") { name nickname } }"
+    expect:
+      rows:
+        - [Jules, null]
+
+  # ---------------------------------------------------------------------------
+  # 31. Negative numeric arguments
+  # ---------------------------------------------------------------------------
+
+  - name: filter_negative_integer
+    query: "{ person(age_gt: -1) { name } }"
+    expect:
+      count: 3
+
+  - name: create_and_query_negative_float
+    statements:
+      - "mutation { createPerson(name: \"Mia\", score: -2.5) { name } }"
+      - "{ person(name: \"Mia\") { name score } }"
+    expect:
+      rows:
+        - [Mia, -2.5]
+
+  # ---------------------------------------------------------------------------
+  # 32. Block strings (triple-quote)
+  # ---------------------------------------------------------------------------
+
+  - name: block_string_in_mutation
+    statements:
+      - |
+        mutation {
+          createPerson(name: "Hans", bio: """A long bio text""") {
+            name
+          }
+        }
+      - "{ person(name: \"Hans\") { name bio } }"
+    expect:
+      rows:
+        - [Hans, A long bio text]
+
+  # ---------------------------------------------------------------------------
+  # 33. String escape sequences
+  # ---------------------------------------------------------------------------
+
+  - name: string_escape_single_quote
+    statements:
+      - "mutation { createPerson(name: \"O'Brien\") { name } }"
+      - "{ person(name: \"O'Brien\") { name } }"
+    expect:
+      rows:
+        - ["O'Brien"]
+
+  # ---------------------------------------------------------------------------
+  # 34. Empty list in filter
+  # ---------------------------------------------------------------------------
+
+  - name: empty_list_in_filter
+    query: "{ person(age_in: []) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 35. Lowercase enum in orderBy
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_lowercase_enum
+    query: |
+      query {
+        person(orderBy: { name: asc }) {
+          name
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # 36. Multiple operations (first selected)
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_operations_first_selected
+    # When multiple operations exist without explicit selection, first is used
+    query: "query A { person { name } } query B { company { name } }"
+    expect:
+      count: 3

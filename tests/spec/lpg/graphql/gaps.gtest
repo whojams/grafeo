@@ -105,3 +105,57 @@ tests:
     expect:
       rows:
         - [90, 30]
+
+  # ---------------------------------------------------------------------------
+  # 5. Deep nesting failure (4+ levels)
+  # ---------------------------------------------------------------------------
+
+  - name: deeply_nested_four_levels
+    skip: "4-level nesting fails with column resolution error (GRAFEO-V001)"
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows {
+            name
+            knows {
+              name
+              knows {
+                name
+              }
+            }
+          }
+        }
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 6. Variable with default value
+  # ---------------------------------------------------------------------------
+
+  - name: variable_with_default_value
+    skip: "Variable declarations with defaults not wired to parameter expressions"
+    query: "query($limit: Int = 2) { person(first: $limit) { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # 7. Subscription with fields
+  # ---------------------------------------------------------------------------
+
+  - name: subscription_with_selection
+    skip: "Subscriptions explicitly not supported"
+    query: "subscription { personCreated { name age } }"
+    expect:
+      error: "not supported"
+
+  # ---------------------------------------------------------------------------
+  # 8. Multiple root fields returning combined results
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_root_fields_combined_results
+    skip: "Only first root field executed, subsequent silently dropped"
+    query: "{ person(name: \"Alix\") { name } company { name } }"
+    expect:
+      count: 2

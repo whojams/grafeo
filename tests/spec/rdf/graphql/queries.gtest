@@ -371,3 +371,33 @@ tests:
     query: "{ person(name: \"Django\") { name } }"
     expect:
       empty: true
+
+  # ---------------------------------------------------------------------------
+  # Multiple operations (first used)
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_operations_first_used
+    query: "query A { person { name } } query B { organization { name } }"
+    expect:
+      count: 5
+
+  # ---------------------------------------------------------------------------
+  # Block string in query
+  # ---------------------------------------------------------------------------
+
+  - name: block_string_in_query
+    setup:
+      - "INSERT (:Resource:Person {uri: 'http://example.org/person/hans', name: 'Hans', age: 33, city: 'Berlin', bio: 'A long bio'})"
+    query: "{ person(name: \"Hans\") { name bio } }"
+    expect:
+      rows:
+        - [Hans, A long bio]
+
+  # ---------------------------------------------------------------------------
+  # Additional empty result cases
+  # ---------------------------------------------------------------------------
+
+  - name: filter_no_match_age
+    query: "{ person(age: 999) { name } }"
+    expect:
+      empty: true

@@ -1,0 +1,382 @@
+# SPARQL 1.1 Update: Graph Management Operations
+#
+# Covers: CREATE GRAPH, DROP GRAPH, CLEAR GRAPH, COPY, MOVE, ADD, LOAD.
+# W3C SPARQL 1.1 Update sec 3.1-3.7, covering all graph management
+# operations with SILENT variants and DEFAULT/named graph combinations.
+
+meta:
+  language: sparql
+  model: rdf
+  section: update_graph_mgmt
+  title: Graph Management Operations
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # CREATE GRAPH
+  # ---------------------------------------------------------------------------
+
+  - name: create_graph_and_insert
+    skip: "CREATE GRAPH not yet executed"
+    # CREATE GRAPH declares a named graph, then INSERT DATA populates it.
+    setup:
+      - "CREATE GRAPH <http://ex.org/graph/amsterdam>"
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+            <http://ex.org/gus> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+    query: |
+      SELECT ?person WHERE {
+        GRAPH <http://ex.org/graph/amsterdam> {
+          ?person <http://ex.org/livesIn> "Amsterdam" .
+        }
+      }
+    expect:
+      count: 2
+
+  - name: create_graph_silent_already_exists
+    skip: "CREATE SILENT GRAPH not yet executed"
+    # CREATE SILENT GRAPH on an existing graph must not raise an error.
+    setup:
+      - "CREATE GRAPH <http://ex.org/graph/berlin>"
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/berlin> {
+            <http://ex.org/vincent> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+      - "CREATE SILENT GRAPH <http://ex.org/graph/berlin>"
+    query: |
+      SELECT ?person WHERE {
+        GRAPH <http://ex.org/graph/berlin> {
+          ?person <http://ex.org/livesIn> "Berlin" .
+        }
+      }
+    expect:
+      rows:
+        - [http://ex.org/vincent]
+
+  # ---------------------------------------------------------------------------
+  # DROP GRAPH
+  # ---------------------------------------------------------------------------
+
+  - name: drop_graph_removes_data
+    skip: "DROP GRAPH not yet executed"
+    # Insert data into a named graph, DROP it, verify it is empty.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/prague> {
+            <http://ex.org/jules> <http://ex.org/visited> "Prague" .
+            <http://ex.org/mia> <http://ex.org/visited> "Prague" .
+          }
+        }
+      - "DROP GRAPH <http://ex.org/graph/prague>"
+    query: |
+      SELECT ?who WHERE {
+        GRAPH <http://ex.org/graph/prague> {
+          ?who <http://ex.org/visited> ?city .
+        }
+      }
+    expect:
+      empty: true
+
+  - name: drop_silent_nonexistent
+    skip: "DROP SILENT GRAPH not yet executed"
+    # DROP SILENT on a graph that does not exist must not raise an error.
+    # Insert unrelated data to verify the store is unaffected.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - "DROP SILENT GRAPH <http://ex.org/graph/does_not_exist>"
+    query: "SELECT ?n WHERE { <http://ex.org/alix> <http://ex.org/name> ?n }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # CLEAR GRAPH
+  # ---------------------------------------------------------------------------
+
+  - name: clear_graph_empties_named_graph
+    skip: "CLEAR GRAPH not yet executed"
+    # Insert data, CLEAR the named graph, verify the graph is empty.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/paris> {
+            <http://ex.org/mia> <http://ex.org/livesIn> "Paris" .
+            <http://ex.org/butch> <http://ex.org/livesIn> "Paris" .
+          }
+        }
+      - "CLEAR GRAPH <http://ex.org/graph/paris>"
+    query: |
+      SELECT ?who WHERE {
+        GRAPH <http://ex.org/graph/paris> {
+          ?who <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      empty: true
+
+  - name: clear_default_empties_default_graph
+    skip: "CLEAR DEFAULT not yet executed"
+    # Insert triples into the default graph, CLEAR DEFAULT, verify empty.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+      - "CLEAR DEFAULT"
+    query: "SELECT ?s WHERE { ?s <http://ex.org/name> ?n }"
+    expect:
+      empty: true
+
+  - name: clear_all
+    skip: "CLEAR ALL not yet executed"
+    # Insert triples into both default and named graphs, CLEAR ALL, verify all empty.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/barcelona> {
+            <http://ex.org/vincent> <http://ex.org/visited> "Barcelona" .
+          }
+        }
+      - "CLEAR ALL"
+    query: |
+      SELECT ?s ?p ?o WHERE {
+        { ?s ?p ?o }
+        UNION
+        { GRAPH ?g { ?s ?p ?o } }
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # COPY
+  # ---------------------------------------------------------------------------
+
+  - name: copy_graph_to_graph
+    skip: "COPY not yet executed"
+    # COPY replaces the destination graph with the source graph's contents.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/src> {
+            <http://ex.org/alix> <http://ex.org/role> "engineer" .
+            <http://ex.org/gus> <http://ex.org/role> "designer" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/dst> {
+            <http://ex.org/jules> <http://ex.org/role> "manager" .
+          }
+        }
+      - "COPY <http://ex.org/graph/src> TO <http://ex.org/graph/dst>"
+    query: |
+      SELECT ?person ?role WHERE {
+        GRAPH <http://ex.org/graph/dst> {
+          ?person <http://ex.org/role> ?role .
+        }
+      } ORDER BY ?person
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/alix, engineer]
+        - [http://ex.org/gus, designer]
+
+  - name: copy_default_to_named
+    skip: "COPY DEFAULT not yet executed"
+    # COPY DEFAULT TO <graph> copies the default graph into a named graph.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+        }
+      - "COPY DEFAULT TO <http://ex.org/graph/cities_copy>"
+    query: |
+      SELECT ?person ?city WHERE {
+        GRAPH <http://ex.org/graph/cities_copy> {
+          ?person <http://ex.org/city> ?city .
+        }
+      } ORDER BY ?person
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/alix, Amsterdam]
+        - [http://ex.org/gus, Berlin]
+
+  # ---------------------------------------------------------------------------
+  # MOVE
+  # ---------------------------------------------------------------------------
+
+  - name: move_graph_to_graph
+    skip: "MOVE not yet executed"
+    # MOVE transfers all data from source to destination, leaving source empty.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/origin> {
+            <http://ex.org/mia> <http://ex.org/name> "Mia" .
+            <http://ex.org/butch> <http://ex.org/name> "Butch" .
+          }
+        }
+      - "MOVE <http://ex.org/graph/origin> TO <http://ex.org/graph/target>"
+    query: |
+      SELECT ?name WHERE {
+        GRAPH <http://ex.org/graph/origin> {
+          ?s <http://ex.org/name> ?name .
+        }
+      }
+    expect:
+      empty: true
+
+  - name: move_graph_to_graph_verify_destination
+    skip: "MOVE not yet executed"
+    # Verify the destination graph received the data after MOVE.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/source> {
+            <http://ex.org/jules> <http://ex.org/score> "42" .
+            <http://ex.org/vincent> <http://ex.org/score> "88" .
+          }
+        }
+      - "MOVE <http://ex.org/graph/source> TO <http://ex.org/graph/dest>"
+    query: |
+      SELECT ?person ?score WHERE {
+        GRAPH <http://ex.org/graph/dest> {
+          ?person <http://ex.org/score> ?score .
+        }
+      } ORDER BY ?person
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/jules, 42]
+        - [http://ex.org/vincent, 88]
+
+  - name: move_default_to_named
+    skip: "MOVE DEFAULT not yet executed"
+    # MOVE DEFAULT TO <graph> moves the default graph into a named graph.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/status> "active" .
+        }
+      - "MOVE DEFAULT TO <http://ex.org/graph/archive>"
+    query: |
+      SELECT ?status WHERE {
+        GRAPH <http://ex.org/graph/archive> {
+          <http://ex.org/alix> <http://ex.org/status> ?status .
+        }
+      }
+    expect:
+      rows:
+        - [active]
+
+  # ---------------------------------------------------------------------------
+  # ADD
+  # ---------------------------------------------------------------------------
+
+  - name: add_graph_to_graph
+    skip: "ADD not yet executed"
+    # ADD merges source triples into destination, keeping existing destination data.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/team_a> {
+            <http://ex.org/alix> <http://ex.org/team> "alpha" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/team_b> {
+            <http://ex.org/gus> <http://ex.org/team> "beta" .
+          }
+        }
+      - "ADD <http://ex.org/graph/team_a> TO <http://ex.org/graph/team_b>"
+    query: |
+      SELECT ?person ?team WHERE {
+        GRAPH <http://ex.org/graph/team_b> {
+          ?person <http://ex.org/team> ?team .
+        }
+      } ORDER BY ?person
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/alix, alpha]
+        - [http://ex.org/gus, beta]
+
+  - name: add_default_to_named
+    skip: "ADD DEFAULT not yet executed"
+    # ADD DEFAULT TO <graph> merges default graph triples into named graph.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/hobby> "dancing" .
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/hobbies> {
+            <http://ex.org/butch> <http://ex.org/hobby> "boxing" .
+          }
+        }
+      - "ADD DEFAULT TO <http://ex.org/graph/hobbies>"
+    query: |
+      SELECT ?person ?hobby WHERE {
+        GRAPH <http://ex.org/graph/hobbies> {
+          ?person <http://ex.org/hobby> ?hobby .
+        }
+      } ORDER BY ?person
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/butch, boxing]
+        - [http://ex.org/mia, dancing]
+
+  # ---------------------------------------------------------------------------
+  # LOAD
+  # ---------------------------------------------------------------------------
+
+  - name: load_url_into_graph
+    skip: "LOAD not yet executed"
+    # LOAD fetches RDF from a URL and inserts into the target graph.
+    setup:
+      - "LOAD <http://example.org/data.ttl> INTO GRAPH <http://ex.org/graph/loaded>"
+    query: |
+      SELECT ?s ?p ?o WHERE {
+        GRAPH <http://ex.org/graph/loaded> {
+          ?s ?p ?o .
+        }
+      }
+    expect:
+      # Actual content depends on the remote document; verify no error on parse.
+      count: 0
+
+  - name: load_silent_missing_url
+    skip: "LOAD SILENT not yet executed"
+    # LOAD SILENT on a non-existent URL must not raise an error.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+      - "LOAD SILENT <http://ex.org/nonexistent/data.ttl>"
+    query: "SELECT ?n WHERE { <http://ex.org/gus> <http://ex.org/name> ?n }"
+    expect:
+      rows:
+        - [Gus]

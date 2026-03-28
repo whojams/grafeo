@@ -60,3 +60,21 @@ tests:
     query: "subscription { personAdded { name } }"
     expect:
       error: "not supported"
+
+  # ---------------------------------------------------------------------------
+  # Additional syntax errors
+  # ---------------------------------------------------------------------------
+
+  - name: invalid_argument_syntax
+    query: "{ person(name = \"Alix\") { name } }"
+    expect:
+      error: "Expected"
+
+  - name: double_colon_in_argument
+    query: "{ person(name:: \"Alix\") { name } }"
+    expect:
+      error: "Expected"
+
+  # Note: RDF-model mutation rejection cannot be tested via the Python runner
+  # because execute_graphql routes through the LPG translator which accepts
+  # mutations. The RDF translator rejection is covered by Rust unit tests.

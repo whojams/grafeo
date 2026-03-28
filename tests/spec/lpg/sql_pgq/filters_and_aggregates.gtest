@@ -1,0 +1,355 @@
+# SQL/PGQ filters and aggregates
+#
+# Covers: compound WHERE, inline node properties, SUM/AVG/MIN/MAX aggregates,
+# DISTINCT in aggregates, multi-column ORDER BY, edge property filtering,
+# multiple GRAPH_TABLE patterns.
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: Filters and aggregates
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Compound WHERE (outer SQL-level)
+  # ---------------------------------------------------------------------------
+
+  - name: where_and_two_conditions
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age, n.city AS city)
+      ) AS g
+      WHERE g.age > 25 AND g.city = 'Amsterdam'
+    expect:
+      rows:
+        - [Alix, 30, Amsterdam]
+
+  - name: where_or_two_conditions
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age, n.city AS city)
+      ) AS g
+      WHERE g.city = 'Berlin' OR g.city = 'Paris'
+    expect:
+      rows:
+        - [Gus, 25, Berlin]
+        - [Vincent, 35, Paris]
+
+  - name: where_not_equal
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.city AS city)
+      ) AS g
+      WHERE g.city != 'Amsterdam'
+    expect:
+      rows:
+        - [Gus, Berlin]
+        - [Vincent, Paris]
+
+  - name: where_less_than_or_equal
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      WHERE g.age <= 30
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: where_greater_than_or_equal
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      WHERE g.age >= 35
+    expect:
+      rows:
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # WHERE inside GRAPH_TABLE (graph-level)
+  # ---------------------------------------------------------------------------
+
+  - name: graph_where_edge_since_gt
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        WHERE e.since > 2020
+        COLUMNS (a.name AS source, b.name AS target, e.since AS year)
+      )
+    expect:
+      rows:
+        - [Gus, Vincent, 2021]
+
+  - name: graph_where_and_node_edge
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        WHERE a.age >= 30 AND e.since <= 2020
+        COLUMNS (a.name AS source, b.name AS target, e.since AS year)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, 2020]
+
+  - name: graph_where_compare_node_properties
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        WHERE a.age > b.age
+        COLUMNS (a.name AS older, b.name AS younger)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: graph_where_edge_since_equality
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        WHERE e.since = 2020
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # Aggregates beyond COUNT
+  # ---------------------------------------------------------------------------
+
+  - name: sum_edge_property
+    query: |
+      SELECT SUM(year) AS total FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        COLUMNS (e.since AS year)
+      )
+    expect:
+      rows:
+        - [4041]
+
+  - name: avg_node_age
+    query: |
+      SELECT AVG(age) AS avg_age FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.age AS age)
+      )
+    expect:
+      rows:
+        - [30]
+
+  - name: min_node_age
+    query: |
+      SELECT MIN(age) AS youngest FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.age AS age)
+      )
+    expect:
+      rows:
+        - [25]
+
+  - name: max_node_age
+    query: |
+      SELECT MAX(age) AS oldest FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.age AS age)
+      )
+    expect:
+      rows:
+        - [35]
+
+  - name: count_star_group_by_city
+    query: |
+      SELECT city, COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.city AS city)
+      ) GROUP BY city
+    expect:
+      count: 3
+      rows:
+        - [Amsterdam, 1]
+        - [Berlin, 1]
+        - [Paris, 1]
+
+  - name: count_star_all_persons
+    query: |
+      SELECT COUNT(*) AS total FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [3]
+
+  - name: sum_with_group_by
+    query: |
+      SELECT source, SUM(year) AS total FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source, e.since AS year)
+      ) GROUP BY source
+    expect:
+      rows:
+        - [Alix, 2020]
+        - [Gus, 2021]
+
+  # ---------------------------------------------------------------------------
+  # SELECT DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: select_distinct_city
+    query: |
+      SELECT DISTINCT city FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.city AS city)
+      )
+    expect:
+      count: 3
+      rows:
+        - [Amsterdam]
+        - [Berlin]
+        - [Paris]
+
+  # ---------------------------------------------------------------------------
+  # Multi-column ORDER BY
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_two_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.city AS city, n.name AS name, n.age AS age)
+      ) AS g
+      ORDER BY g.city ASC, g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, Alix, 30]
+        - [Berlin, Gus, 25]
+        - [Paris, Vincent, 35]
+
+  - name: order_by_desc_then_asc
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.age AS age, n.name AS name)
+      ) AS g
+      ORDER BY g.age DESC, g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [35, Vincent]
+        - [30, Alix]
+        - [25, Gus]
+
+  - name: order_by_with_limit_and_offset
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      ORDER BY g.age ASC
+      LIMIT 2
+      OFFSET 1
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # Inline node property filter
+  # ---------------------------------------------------------------------------
+
+  - name: inline_property_filter_city
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {city: 'Amsterdam'})
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: inline_property_filter_name
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Vincent'})
+        COLUMNS (n.name AS name, n.city AS city)
+      )
+    expect:
+      rows:
+        - [Vincent, Paris]
+
+  # ---------------------------------------------------------------------------
+  # Edge property in COLUMNS and filters
+  # ---------------------------------------------------------------------------
+
+  - name: edge_property_in_graph_where
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[w:WORKS_AT]->(c:Company)
+        WHERE w.since < 2020
+        COLUMNS (p.name AS person, c.name AS company, w.role AS role, w.since AS since)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS, Engineer, 2019]
+
+  - name: multiple_edge_properties_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, w.role AS role, w.since AS since)
+      )
+    expect:
+      rows:
+        - [Alix, Engineer, 2019]
+
+  - name: edge_property_filter_no_match
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        WHERE e.since > 2025
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      count: 0
+
+  # ---------------------------------------------------------------------------
+  # Combined outer WHERE with graph-level WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: combined_graph_and_outer_where
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        WHERE e.since >= 2020
+        COLUMNS (a.name AS source, b.name AS target, a.age AS age)
+      ) AS g
+      WHERE g.age < 35
+    expect:
+      rows:
+        - [Alix, Gus, 30]
+        - [Gus, Vincent, 25]
+
+  # ---------------------------------------------------------------------------
+  # HAVING with aggregates
+  # ---------------------------------------------------------------------------
+
+  - name: having_with_count
+    query: |
+      SELECT city, COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.city AS city)
+      ) GROUP BY city HAVING cnt >= 1
+    expect:
+      count: 3

@@ -1,0 +1,377 @@
+# Gremlin mutation patterns: property set/update, addV/addE, drop vertex/edge,
+#                           edge property operations
+#
+# Covers weakly-tested mutation workflows that go beyond the basic coverage
+# in source_steps.gtest and steps_advanced.gtest.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Edges: Alix-KNOWS{since:2020}->Gus, Gus-KNOWS{since:2021}->Vincent,
+#          Alix-WORKS_AT{role:'Engineer',since:2019}->Grafeo OSS
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "mutation-patterns"
+  title: Mutation Patterns
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # 1. property() set and read-back
+  # ---------------------------------------------------------------------------
+
+  - name: set_new_property_on_existing_vertex
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').property('nickname', 'Al')"
+      - "g.V().has('Person', 'name', 'Alix').values('nickname')"
+    expect:
+      rows:
+        - [Al]
+
+  - name: update_existing_property
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').property('age', 31)"
+      - "g.V().has('Person', 'name', 'Alix').values('age')"
+    expect:
+      rows:
+        - [31]
+
+  - name: set_multiple_properties_chained
+    statements:
+      - "g.V().has('Person', 'name', 'Gus').property('hobby', 'chess').property('score', 42)"
+      - "g.V().has('Person', 'name', 'Gus').values('hobby')"
+    expect:
+      rows:
+        - [chess]
+
+  - name: set_multiple_properties_verify_second
+    statements:
+      - "g.V().has('Person', 'name', 'Gus').property('hobby', 'chess').property('score', 42)"
+      - "g.V().has('Person', 'name', 'Gus').values('score')"
+    expect:
+      rows:
+        - [42]
+
+  - name: property_integer_value
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').property('level', 99)"
+      - "g.V().has('Person', 'name', 'Vincent').values('level')"
+    expect:
+      rows:
+        - [99]
+
+  - name: property_string_value
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').property('motto', 'carpe diem')"
+      - "g.V().has('Person', 'name', 'Vincent').values('motto')"
+    expect:
+      rows:
+        - [carpe diem]
+
+  - name: property_does_not_affect_other_vertices
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').property('nickname', 'Al')"
+      - "g.V().has('Person', 'name', 'Gus').values('age')"
+    expect:
+      rows:
+        - [25]
+
+  # ---------------------------------------------------------------------------
+  # 2. addV() patterns
+  # ---------------------------------------------------------------------------
+
+  - name: add_v_no_label_increases_count
+    statements:
+      - "g.addV()"
+      - "g.V().count()"
+    expect:
+      rows:
+        - [5]
+
+  - name: add_v_with_label_only
+    statements:
+      - "g.addV('Robot')"
+      - "g.V().hasLabel('Robot').count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: add_v_with_label_total_count
+    statements:
+      - "g.addV('Robot')"
+      - "g.V().count()"
+    expect:
+      rows:
+        - [5]
+
+  - name: add_v_with_multiple_properties
+    statements:
+      - "g.addV('Robot').property('name', 'R2').property('height', 96)"
+      - "g.V().has('Robot', 'name', 'R2').values('height')"
+    expect:
+      rows:
+        - [96]
+
+  - name: add_v_then_query_name
+    statements:
+      - "g.addV('Robot').property('name', 'R2').property('height', 96)"
+      - "g.V().has('Robot', 'name', 'R2').values('name')"
+    expect:
+      rows:
+        - [R2]
+
+  - name: add_v_multiple_same_label
+    statements:
+      - "g.addV('Sensor').property('name', 'Temp')"
+      - "g.addV('Sensor').property('name', 'Humidity')"
+      - "g.V().hasLabel('Sensor').count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: add_v_does_not_affect_existing
+    statements:
+      - "g.addV('Robot').property('name', 'R2')"
+      - "g.V().hasLabel('Person').count()"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # 3. addE() with to(traversal) pattern
+  # ---------------------------------------------------------------------------
+
+  - name: add_e_step_to_traversal
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Alix'))"
+      - "g.V().has('Person', 'name', 'Vincent').out('FOLLOWS').values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: add_e_step_to_traversal_edge_count
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Alix'))"
+      - "g.E().count()"
+    expect:
+      rows:
+        - [4]
+
+  - name: add_e_mid_traversal_v_not_supported
+    skip: "mid-traversal V() is not supported as a step"
+    query: "g.V().has('Person', 'name', 'Vincent').as('v').V().has('Person', 'name', 'Alix').addE('FOLLOWS').from('v')"
+    expect:
+      count: 1
+
+  - name: add_e_source_level_from_to
+    statements:
+      - "g.addE('FOLLOWS').from(g.V().has('Person', 'name', 'Vincent')).to(g.V().has('Person', 'name', 'Alix'))"
+      - "g.V().has('Person', 'name', 'Vincent').out('FOLLOWS').values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # 4. addE() with properties
+  # ---------------------------------------------------------------------------
+
+  - name: add_e_with_single_property
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Alix')).property('since', 2025)"
+      - "g.V().has('Person', 'name', 'Vincent').outE('FOLLOWS').values('since')"
+    expect:
+      rows:
+        - [2025]
+
+  - name: add_e_with_multiple_properties
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Alix')).property('since', 2025).property('weight', 3)"
+      - "g.V().has('Person', 'name', 'Vincent').outE('FOLLOWS').values('weight')"
+    expect:
+      rows:
+        - [3]
+
+  - name: add_e_with_multiple_properties_verify_both
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Alix')).property('since', 2025).property('weight', 3)"
+      - "g.V().has('Person', 'name', 'Vincent').outE('FOLLOWS').values('since')"
+    expect:
+      rows:
+        - [2025]
+
+  - name: add_e_with_string_property
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Gus')).property('reason', 'colleague')"
+      - "g.V().has('Person', 'name', 'Vincent').outE('FOLLOWS').values('reason')"
+    expect:
+      rows:
+        - [colleague]
+
+  # ---------------------------------------------------------------------------
+  # 5. drop() vertex patterns
+  # ---------------------------------------------------------------------------
+
+  - name: drop_newly_created_vertex
+    statements:
+      - "g.addV('Temp').property('name', 'ephemeral')"
+      - "g.V().hasLabel('Temp').drop()"
+      - "g.V().count()"
+    expect:
+      rows:
+        - [4]
+
+  - name: drop_by_label_only_affects_target
+    statements:
+      - "g.addV('Temp').property('name', 'x')"
+      - "g.addV('Temp').property('name', 'y')"
+      - "g.V().hasLabel('Temp').drop()"
+      - "g.V().hasLabel('Temp').count()"
+    expect:
+      rows:
+        - [0]
+
+  - name: drop_by_label_preserves_other_vertices
+    statements:
+      - "g.addV('Temp').property('name', 'x')"
+      - "g.addV('Temp').property('name', 'y')"
+      - "g.V().hasLabel('Temp').drop()"
+      - "g.V().hasLabel('Person').count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: drop_single_vertex_by_property
+    statements:
+      - "g.addV('Temp').property('name', 'keep')"
+      - "g.addV('Temp').property('name', 'discard')"
+      - "g.V().has('Temp', 'name', 'discard').drop()"
+      - "g.V().hasLabel('Temp').count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: drop_vertex_with_edges
+    # Dropping a vertex that has edges should also remove its edges
+    statements:
+      - "g.addV('Temp').property('name', 'src')"
+      - "g.addV('Temp').property('name', 'dst')"
+      - "g.V().has('Temp', 'name', 'src').addE('LINK').to(g.V().has('Temp', 'name', 'dst'))"
+      - "g.V().has('Temp', 'name', 'src').drop()"
+      - "g.V().hasLabel('Temp').count()"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # 6. drop() edge patterns
+  # ---------------------------------------------------------------------------
+
+  - name: drop_edge_via_out_e_filter
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').drop()"
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').count()"
+    expect:
+      rows:
+        - [0]
+
+  - name: drop_edge_preserves_vertices
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').drop()"
+      - "g.V().count()"
+    expect:
+      rows:
+        - [4]
+
+  - name: drop_edge_preserves_other_edges
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').drop()"
+      - "g.E().count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: drop_edge_via_global_e_has_label
+    skip: "g.E().hasLabel() does not resolve edge labels correctly"
+    statements:
+      - "g.E().hasLabel('WORKS_AT').drop()"
+      - "g.E().count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: drop_created_edge_only
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Alix'))"
+      - "g.V().has('Person', 'name', 'Vincent').outE('FOLLOWS').drop()"
+      - "g.E().count()"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # 7. Edge property operations
+  # ---------------------------------------------------------------------------
+
+  - name: read_edge_property_since
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').values('since')"
+    expect:
+      rows:
+        - [2020]
+
+  - name: read_edge_property_role
+    query: "g.V().has('Person', 'name', 'Alix').outE('WORKS_AT').values('role')"
+    expect:
+      rows:
+        - [Engineer]
+
+  - name: read_edge_property_works_at_since
+    query: "g.V().has('Person', 'name', 'Alix').outE('WORKS_AT').values('since')"
+    expect:
+      rows:
+        - [2019]
+
+  - name: filter_edge_by_property
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').has('since', 2020).inV().values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_edge_by_property_no_match
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').has('since', 9999)"
+    expect:
+      empty: true
+
+  - name: set_property_on_existing_edge
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').property('weight', 5)"
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').values('weight')"
+    expect:
+      rows:
+        - [5]
+
+  - name: set_property_on_edge_preserves_existing
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').property('weight', 5)"
+      - "g.V().has('Person', 'name', 'Alix').outE('KNOWS').values('since')"
+    expect:
+      rows:
+        - [2020]
+
+  - name: update_edge_property
+    statements:
+      - "g.V().has('Person', 'name', 'Alix').outE('WORKS_AT').property('role', 'Senior Engineer')"
+      - "g.V().has('Person', 'name', 'Alix').outE('WORKS_AT').values('role')"
+    expect:
+      rows:
+        - [Senior Engineer]
+
+  - name: edge_property_on_new_edge
+    statements:
+      - "g.V().has('Person', 'name', 'Vincent').addE('FOLLOWS').to(g.V().has('Person', 'name', 'Gus')).property('mutual', 'no')"
+      - "g.V().has('Person', 'name', 'Vincent').outE('FOLLOWS').has('mutual', 'no').inV().values('name')"
+    expect:
+      rows:
+        - [Gus]

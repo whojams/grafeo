@@ -283,3 +283,35 @@ tests:
       - "{ person { name } }"
     expect:
       count: 2
+
+  # ---------------------------------------------------------------------------
+  # Create with null property
+  # ---------------------------------------------------------------------------
+
+  - name: create_with_null_property
+    statements:
+      - "mutation { createPerson(name: \"Shosanna\", nickname: null) { name } }"
+      - "{ person(name: \"Shosanna\") { name nickname } }"
+    expect:
+      rows:
+        - [Shosanna, null]
+
+  # ---------------------------------------------------------------------------
+  # Create with negative values
+  # ---------------------------------------------------------------------------
+
+  - name: create_with_negative_integer
+    statements:
+      - "mutation { createPerson(name: \"Django\", balance: -100) { name } }"
+      - "{ person(name: \"Django\") { name balance } }"
+    expect:
+      rows:
+        - [Django, -100]
+
+  - name: create_with_negative_float
+    statements:
+      - "mutation { createPerson(name: \"Beatrix\", score: -3.14) { name } }"
+      - "{ person(name: \"Beatrix\") { name score } }"
+    expect:
+      rows:
+        - [Beatrix, -3.14]

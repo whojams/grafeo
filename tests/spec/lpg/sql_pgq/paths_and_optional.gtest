@@ -1,0 +1,235 @@
+# SQL/PGQ path patterns and optional match
+#
+# Covers: variable-length paths, path functions (LENGTH),
+# undirected edges, OPTIONAL MATCH, multi-hop traversals,
+# inline property filters in patterns.
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: Path patterns and optional match
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Variable-length paths
+  # ---------------------------------------------------------------------------
+
+  - name: variable_length_1_to_3
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..3]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Alix, Vincent]
+        - [Gus, Vincent]
+
+  - name: variable_length_1_to_1_explicit
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..1]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Gus, Vincent]
+
+  - name: variable_length_exactly_2
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*2..2]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: variable_length_no_result
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*3..3]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Path functions
+  # ---------------------------------------------------------------------------
+
+  - name: length_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..3]->(dst:Person)
+        COLUMNS (src.name AS source, LENGTH(p) AS hops, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, 1, Gus]
+        - [Alix, 2, Vincent]
+        - [Gus, 1, Vincent]
+
+  - name: length_filter_in_where
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..3]->(dst:Person)
+        WHERE LENGTH(p) = 2
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: length_filter_greater_than
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..3]->(dst:Person)
+        WHERE LENGTH(p) >= 1
+        COLUMNS (src.name AS source, LENGTH(p) AS dist, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, 1, Gus]
+        - [Alix, 2, Vincent]
+        - [Gus, 1, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Undirected edge patterns
+  # ---------------------------------------------------------------------------
+
+  - name: undirected_knows_both_directions
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]-(b:Person)
+        COLUMNS (a.name AS person_a, b.name AS person_b)
+      )
+    expect:
+      count: 4
+
+  - name: undirected_with_where_filter
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]-(b:Person)
+        WHERE a.name = 'Vincent'
+        COLUMNS (a.name AS person_a, b.name AS person_b)
+      )
+    expect:
+      rows:
+        - [Vincent, Gus]
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL MATCH
+  # ---------------------------------------------------------------------------
+
+  - name: optional_match_with_null
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)
+        OPTIONAL MATCH (p)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+        - [Gus, null]
+        - [Vincent, null]
+
+  - name: optional_match_directed_edge
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)
+        OPTIONAL MATCH (p)-[e:KNOWS]->(friend:Person)
+        COLUMNS (p.name AS person, friend.name AS friend)
+      )
+    expect:
+      count: 3
+
+  - name: regular_match_plus_optional
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        OPTIONAL MATCH (a)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (a.name AS knower, b.name AS known, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, Grafeo OSS]
+        - [Gus, Vincent, null]
+
+  # ---------------------------------------------------------------------------
+  # Inline property filters in patterns
+  # ---------------------------------------------------------------------------
+
+  - name: inline_node_property_city
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {city: 'Amsterdam'})
+        COLUMNS (n.name AS name, n.city AS city)
+      )
+    expect:
+      rows:
+        - [Alix, Amsterdam]
+
+  - name: inline_source_property_with_edge
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person {name: 'Alix'})-[e:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: inline_node_property_age
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {age: 35})
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # Multi-hop traversals
+  # ---------------------------------------------------------------------------
+
+  - name: two_hop_chain
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person)
+        COLUMNS (a.name AS first, b.name AS middle, c.name AS last)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, Vincent]
+
+  - name: mixed_edge_types_path
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[:KNOWS]->(friend:Person), (p)-[:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, friend.name AS friend, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, Grafeo OSS]
+
+  - name: variable_length_with_order
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..2]->(dst:Person)
+        COLUMNS (src.name AS source, LENGTH(p) AS hops, dst.name AS target)
+      ) AS g
+      ORDER BY g.hops ASC, g.source ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 1, Gus]
+        - [Gus, 1, Vincent]
+        - [Alix, 2, Vincent]

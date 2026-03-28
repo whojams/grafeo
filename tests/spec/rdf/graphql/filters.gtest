@@ -213,3 +213,50 @@ tests:
     expect:
       rows:
         - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Null filter behavior
+  # ---------------------------------------------------------------------------
+
+  - name: filter_null_no_match
+    query: "{ person(city: null) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Negative numeric filter
+  # ---------------------------------------------------------------------------
+
+  - name: filter_negative_integer
+    query: "{ person(age_gt: -1) { name } }"
+    expect:
+      count: 5
+
+  # ---------------------------------------------------------------------------
+  # Empty list filter
+  # ---------------------------------------------------------------------------
+
+  - name: empty_list_filter
+    query: "{ person(age_in: []) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Lowercase enum in orderBy
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_lowercase_asc
+    query: |
+      query {
+        person(orderBy: { name: asc }) {
+          name
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Jules]
+        - [Mia]
+        - [Vincent]

@@ -1,0 +1,285 @@
+# SPARQL Language-Tagged Strings and LANG/LANGMATCHES Functions
+#
+# Covers: language-tagged literal insertion and retrieval, LANG() function for
+# extracting the tag, LANGMATCHES() for BCP47-style matching, language tags in
+# FILTER, OPTIONAL, and BIND expressions, and edge cases around tag distinctness.
+# Based on W3C SPARQL 1.1 Query Language specification, Sections 4.1.3 and 17.4.2.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "4.1.3"
+  title: Language-Tagged Strings
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic language-tagged literals (Section 4.1.3)
+  # ---------------------------------------------------------------------------
+
+  - name: insert_and_query_language_tagged_literal
+    # Insert a French-tagged literal and retrieve it. Per the RDF 1.1 spec,
+    # "bonjour"@fr has datatype rdf:langString and the tag must be preserved.
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/greeting> "bonjour"@fr .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> <http://ex.org/greeting> ?val .
+      }
+    expect:
+      rows:
+        - [bonjour]
+
+  - name: multiple_languages_same_predicate
+    # Same subject and predicate with three distinct language tags should
+    # produce three separate triples in the RDF graph.
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/greeting> "hello"@en .
+          <http://ex.org/gus> <http://ex.org/greeting> "bonjour"@fr .
+          <http://ex.org/gus> <http://ex.org/greeting> "hallo"@de .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/gus> <http://ex.org/greeting> ?val .
+      }
+    expect:
+      count: 3
+
+  - name: language_tag_preserved_in_result
+    # The language tag must survive the full round-trip: insert, store, query,
+    # and projection. LANG() on the result should return the original tag.
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/label> "Amsterdam"@nl .
+        }
+    query: |
+      SELECT ?label (LANG(?label) AS ?tag) WHERE {
+        <http://ex.org/vincent> <http://ex.org/label> ?label .
+      }
+    expect:
+      rows:
+        - [Amsterdam, nl]
+
+  # ---------------------------------------------------------------------------
+  # LANG() function (Section 17.4.2.6)
+  # ---------------------------------------------------------------------------
+
+  - name: lang_returns_tag
+    # LANG() extracts the language tag from a tagged literal. Using it in
+    # FILTER to select only the French label from a multilingual set.
+    skip: "LANG() not yet evaluated in FILTER"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/label> "Paris"@en .
+          <http://ex.org/jules> <http://ex.org/label> "Paris"@fr .
+          <http://ex.org/jules> <http://ex.org/label> "Parijs"@nl .
+        }
+    query: |
+      SELECT ?label WHERE {
+        <http://ex.org/jules> <http://ex.org/label> ?label .
+        FILTER(LANG(?label) = "fr")
+      }
+    expect:
+      count: 1
+
+  - name: lang_empty_for_plain_literal
+    # LANG() on a plain (untagged) literal must return the empty string "".
+    # This test verifies that untagged literals are correctly distinguished.
+    skip: "LANG() not yet evaluated in FILTER"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/note> "plain text" .
+          <http://ex.org/mia> <http://ex.org/note> "texte"@fr .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/mia> <http://ex.org/note> ?val .
+        FILTER(LANG(?val) = "")
+      }
+    expect:
+      rows:
+        - [plain text]
+
+  - name: lang_in_bind
+    # LANG() can be used inside a BIND expression to project the tag as
+    # a separate variable in the result set.
+    skip: "LANG() not yet evaluated in FILTER"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/label> "Prague"@cs .
+          <http://ex.org/butch> <http://ex.org/label> "Prag"@de .
+        }
+    query: |
+      SELECT ?label ?tag WHERE {
+        <http://ex.org/butch> <http://ex.org/label> ?label .
+        BIND(LANG(?label) AS ?tag)
+      } ORDER BY ?tag
+    expect:
+      ordered: true
+      rows:
+        - [Prag, cs]
+        - [Prague, de]
+
+  # ---------------------------------------------------------------------------
+  # LANGMATCHES() function (Section 17.4.2.9)
+  # ---------------------------------------------------------------------------
+
+  - name: langmatches_exact
+    # LANGMATCHES(LANG(?x), "en") matches literals tagged exactly "en".
+    skip: "LANGMATCHES() not yet evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/label> "Amsterdam"@en .
+          <http://ex.org/alix> <http://ex.org/label> "Amsterdam"@nl .
+          <http://ex.org/alix> <http://ex.org/label> "Amsterdam"@de .
+        }
+    query: |
+      SELECT ?label WHERE {
+        <http://ex.org/alix> <http://ex.org/label> ?label .
+        FILTER(LANGMATCHES(LANG(?label), "en"))
+      }
+    expect:
+      count: 1
+
+  - name: langmatches_wildcard
+    # LANGMATCHES(LANG(?x), "*") matches any literal that has a language tag,
+    # but excludes untagged plain literals.
+    skip: "LANGMATCHES() not yet evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/label> "Berlin"@en .
+          <http://ex.org/gus> <http://ex.org/label> "Berlin"@de .
+          <http://ex.org/gus> <http://ex.org/label> "Berlin" .
+        }
+    query: |
+      SELECT ?label WHERE {
+        <http://ex.org/gus> <http://ex.org/label> ?label .
+        FILTER(LANGMATCHES(LANG(?label), "*"))
+      }
+    expect:
+      count: 2
+
+  - name: langmatches_subtag
+    # LANGMATCHES uses BCP47 range matching: LANGMATCHES(LANG(?x), "en")
+    # should match both "en" and subtags like "en-US" and "en-GB".
+    skip: "LANGMATCHES() not yet evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/label> "colour"@en-GB .
+          <http://ex.org/vincent> <http://ex.org/label> "color"@en-US .
+          <http://ex.org/vincent> <http://ex.org/label> "couleur"@fr .
+        }
+    query: |
+      SELECT ?label WHERE {
+        <http://ex.org/vincent> <http://ex.org/label> ?label .
+        FILTER(LANGMATCHES(LANG(?label), "en"))
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Language tags in FILTER comparison (Section 17.4.1)
+  # ---------------------------------------------------------------------------
+
+  - name: filter_equality_with_language_tag
+    # Direct comparison of a variable bound to a language-tagged literal
+    # against a language-tagged constant. Only an exact match on both
+    # the lexical form and the tag should succeed.
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/city> "Barcelona"@es .
+          <http://ex.org/jules> <http://ex.org/city> "Barcelona"@ca .
+          <http://ex.org/jules> <http://ex.org/city> "Barcelona"@en .
+        }
+    query: |
+      SELECT ?city WHERE {
+        <http://ex.org/jules> <http://ex.org/city> ?city .
+        FILTER(?city = "Barcelona"@es)
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Language tags in OPTIONAL (Section 8)
+  # ---------------------------------------------------------------------------
+
+  - name: optional_language_tagged_value
+    # OPTIONAL clause with a language-tagged object. When the optional
+    # pattern has no match, the variable should be unbound (null).
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+          <http://ex.org/mia> <http://ex.org/label> "artiste"@fr .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?name ?label WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/label> ?label }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Butch, null]
+        - [Mia, artiste]
+
+  # ---------------------------------------------------------------------------
+  # Edge cases: tag distinctness
+  # ---------------------------------------------------------------------------
+
+  - name: same_string_different_tags_are_distinct
+    # In RDF, "chat"@fr (French for "cat") and "chat"@en (English slang for
+    # "conversation") are distinct terms despite identical lexical forms.
+    # Both must be stored and returned.
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/word> "chat"@fr .
+          <http://ex.org/alix> <http://ex.org/word> "chat"@en .
+        }
+    query: |
+      SELECT ?word WHERE {
+        <http://ex.org/alix> <http://ex.org/word> ?word .
+      }
+    expect:
+      count: 2
+
+  - name: untagged_vs_tagged_are_distinct
+    # A plain literal "hello" and a language-tagged "hello"@en are different
+    # RDF terms. Inserting both on the same subject/predicate must produce
+    # two triples.
+    skip: "language tags lost during Value round-trip in translator"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/greeting> "hello" .
+          <http://ex.org/gus> <http://ex.org/greeting> "hello"@en .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/gus> <http://ex.org/greeting> ?val .
+      }
+    expect:
+      count: 2

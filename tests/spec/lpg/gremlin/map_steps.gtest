@@ -1,0 +1,402 @@
+# Gremlin map/collection/branching steps: union, optional, path, project,
+#                                       fold/unfold, constant, values edge cases
+#
+# Covers weakly-tested map and branching steps with thorough edge cases.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Edges: Alix-KNOWS{since:2020}->Gus, Gus-KNOWS{since:2021}->Vincent,
+#          Alix-WORKS_AT{role:'Engineer',since:2019}->Grafeo OSS
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "map-steps"
+  title: Map Steps
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # union() - merge multiple traversal branches
+  # ---------------------------------------------------------------------------
+
+  - name: union_three_branches_from_alix
+    # Alix: out(KNOWS)=Gus, out(WORKS_AT)=Grafeo OSS, values('name')=Alix
+    query: "g.V().has('Person', 'name', 'Alix').union(out('KNOWS'), out('WORKS_AT'), values('name')).count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: union_empty_and_nonempty_branches
+    # Vincent: no out(KNOWS), no out(WORKS_AT), values('name')=Vincent
+    # Only the values('name') branch produces a result
+    query: "g.V().has('Person', 'name', 'Vincent').union(out('KNOWS'), out('WORKS_AT'), values('name')).count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: union_empty_and_nonempty_values
+    # Vincent: only values('name') branch produces output
+    query: "g.V().has('Person', 'name', 'Vincent').union(out('KNOWS'), out('WORKS_AT'), values('name'))"
+    expect:
+      count: 1
+
+  - name: union_all_persons_merge_then_count
+    # Alix: out(KNOWS)=Gus + out(WORKS_AT)=Grafeo OSS = 2
+    # Gus: out(KNOWS)=Vincent = 1
+    # Vincent: nothing = 0
+    # Total = 3
+    query: "g.V().hasLabel('Person').union(out('KNOWS'), out('WORKS_AT')).count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: union_with_values_on_each_branch
+    skip: "union branches containing .values() do not propagate property lookup correctly"
+    # Alix: out(KNOWS).values('name')=Gus, out(WORKS_AT).values('name')=Grafeo OSS
+    query: "g.V().has('Person', 'name', 'Alix').union(out('KNOWS').values('name'), out('WORKS_AT').values('name'))"
+    expect:
+      rows:
+        - [Gus]
+        - [Grafeo OSS]
+
+  - name: union_all_empty_branches
+    # Vincent has no outgoing KNOWS or WORKS_AT
+    query: "g.V().has('Person', 'name', 'Vincent').union(out('KNOWS'), out('WORKS_AT'))"
+    expect:
+      empty: true
+
+  - name: union_single_branch_equivalent_to_flatmap
+    # union with one branch should behave like a normal traversal
+    query: "g.V().has('Person', 'name', 'Alix').union(out('KNOWS')).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # optional() - return inner result or identity
+  # ---------------------------------------------------------------------------
+
+  - name: optional_inner_produces_value
+    skip: "optional() currently returns identity vertex instead of inner traversal result"
+    # Alix has out('KNOWS') -> Gus. optional returns Gus (not Alix).
+    query: "g.V().has('Person', 'name', 'Alix').optional(out('KNOWS')).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: optional_inner_empty_returns_identity
+    # Vincent has no out('KNOWS'), so optional returns Vincent itself.
+    query: "g.V().has('Person', 'name', 'Vincent').optional(out('KNOWS')).values('name')"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: optional_with_deeper_traversal
+    # Alix: out('KNOWS').values('name') produces 'Gus', so optional returns 'Gus'
+    query: "g.V().has('Person', 'name', 'Alix').optional(out('KNOWS').values('name'))"
+    expect:
+      count: 1
+
+  - name: optional_with_filter_matching
+    skip: "optional() currently returns identity vertex instead of inner traversal result"
+    # Alix out('KNOWS') = Gus (age 25). has('age', gt(20)) matches Gus. Returns Gus.
+    query: "g.V().has('Person', 'name', 'Alix').optional(out('KNOWS').has('age', gt(20))).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: optional_with_filter_not_matching
+    # Alix out('KNOWS') = Gus (age 25). has('age', gt(30)) doesn't match. Returns Alix.
+    query: "g.V().has('Person', 'name', 'Alix').optional(out('KNOWS').has('age', gt(30))).values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: optional_chained_both_match
+    skip: "optional() currently returns identity vertex instead of inner traversal result"
+    # Alix: optional(out('KNOWS')) -> Gus. Then optional(out('KNOWS')) on Gus -> Vincent.
+    query: "g.V().has('Person', 'name', 'Alix').optional(out('KNOWS')).optional(out('KNOWS')).values('name')"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: optional_chained_second_empty
+    skip: "optional() currently returns identity vertex instead of inner traversal result"
+    # Gus: optional(out('KNOWS')) -> Vincent. Then optional(out('WORKS_AT')) on Vincent -> no match, returns Vincent.
+    query: "g.V().has('Person', 'name', 'Gus').optional(out('KNOWS')).optional(out('WORKS_AT')).values('name')"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: optional_chained_first_empty
+    # Vincent: optional(out('KNOWS')) -> no match, returns Vincent. Then optional(out('WORKS_AT')) on Vincent -> no match, returns Vincent.
+    query: "g.V().has('Person', 'name', 'Vincent').optional(out('KNOWS')).optional(out('WORKS_AT')).values('name')"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: optional_on_company
+    # Grafeo OSS has no outgoing edges at all, so optional returns itself.
+    query: "g.V().has('Company', 'name', 'Grafeo OSS').optional(out()).values('name')"
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # path() - collect traversal history
+  # ---------------------------------------------------------------------------
+
+  - name: path_three_hops
+    # Alix -> Gus -> Vincent is the only 2-hop KNOWS path
+    query: "g.V().has('Person', 'name', 'Alix').out('KNOWS').out('KNOWS').path()"
+    expect:
+      count: 1
+
+  - name: path_count_matches_traversal
+    # Paths from all Person vertices through out('KNOWS'):
+    # Alix out(KNOWS)=Gus -> 1 path (Alix, Gus)
+    # Gus out(KNOWS)=Vincent -> 1 path (Gus, Vincent)
+    # Vincent out(KNOWS)=nothing -> 0 paths
+    # Total = 2
+    query: "g.V().hasLabel('Person').out('KNOWS').path().count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: path_single_vertex_no_hop
+    # Starting at Alix with no navigation: path is just [Alix]
+    query: "g.V().has('Person', 'name', 'Alix').path()"
+    expect:
+      count: 1
+
+  - name: path_across_edge_types
+    # Alix out() gives Gus (KNOWS) and Grafeo OSS (WORKS_AT): 2 paths
+    query: "g.V().has('Person', 'name', 'Alix').out().path()"
+    expect:
+      count: 2
+
+  - name: path_empty_when_no_results
+    skip: "path() after empty traversal raises Column not found error"
+    # Vincent has no outgoing KNOWS, so 2-hop from Vincent produces nothing
+    query: "g.V().has('Person', 'name', 'Vincent').out('KNOWS').out('KNOWS').path()"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # project().by() - transform vertex into a map of named values
+  # ---------------------------------------------------------------------------
+
+  - name: project_three_keys_single_vertex
+    query: "g.V().has('Person', 'name', 'Alix').project('name', 'age', 'city').by('name').by('age').by('city')"
+    expect:
+      count: 1
+
+  - name: project_all_persons_count
+    query: "g.V().hasLabel('Person').project('name', 'age').by('name').by('age')"
+    expect:
+      count: 3
+
+  - name: project_single_key_value
+    query: "g.V().has('Person', 'name', 'Alix').project('n').by('name')"
+    expect:
+      count: 1
+
+  - name: project_company_vertex
+    query: "g.V().has('Company', 'name', 'Grafeo OSS').project('name', 'founded').by('name').by('founded')"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # fold() and unfold() - collect into list and flatten
+  # ---------------------------------------------------------------------------
+
+  - name: fold_produces_single_row
+    # fold() collects all items into one list, so count of rows is 1
+    query: "g.V().hasLabel('Person').values('name').fold()"
+    expect:
+      count: 1
+
+  - name: fold_count_is_one
+    # After fold, there is exactly one element (the list itself)
+    query: "g.V().hasLabel('Person').values('name').fold().count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: fold_unfold_preserves_count
+    # fold then unfold should give back the same number of items
+    query: "g.V().hasLabel('Person').values('name').fold().unfold().count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: fold_unfold_preserves_data
+    # Round-trip through fold/unfold then order should give sorted names
+    query: "g.V().hasLabel('Person').values('name').fold().unfold().order()"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: fold_ages
+    # fold ages into a list, verify it produces a single row
+    query: "g.V().hasLabel('Person').values('age').fold()"
+    expect:
+      count: 1
+
+  - name: fold_unfold_ages_sum
+    # fold then unfold then sum should equal the direct sum
+    query: "g.V().hasLabel('Person').values('age').fold().unfold().sum()"
+    expect:
+      rows:
+        - [90]
+
+  - name: fold_empty_traversal
+    # fold on empty input still produces one row (an empty list)
+    query: "g.V().has('Person', 'name', 'Vincent').out('KNOWS').fold()"
+    expect:
+      count: 1
+
+  - name: fold_empty_then_unfold
+    # fold an empty traversal then unfold: empty list unfolded gives nothing
+    query: "g.V().has('Person', 'name', 'Vincent').out('KNOWS').fold().unfold()"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # constant() - emit a fixed value
+  # ---------------------------------------------------------------------------
+
+  - name: constant_integer
+    query: "g.V().has('Person', 'name', 'Alix').constant(42)"
+    expect:
+      rows:
+        - [42]
+
+  - name: constant_string
+    query: "g.V().has('Person', 'name', 'Alix').constant('hello')"
+    expect:
+      rows:
+        - [hello]
+
+  - name: constant_count_matches_input
+    # constant(99) on all persons produces 3 rows, each with value 99
+    query: "g.V().hasLabel('Person').constant(99).count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: constant_after_filter
+    # Only vertices with age > 28 (Alix, Vincent) get constant('match')
+    query: "g.V().has('age', gt(28)).constant('match').count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: constant_zero
+    query: "g.V().has('Person', 'name', 'Gus').constant(0)"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # values() edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: values_no_keys_returns_all_properties
+    skip: "values() with no keys raises Internal error: variable not found"
+    # Alix has name, age, city: 3 property values
+    query: "g.V().has('Person', 'name', 'Alix').values()"
+    expect:
+      count: 3
+
+  - name: values_nonexistent_key
+    skip: "values() with nonexistent key returns a row with null instead of empty"
+    query: "g.V().has('Person', 'name', 'Alix').values('nonexistent')"
+    expect:
+      empty: true
+
+  - name: values_single_key
+    query: "g.V().has('Person', 'name', 'Alix').values('city')"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: values_two_keys
+    # values('name', 'age') returns 2 values per vertex, 1 vertex = 2 rows
+    query: "g.V().has('Person', 'name', 'Alix').values('name', 'age')"
+    expect:
+      count: 2
+
+  - name: values_on_company
+    query: "g.V().has('Company', 'name', 'Grafeo OSS').values('founded')"
+    expect:
+      rows:
+        - [2025]
+
+  - name: values_from_edge
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').values('since')"
+    expect:
+      rows:
+        - [2020]
+
+  - name: values_mixed_property_existence
+    skip: "values() returns null for vertices missing the property instead of skipping them"
+    # 'city' exists on 3 Persons but not on Company. Across all vertices: 3 results.
+    query: "g.V().values('city').count()"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Combined map step patterns
+  # ---------------------------------------------------------------------------
+
+  - name: union_then_dedup
+    # Alix: out(KNOWS)=Gus, Gus: out(KNOWS)=Vincent. Union all out(KNOWS) then dedup.
+    query: "g.V().hasLabel('Person').union(out('KNOWS')).dedup().count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: optional_then_values_all_persons
+    skip: "optional() currently returns identity vertex instead of inner traversal result"
+    # Alix: optional(out('KNOWS'))=Gus. Gus: optional(out('KNOWS'))=Vincent. Vincent: identity=Vincent.
+    query: "g.V().hasLabel('Person').optional(out('KNOWS')).values('name')"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+        - [Vincent]
+
+  - name: constant_in_union_branch
+    skip: "union branches containing .values() do not propagate property lookup correctly"
+    # Alix: union produces out('KNOWS')=Gus + constant('x')='x' = 2 items
+    query: "g.V().has('Person', 'name', 'Alix').union(out('KNOWS').values('name'), constant('x'))"
+    expect:
+      rows:
+        - [Gus]
+        - [x]
+
+  - name: fold_after_union
+    # Union out(KNOWS) from all persons: Gus, Vincent = 2 items. Fold into 1 list.
+    query: "g.V().hasLabel('Person').out('KNOWS').fold()"
+    expect:
+      count: 1
+
+  - name: path_with_edge_traversal
+    # Alix outE(KNOWS) inV() path: [Alix, edge, Gus]
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').inV().path()"
+    expect:
+      count: 1
+
+  - name: project_after_filter
+    # Persons with age >= 30: Alix(30), Vincent(35)
+    query: "g.V().hasLabel('Person').has('age', gte(30)).project('name', 'age').by('name').by('age')"
+    expect:
+      count: 2

@@ -93,3 +93,6 @@ tests:
       - "{ person { name } }"
     expect:
       count: 4
+
+  # Note: RDF-model mutation rejection cannot be tested via the Python runner
+  # because execute_graphql routes through the LPG translator. See errors.gtest.

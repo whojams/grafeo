@@ -103,3 +103,47 @@ tests:
     expect:
       rows:
         - [150]
+
+  # ---------------------------------------------------------------------------
+  # Deep nesting (4+ levels)
+  # ---------------------------------------------------------------------------
+
+  - name: deeply_nested_four_levels
+    skip: "Deep nesting (4+ levels) fails with column resolution error"
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows {
+            name
+            knows {
+              name
+              knows {
+                name
+              }
+            }
+          }
+        }
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Variable with default value
+  # ---------------------------------------------------------------------------
+
+  - name: variable_with_default_value
+    skip: "Variable declarations with defaults not wired to parameter expressions"
+    query: "query($limit: Int = 2) { person(first: $limit) { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Multiple root fields combined (inline, not separate operations)
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_root_fields_combined
+    skip: "Only first root field executed, subsequent silently dropped"
+    query: "{ person(name: \"Alix\") { name } organization { name } }"
+    expect:
+      count: 2

@@ -1,0 +1,339 @@
+# SPARQL Named Graphs: W3C SPARQL 1.1 Query sec 13
+#
+# Covers: INSERT DATA into named graphs, GRAPH keyword for querying specific
+# named graphs, GRAPH ?var for graph discovery, named graph isolation,
+# combining default and named graph patterns, and edge cases.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "13"
+  title: Named Graphs
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # INSERT DATA into Named Graphs
+  # ---------------------------------------------------------------------------
+
+  - name: insert_into_named_graph_and_query
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/friends> {
+            <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          }
+        }
+    query: |
+      SELECT ?who WHERE {
+        GRAPH <http://ex.org/friends> {
+          <http://ex.org/alix> <http://ex.org/knows> ?who .
+        }
+      }
+    expect:
+      rows:
+        - [http://ex.org/gus]
+
+  - name: insert_into_multiple_named_graphs
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/berlin> {
+            <http://ex.org/gus> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+    query: |
+      SELECT ?city WHERE {
+        GRAPH <http://ex.org/amsterdam> {
+          ?person <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: insert_multiple_triples_into_named_graph
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/people> {
+            <http://ex.org/alix> <http://ex.org/name> "Alix" .
+            <http://ex.org/gus> <http://ex.org/name> "Gus" .
+            <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          }
+        }
+    query: |
+      SELECT ?name WHERE {
+        GRAPH <http://ex.org/people> {
+          ?s <http://ex.org/name> ?name .
+        }
+      }
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # GRAPH keyword: query a specific named graph (Section 13.3)
+  # ---------------------------------------------------------------------------
+
+  - name: graph_keyword_specific_iri
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/cities> {
+            <http://ex.org/amsterdam> <http://ex.org/country> "Netherlands" .
+            <http://ex.org/berlin> <http://ex.org/country> "Germany" .
+          }
+        }
+    query: |
+      SELECT ?city ?country WHERE {
+        GRAPH <http://ex.org/cities> {
+          ?city <http://ex.org/country> ?country .
+        }
+      }
+    expect:
+      count: 2
+
+  - name: graph_keyword_variable_discovers_graphs
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph1> {
+            <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph2> {
+            <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          }
+        }
+    query: |
+      SELECT ?g ?name WHERE {
+        GRAPH ?g {
+          ?s <http://ex.org/name> ?name .
+        }
+      }
+    expect:
+      count: 2
+
+  - name: graph_variable_binds_correct_iri
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/social> {
+            <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          }
+        }
+    query: |
+      SELECT ?g WHERE {
+        GRAPH ?g {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+      }
+    expect:
+      rows:
+        - [http://ex.org/social]
+
+  # ---------------------------------------------------------------------------
+  # Named graph isolation
+  # ---------------------------------------------------------------------------
+
+  - name: named_graph_isolation_data_not_visible_in_other_graph
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph1> {
+            <http://ex.org/alix> <http://ex.org/role> "engineer" .
+          }
+        }
+    query: |
+      SELECT ?role WHERE {
+        GRAPH <http://ex.org/graph2> {
+          <http://ex.org/alix> <http://ex.org/role> ?role .
+        }
+      }
+    expect:
+      empty: true
+
+  - name: same_subject_different_graphs_isolated
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/work> {
+            <http://ex.org/alix> <http://ex.org/title> "Engineer" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/personal> {
+            <http://ex.org/alix> <http://ex.org/title> "Musician" .
+          }
+        }
+    query: |
+      SELECT ?title WHERE {
+        GRAPH <http://ex.org/work> {
+          <http://ex.org/alix> <http://ex.org/title> ?title .
+        }
+      }
+    expect:
+      rows:
+        - [Engineer]
+
+  # ---------------------------------------------------------------------------
+  # Combining default graph and named graph
+  # ---------------------------------------------------------------------------
+
+  - name: combine_default_and_named_graph_patterns
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/scores> {
+            <http://ex.org/alix> <http://ex.org/score> "95" .
+          }
+        }
+    query: |
+      SELECT ?name ?score WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        GRAPH <http://ex.org/scores> {
+          <http://ex.org/alix> <http://ex.org/score> ?score .
+        }
+      }
+    expect:
+      rows:
+        - [Alix, 95]
+
+  - name: default_graph_not_visible_in_named_graph_query
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?city WHERE {
+        GRAPH <http://ex.org/nowhere> {
+          <http://ex.org/gus> <http://ex.org/city> ?city .
+        }
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Named graph management: create and query
+  # ---------------------------------------------------------------------------
+
+  - name: create_and_query_named_graph
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/inventory> {
+            <http://ex.org/item1> <http://ex.org/label> "Widget" .
+            <http://ex.org/item2> <http://ex.org/label> "Gadget" .
+          }
+        }
+    query: |
+      SELECT ?label WHERE {
+        GRAPH <http://ex.org/inventory> {
+          ?item <http://ex.org/label> ?label .
+        }
+      }
+    expect:
+      count: 2
+
+  - name: insert_two_graphs_query_one
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/prague> {
+            <http://ex.org/jules> <http://ex.org/visited> "Prague" .
+            <http://ex.org/mia> <http://ex.org/visited> "Prague" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/barcelona> {
+            <http://ex.org/butch> <http://ex.org/visited> "Barcelona" .
+          }
+        }
+    query: |
+      SELECT ?who WHERE {
+        GRAPH <http://ex.org/prague> {
+          ?who <http://ex.org/visited> "Prague" .
+        }
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: query_nonexistent_named_graph_returns_empty
+    query: |
+      SELECT ?s ?p ?o WHERE {
+        GRAPH <http://ex.org/does_not_exist> {
+          ?s ?p ?o .
+        }
+      }
+    expect:
+      empty: true
+
+  - name: same_triple_in_default_and_named_graph_isolation
+    skip: "GRAPH ?g also returns default graph triples"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/role> "hitman" .
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/movie> {
+            <http://ex.org/vincent> <http://ex.org/role> "hitman" .
+          }
+        }
+    query: |
+      SELECT ?g WHERE {
+        GRAPH ?g {
+          <http://ex.org/vincent> <http://ex.org/role> "hitman" .
+        }
+      }
+    expect:
+      # Only the named graph should appear, not the default graph
+      rows:
+        - [http://ex.org/movie]
+
+  - name: graph_variable_with_filter
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/paris> {
+            <http://ex.org/mia> <http://ex.org/livesIn> "Paris" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/jules> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+    query: |
+      SELECT ?name WHERE {
+        GRAPH ?g {
+          ?person <http://ex.org/livesIn> ?name .
+        }
+        FILTER(?g = <http://ex.org/paris>)
+      }
+    expect:
+      rows:
+        - [Paris]

@@ -1,0 +1,332 @@
+# SPARQL RDF Term Functions
+#
+# Covers: isIRI/isURI, isLiteral, isNumeric, STR, sameTerm, LANG, DATATYPE.
+# Based on W3C SPARQL 1.1 Query Language specification, Section 17.4.2.
+# These functions test the type and value of RDF terms, and are primarily
+# useful in FILTER expressions to select solutions by term kind.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "17.4.2"
+  title: RDF Term Functions
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # isIRI / isURI (17.4.2.1)
+  # ---------------------------------------------------------------------------
+
+  - name: is_iri_filters_uri_objects
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/vincent> .
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+        }
+    query: |
+      SELECT ?o WHERE {
+        <http://ex.org/alix> ?p ?o
+        FILTER(isIRI(?o))
+      }
+    expect:
+      count: 2
+
+  - name: is_iri_excludes_literals
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?o WHERE {
+        <http://ex.org/gus> ?p ?o
+        FILTER(isIRI(?o))
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # isLiteral (17.4.2.3)
+  # ---------------------------------------------------------------------------
+
+  - name: is_literal_filters_literal_objects
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/knows> <http://ex.org/jules> .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/age> "35" .
+          <http://ex.org/vincent> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?o WHERE {
+        <http://ex.org/vincent> ?p ?o
+        FILTER(isLiteral(?o))
+      }
+    expect:
+      count: 3
+
+  - name: is_literal_excludes_iris
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/knows> <http://ex.org/mia> .
+          <http://ex.org/jules> <http://ex.org/works_at> <http://ex.org/amsterdam_office> .
+        }
+    query: |
+      SELECT ?o WHERE {
+        <http://ex.org/jules> ?p ?o
+        FILTER(isLiteral(?o))
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # isNumeric (17.4.2.4)
+  # ---------------------------------------------------------------------------
+
+  - name: is_numeric_with_number_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/gus> <http://ex.org/score> "3.14"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+          <http://ex.org/vincent> <http://ex.org/score> "99"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/jules> <http://ex.org/label> "not a number" .
+        }
+    query: |
+      SELECT ?s WHERE {
+        ?s <http://ex.org/score> ?val
+        FILTER(isNumeric(?val))
+      }
+    expect:
+      count: 3
+
+  - name: is_numeric_with_string_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/tag> "hello" .
+          <http://ex.org/butch> <http://ex.org/tag> "world" .
+          <http://ex.org/alix> <http://ex.org/tag> "Amsterdam" .
+        }
+    query: |
+      SELECT ?s WHERE {
+        ?s <http://ex.org/tag> ?val
+        FILTER(isNumeric(?val))
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # STR (17.4.2.5)
+  # ---------------------------------------------------------------------------
+
+  - name: str_converts_iri_to_string
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/homepage> <http://example.com/alix> .
+          <http://ex.org/gus> <http://ex.org/homepage> <http://example.com/gus> .
+        }
+    query: |
+      SELECT ?page WHERE {
+        ?s <http://ex.org/homepage> ?page
+        FILTER(STR(?page) = "http://example.com/alix")
+      }
+    expect:
+      count: 1
+
+  - name: str_on_literal
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STR(?name) = "Jules")
+      }
+    expect:
+      rows:
+        - [Jules]
+
+  # ---------------------------------------------------------------------------
+  # sameTerm (17.4.2.8)
+  # ---------------------------------------------------------------------------
+
+  - name: same_term_identical_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/likes> <http://ex.org/paris> .
+          <http://ex.org/mia> <http://ex.org/lives_in> <http://ex.org/paris> .
+        }
+    query: |
+      SELECT ?city1 ?city2 WHERE {
+        <http://ex.org/mia> <http://ex.org/likes> ?city1 .
+        <http://ex.org/mia> <http://ex.org/lives_in> ?city2 .
+        FILTER(sameTerm(?city1, ?city2))
+      }
+    expect:
+      count: 1
+
+  - name: same_term_different_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/likes> <http://ex.org/prague> .
+          <http://ex.org/butch> <http://ex.org/lives_in> <http://ex.org/barcelona> .
+        }
+    query: |
+      SELECT ?city1 ?city2 WHERE {
+        <http://ex.org/butch> <http://ex.org/likes> ?city1 .
+        <http://ex.org/butch> <http://ex.org/lives_in> ?city2 .
+        FILTER(sameTerm(?city1, ?city2))
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # LANG (17.4.2.6)
+  # ---------------------------------------------------------------------------
+
+  - name: lang_returns_language_tag
+    skip: "LANG not yet evaluated in FILTER comparison"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix"@en .
+          <http://ex.org/alix> <http://ex.org/name> "Alix"@fr .
+          <http://ex.org/alix> <http://ex.org/name> "Alix"@de .
+        }
+    query: |
+      SELECT ?name WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name
+        FILTER(LANG(?name) = "fr")
+      }
+    expect:
+      count: 1
+
+  - name: lang_empty_for_untagged_literal
+    skip: "LANG not yet evaluated in FILTER comparison"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/nick> "Gussy"@en .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/gus> ?p ?val
+        FILTER(isLiteral(?val) && LANG(?val) = "")
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # DATATYPE (17.4.2.7)
+  # ---------------------------------------------------------------------------
+
+  - name: datatype_returns_type_iri
+    skip: "DATATYPE not yet evaluated in FILTER comparison"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/score> "100"^^<http://www.w3.org/2001/XMLSchema#integer> .
+          <http://ex.org/vincent> <http://ex.org/ratio> "3.14"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/vincent> ?p ?val
+        FILTER(DATATYPE(?val) = <http://www.w3.org/2001/XMLSchema#integer>)
+      }
+    expect:
+      count: 1
+
+  - name: datatype_string_type
+    skip: "DATATYPE not yet evaluated in FILTER comparison"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/name> "Jules"^^<http://www.w3.org/2001/XMLSchema#string> .
+          <http://ex.org/jules> <http://ex.org/age> "28"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/jules> ?p ?val
+        FILTER(DATATYPE(?val) = <http://www.w3.org/2001/XMLSchema#string>)
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Combined: isIRI and isLiteral partition objects
+  # ---------------------------------------------------------------------------
+
+  - name: is_iri_and_is_literal_are_complementary
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/knows> <http://ex.org/butch> .
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+          <http://ex.org/mia> <http://ex.org/age> "27" .
+          <http://ex.org/mia> <http://ex.org/works_at> <http://ex.org/paris_office> .
+        }
+    query: |
+      SELECT ?o WHERE {
+        <http://ex.org/mia> ?p ?o
+        FILTER(isIRI(?o) || isLiteral(?o))
+      }
+    expect:
+      count: 4
+
+  # ---------------------------------------------------------------------------
+  # Combined: STR with CONTAINS in FILTER
+  # ---------------------------------------------------------------------------
+
+  - name: str_with_contains_on_iri
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/homepage> <http://example.com/users/alix> .
+          <http://ex.org/gus> <http://ex.org/homepage> <http://example.com/users/gus> .
+          <http://ex.org/vincent> <http://ex.org/homepage> <http://other.com/vincent> .
+        }
+    query: |
+      SELECT ?page WHERE {
+        ?s <http://ex.org/homepage> ?page
+        FILTER(CONTAINS(STR(?page), "example.com"))
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Combined: isIRI with negation
+  # ---------------------------------------------------------------------------
+
+  - name: negated_is_iri_selects_literals
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/knows> <http://ex.org/alix> .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+          <http://ex.org/butch> <http://ex.org/city> "Prague" .
+        }
+    query: |
+      SELECT ?o WHERE {
+        <http://ex.org/butch> ?p ?o
+        FILTER(!isIRI(?o))
+      }
+    expect:
+      count: 2

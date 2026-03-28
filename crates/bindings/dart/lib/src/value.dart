@@ -56,16 +56,6 @@ String _formatIsoDuration(Duration d) {
   return buf.toString();
 }
 
-Duration _parseIsoDuration(String iso) {
-  final re = RegExp(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?');
-  final match = re.firstMatch(iso);
-  if (match == null) return Duration.zero;
-  final hours = int.tryParse(match.group(1) ?? '') ?? 0;
-  final minutes = int.tryParse(match.group(2) ?? '') ?? 0;
-  final seconds = int.tryParse(match.group(3) ?? '') ?? 0;
-  return Duration(hours: hours, minutes: minutes, seconds: seconds);
-}
-
 // =============================================================================
 // Decoding (JSON from grafeo-c results -> Dart types)
 // =============================================================================
@@ -178,7 +168,12 @@ dynamic _decodeMap(Map m) {
     return m[r'$time'] as String? ?? '';
   }
   if (m.containsKey(r'$duration')) {
-    return _parseIsoDuration(m[r'$duration'] as String? ?? 'PT0S');
+    // Return the ISO string directly. Dart's Duration type cannot represent
+    // calendar components (years, months, days), only time-based durations.
+    return m[r'$duration'] as String? ?? 'PT0S';
+  }
+  if (m.containsKey(r'$zoned_datetime')) {
+    return m[r'$zoned_datetime'] as String? ?? '';
   }
 
   // Regular map

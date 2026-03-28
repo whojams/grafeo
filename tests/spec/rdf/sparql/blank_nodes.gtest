@@ -1,0 +1,260 @@
+# SPARQL Blank Nodes
+#
+# Covers: W3C SPARQL 1.1 Section 4.3 (Blank Nodes) and Section 4.1.4
+# (Blank Node Syntax). Tests labeled blank nodes (_:label), anonymous
+# blank nodes ([]), blank nodes in CONSTRUCT, INSERT DATA reuse
+# semantics, and edge cases (isBlank, type distinction from IRIs).
+
+meta:
+  language: sparql
+  model: rdf
+  section: "4.3"
+  title: Blank Nodes
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Labeled blank nodes
+  # ---------------------------------------------------------------------------
+
+  - name: labeled_blank_node_as_subject
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # _:b1 used as a subject in INSERT DATA, then queried back
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Alix" .
+          _:b1 <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?name ?city WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+      }
+    expect:
+      rows:
+        - [Alix, Amsterdam]
+
+  - name: labeled_blank_node_as_object
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # _:b1 used as an object, then joined to retrieve its properties
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> _:b1 .
+          _:b1 <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        <http://ex.org/alix> <http://ex.org/knows> ?friend .
+        ?friend <http://ex.org/name> ?name .
+      }
+    expect:
+      rows:
+        - [Gus]
+
+  - name: blank_node_join
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # Two triples sharing _:b1 as subject, joined on that blank node
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Vincent" .
+          _:b1 <http://ex.org/city> "Paris" .
+        }
+    query: |
+      SELECT ?name ?city WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+      }
+    expect:
+      rows:
+        - [Vincent, Paris]
+
+  - name: multiple_labeled_blank_nodes
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # _:b1, _:b2, _:b3 as different subjects within a single INSERT DATA
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Jules" .
+          _:b2 <http://ex.org/name> "Mia" .
+          _:b3 <http://ex.org/name> "Butch" .
+        }
+    query: "SELECT ?name WHERE { ?s <http://ex.org/name> ?name }"
+    expect:
+      count: 3
+
+  - name: blank_node_in_query_pattern
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # _:x in a WHERE pattern acts as a non-distinguished variable,
+    # matching any blank node or value in that position
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Alix" .
+          _:b2 <http://ex.org/name> "Gus" .
+        }
+    query: "SELECT ?name WHERE { _:x <http://ex.org/name> ?name }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Anonymous blank nodes (parser does not support yet)
+  # ---------------------------------------------------------------------------
+
+  - name: anonymous_blank_node_subject
+    skip: "anonymous blank node [] as subject not yet supported in parser"
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Vincent" .
+          _:b1 <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        [ <http://ex.org/city> "Berlin" ] <http://ex.org/name> ?name .
+      }
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: anonymous_blank_node_with_properties
+    skip: "anonymous blank node [] as subject not yet supported in parser"
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Jules" .
+          _:b1 <http://ex.org/city> "Prague" .
+        }
+    query: |
+      SELECT ?name ?city WHERE {
+        [ <http://ex.org/name> ?name ; <http://ex.org/city> ?city ] .
+      }
+    expect:
+      rows:
+        - [Jules, Prague]
+
+  - name: anonymous_blank_node_nested
+    skip: "anonymous blank node [] as subject not yet supported in parser"
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/knows> _:b2 .
+          _:b2 <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/knows> [ <http://ex.org/name> ?name ] .
+      }
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # Blank nodes in CONSTRUCT
+  # ---------------------------------------------------------------------------
+
+  - name: construct_with_blank_node
+    # CONSTRUCT using a labeled blank node in the template
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      CONSTRUCT {
+        _:x <http://ex.org/label> ?name .
+      } WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Blank nodes in INSERT DATA: reuse and scoping
+  # ---------------------------------------------------------------------------
+
+  - name: insert_data_with_blank_node_reuse
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # Within a single INSERT DATA block, _:b1 used multiple times
+    # refers to the same blank node (per RDF spec)
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Mia" .
+          _:b1 <http://ex.org/city> "Barcelona" .
+          _:b1 <http://ex.org/age> "28" .
+        }
+    query: |
+      SELECT ?name ?city ?age WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+        ?s <http://ex.org/age> ?age .
+      }
+    expect:
+      rows:
+        - [Mia, Barcelona, 28]
+
+  - name: insert_data_blank_nodes_across_operations
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # _:b1 in separate INSERT DATA operations are DIFFERENT nodes
+    # per RDF spec (blank node scope is per operation)
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Alix" .
+        }
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?s ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: blank_node_not_equal_to_iri
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # A blank node and an IRI are never equal, even if the blank node
+    # label textually matches part of the IRI
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Vincent" .
+          <http://ex.org/b1> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        <http://ex.org/b1> <http://ex.org/name> ?name .
+      }
+    expect:
+      rows:
+        - [Jules]
+
+  - name: isblank_on_blank_node
+    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
+    # isBLANK(?s) should return true for blank node subjects
+    setup:
+      - |
+        INSERT DATA {
+          _:b1 <http://ex.org/name> "Butch" .
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER(isBLANK(?s))
+      }
+    expect:
+      rows:
+        - [Butch]

@@ -1,0 +1,279 @@
+# GQL Graph Element Functions: ISO/IEC 39075:2024 sec 21.5
+#
+# Covers: labels(n), type(r), id(n), element_id(n), keys(n), properties(n),
+# size() on list and string, length() on path, nodes(p), edges(p).
+
+meta:
+  language: gql
+  model: lpg
+  section: "21.5"
+  title: Graph element functions
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # labels(n)
+  # ---------------------------------------------------------------------------
+
+  - name: labels_single_label
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN labels(n) AS lbl"
+    expect:
+      rows:
+        - ["[Person]"]
+
+  - name: labels_multiple_labels
+    skip: "label ordering differs across bindings (Node returns insertion order, Rust returns sorted)"
+    setup:
+      - "INSERT (:Person:Developer {name: 'Gus'})"
+    query: "MATCH (n:Person) RETURN labels(n) AS lbl"
+    expect:
+      rows:
+        - ["[Developer, Person]"]
+
+  - name: labels_count
+    setup:
+      - "INSERT (:Animal {name: 'cat'})"
+    query: "MATCH (n:Animal) RETURN labels(n) AS lbl"
+    expect:
+      rows:
+        - ["[Animal]"]
+
+  # ---------------------------------------------------------------------------
+  # type(r)
+  # ---------------------------------------------------------------------------
+
+  - name: type_of_relationship
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (:Person)-[r:KNOWS]->(:Person) RETURN type(r) AS t"
+    expect:
+      rows:
+        - [KNOWS]
+
+  - name: type_of_works_at
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:WORKS_AT]->(:Company {name: 'Grafeo'})"
+    query: "MATCH (:Person)-[r:WORKS_AT]->(:Company) RETURN type(r) AS t"
+    expect:
+      rows:
+        - [WORKS_AT]
+
+  # ---------------------------------------------------------------------------
+  # id(n) / id(r) - returns internal integer ID (non-deterministic)
+  # ---------------------------------------------------------------------------
+
+  - name: id_node_returns_integer
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN id(n) AS nid"
+    expect:
+      count: 1
+
+  - name: id_edge_returns_integer
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH ()-[r:KNOWS]->() RETURN id(r) AS rid"
+    expect:
+      count: 1
+
+  - name: id_distinct_for_different_nodes
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    query: "MATCH (n:Person) RETURN DISTINCT id(n) AS nid"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # element_id(n)
+  # ---------------------------------------------------------------------------
+
+  - name: element_id_returns_value
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN element_id(n) AS eid"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # keys(n) - returns list of property key names
+  # ---------------------------------------------------------------------------
+
+  - name: keys_single_property
+    setup:
+      - "INSERT (:Marker {tag: 'test'})"
+    query: "MATCH (n:Marker) RETURN keys(n) AS k"
+    expect:
+      rows:
+        - ["[tag]"]
+
+  - name: keys_multiple_properties
+    # Key order is implementation-dependent, just check count
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: "MATCH (n:Person) RETURN size(keys(n)) AS k"
+    expect:
+      rows:
+        - [2]
+
+  - name: keys_no_properties
+    setup:
+      - "INSERT (:Empty)"
+    query: "MATCH (n:Empty) RETURN keys(n) AS k"
+    expect:
+      rows:
+        - ["[]"]
+
+  # ---------------------------------------------------------------------------
+  # properties(n) - returns a map
+  # ---------------------------------------------------------------------------
+
+  - name: properties_node
+    setup:
+      - "INSERT (:Item {name: 'widget', cost: 10})"
+    query: "MATCH (n:Item) RETURN properties(n) AS props"
+    expect:
+      rows:
+        - ["{cost: 10, name: widget}"]
+
+  - name: properties_edge
+    setup:
+      - "INSERT (:A {id: 1})-[:REL {weight: 5}]->(:B {id: 2})"
+    query: "MATCH ()-[r:REL]->() RETURN properties(r) AS props"
+    expect:
+      rows:
+        - ["{weight: 5}"]
+
+  # ---------------------------------------------------------------------------
+  # size() on list and string
+  # ---------------------------------------------------------------------------
+
+  - name: size_of_list
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size([1, 2, 3]) AS s"
+    expect:
+      rows:
+        - [3]
+
+  - name: size_of_empty_list
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size([]) AS s"
+    expect:
+      rows:
+        - [0]
+
+  - name: size_of_string
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size('hello') AS s"
+    expect:
+      rows:
+        - [5]
+
+  - name: size_of_empty_string
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size('') AS s"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # length() on path
+  # ---------------------------------------------------------------------------
+
+  - name: length_single_hop_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH p = (:Person {name: 'Alix'})-[:KNOWS]->(:Person) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [1]
+
+  - name: length_two_hop_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'}) INSERT (b)-[:KNOWS]->(c)"
+    query: "MATCH p = (:Person {name: 'Alix'})-[:KNOWS*]->(:Person {name: 'Vincent'}) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # nodes(p) and edges(p) on path
+  # ---------------------------------------------------------------------------
+
+  - name: nodes_of_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH p = (:Person {name: 'Alix'})-[:KNOWS]->(:Person) RETURN nodes(p) AS ns"
+    expect:
+      count: 1
+
+  - name: edges_of_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH p = (:Person {name: 'Alix'})-[:KNOWS]->(:Person) RETURN edges(p) AS es"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # size(labels(n)) composition
+  # ---------------------------------------------------------------------------
+
+  - name: size_of_labels
+    setup:
+      - "INSERT (:Person:Developer {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN size(labels(n)) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # head(), last(), tail() on lists
+  # ---------------------------------------------------------------------------
+
+  - name: head_of_list
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN head([10, 20, 30]) AS h"
+    expect:
+      rows:
+        - [10]
+
+  - name: last_of_list
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN last([10, 20, 30]) AS l"
+    expect:
+      rows:
+        - [30]
+
+  - name: tail_of_list
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN tail([10, 20, 30]) AS t"
+    expect:
+      rows:
+        - ["[20, 30]"]
+
+  # ---------------------------------------------------------------------------
+  # type(r) with filtered edge
+  # ---------------------------------------------------------------------------
+
+  - name: type_with_property_filter
+    setup:
+      - "INSERT (:A {id: 1})-[:REL {weight: 5}]->(:B {id: 2})"
+      - "INSERT (:A {id: 1})-[:LINK {weight: 3}]->(:B {id: 2})"
+    query: "MATCH ()-[r]->() WHERE type(r) = 'REL' RETURN type(r) AS t"
+    expect:
+      rows:
+        - [REL]

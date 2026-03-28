@@ -54,66 +54,62 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Checks if the current token can be used as a label or type name.
-    /// This includes identifiers, quoted identifiers, and certain reserved keywords that are
-    /// commonly used as labels (Node, Edge, Type, etc.)
+    /// Checks if the current token can be used as a label, type name, or property name.
+    /// This includes identifiers, quoted identifiers, contextual keywords, and reserved
+    /// keywords that are commonly used as labels or properties.
     fn is_label_or_type_name(&self) -> bool {
-        matches!(
-            self.current.kind,
-            TokenKind::Identifier
-                | TokenKind::QuotedIdentifier
-                | TokenKind::Node
-                | TokenKind::Edge
-                | TokenKind::Type
-                | TokenKind::Match
-                | TokenKind::Return
-                | TokenKind::Where
-                | TokenKind::And
-                | TokenKind::Or
-                | TokenKind::Not
-                | TokenKind::Insert
-                | TokenKind::Delete
-                | TokenKind::Set
-                | TokenKind::Create
-                | TokenKind::As
-                | TokenKind::Distinct
-                | TokenKind::Order
-                | TokenKind::By
-                | TokenKind::Asc
-                | TokenKind::Desc
-                | TokenKind::Limit
-                | TokenKind::Skip
-                | TokenKind::With
-                | TokenKind::Optional
-                | TokenKind::Null
-                | TokenKind::True
-                | TokenKind::False
-                | TokenKind::In
-                | TokenKind::Is
-                | TokenKind::Like
-                | TokenKind::Case
-                | TokenKind::When
-                | TokenKind::Then
-                | TokenKind::Else
-                | TokenKind::End
-                | TokenKind::Exists
-                | TokenKind::Call
-                | TokenKind::Yield
-                | TokenKind::Detach
-                | TokenKind::Unwind
-                | TokenKind::Merge
-                | TokenKind::On
-                | TokenKind::Starts
-                | TokenKind::Ends
-                | TokenKind::Contains
-                | TokenKind::Nodetach
-                | TokenKind::Fetch
-                | TokenKind::First
-                | TokenKind::Next
-                | TokenKind::Rows
-                | TokenKind::Row
-                | TokenKind::Only
-        )
+        self.is_contextual_keyword()
+            || matches!(
+                self.current.kind,
+                TokenKind::Identifier
+                    | TokenKind::QuotedIdentifier
+                    | TokenKind::Node
+                    | TokenKind::Edge
+                    | TokenKind::Type
+                    | TokenKind::Match
+                    | TokenKind::Return
+                    | TokenKind::Where
+                    | TokenKind::And
+                    | TokenKind::Or
+                    | TokenKind::Not
+                    | TokenKind::Insert
+                    | TokenKind::Delete
+                    | TokenKind::Set
+                    | TokenKind::Create
+                    | TokenKind::As
+                    | TokenKind::Distinct
+                    | TokenKind::Order
+                    | TokenKind::By
+                    | TokenKind::Asc
+                    | TokenKind::Desc
+                    | TokenKind::Limit
+                    | TokenKind::Skip
+                    | TokenKind::With
+                    | TokenKind::Optional
+                    | TokenKind::Null
+                    | TokenKind::True
+                    | TokenKind::False
+                    | TokenKind::In
+                    | TokenKind::Is
+                    | TokenKind::Like
+                    | TokenKind::Exists
+                    | TokenKind::Call
+                    | TokenKind::Yield
+                    | TokenKind::Detach
+                    | TokenKind::Unwind
+                    | TokenKind::Merge
+                    | TokenKind::On
+                    | TokenKind::Starts
+                    | TokenKind::Ends
+                    | TokenKind::Contains
+                    | TokenKind::Nodetach
+                    | TokenKind::Fetch
+                    | TokenKind::First
+                    | TokenKind::Next
+                    | TokenKind::Rows
+                    | TokenKind::Row
+                    | TokenKind::Only
+            )
     }
 
     /// Checks if the current token is an identifier (regular or backtick-quoted).
@@ -3840,7 +3836,7 @@ impl<'a> Parser<'a> {
 
                 if self.current.kind == TokenKind::Dot {
                     self.advance();
-                    if !self.is_identifier() {
+                    if !self.is_label_or_type_name() {
                         return Err(self.error("Expected property name"));
                     }
                     let property = self.get_identifier_name();
@@ -4196,7 +4192,7 @@ impl<'a> Parser<'a> {
 
         if self.current.kind != TokenKind::RBrace {
             loop {
-                if !self.is_identifier() {
+                if !self.is_label_or_type_name() {
                     return Err(self.error("Expected property name"));
                 }
                 let key = self.get_identifier_name();

@@ -1,0 +1,181 @@
+# Gremlin extended ordering and grouping: order by token (T.id, T.label),
+#                                       identity by(), dedup with keys,
+#                                       group().by(label), group with modifiers
+#
+# Covers ordering and grouping patterns not exercised in other gremlin files.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Edges: Alix-KNOWS->Gus, Gus-KNOWS->Vincent, Alix-WORKS_AT->Grafeo OSS
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "ordering-grouping"
+  title: Ordering and Grouping
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # order() with default (no by modifier)
+  # ---------------------------------------------------------------------------
+
+  - name: order_default_integers
+    query: "g.V().hasLabel('Person').values('age').order()"
+    expect:
+      ordered: true
+      rows:
+        - [25]
+        - [30]
+        - [35]
+
+  - name: order_default_strings
+    query: "g.V().hasLabel('Person').values('name').order()"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # order().by() identity modifier
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_identity
+    # by() with empty parens is ByModifier::Identity
+    query: "g.V().hasLabel('Person').values('age').order().by()"
+    expect:
+      ordered: true
+      rows:
+        - [25]
+        - [30]
+        - [35]
+
+  - name: order_by_identity_desc
+    query: "g.V().hasLabel('Person').values('age').order().by(desc)"
+    expect:
+      ordered: true
+      rows:
+        - [35]
+        - [30]
+        - [25]
+
+  # ---------------------------------------------------------------------------
+  # order().by(T.id) and order().by(T.label)
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_t_id
+    query: "g.V().order().by(T.id).count()"
+    expect:
+      rows:
+        - [4]
+
+  - name: order_by_t_label
+    query: "g.V().hasLabel('Person').order().by(T.label).count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: order_by_t_id_with_values
+    query: "g.V().hasLabel('Person').order().by(T.id).values('name')"
+    expect:
+      ordered: true
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # dedup() with keys
+  # ---------------------------------------------------------------------------
+
+  - name: dedup_with_key_unique
+    # All 3 cities are unique, dedup('city') keeps all
+    query: "g.V().hasLabel('Person').dedup('city').count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: dedup_no_key_removes_duplicates
+    # Alix->Gus via KNOWS. Gus->Vincent via KNOWS.
+    # out('KNOWS') from all Persons yields [Gus, Vincent] (already unique).
+    query: "g.V().hasLabel('Person').out('KNOWS').dedup().count()"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # group().by(label) and group().by(T.label)
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_bare_label
+    skip: "bare 'label' keyword not recognized in by() modifier, use by(T.label)"
+    query: "g.V().group().by(label)"
+    expect:
+      count: 1
+
+  - name: group_by_t_label
+    skip: "group().by(T.label) does not produce grouped map output, passes through unchanged"
+    query: "g.V().group().by(T.label)"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # groupCount() combinations
+  # ---------------------------------------------------------------------------
+
+  - name: group_count_by_city
+    query: "g.V().hasLabel('Person').groupCount().by('city')"
+    expect:
+      count: 1
+
+  - name: group_count_by_age
+    query: "g.V().hasLabel('Person').groupCount().by('age')"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Combined ordering and filtering
+  # ---------------------------------------------------------------------------
+
+  - name: order_then_limit
+    query: "g.V().hasLabel('Person').order().by('age', asc).limit(2).values('name')"
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Alix]
+
+  - name: order_then_range
+    query: "g.V().hasLabel('Person').order().by('age', asc).range(1, 3).values('name')"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: filter_then_order
+    query: "g.V().hasLabel('Person').has('age', gte(30)).order().by('age', desc).values('name')"
+    expect:
+      ordered: true
+      rows:
+        - [Vincent]
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Dedup with order combinations
+  # ---------------------------------------------------------------------------
+
+  - name: order_then_dedup
+    query: "g.V().hasLabel('Person').values('city').order().dedup()"
+    expect:
+      count: 3
+
+  - name: fold_count_roundtrip
+    query: "g.V().hasLabel('Person').values('name').fold().unfold().order()"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]

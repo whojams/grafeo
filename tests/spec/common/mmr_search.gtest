@@ -1,0 +1,165 @@
+# Common: MMR (Maximal Marginal Relevance) style search
+#
+# Covers: diversity-oriented vector queries using GQL functions.
+# True MMR uses the Rust API (db.mmr_search()), but these tests exercise
+# the GQL building blocks for relevance-vs-diversity trade-offs:
+# cosine_similarity for relevance scoring, combined with distance-based
+# diversity filtering.
+
+meta:
+  language: gql
+  model: lpg
+  section: mmr
+  title: MMR search
+  dataset: empty
+  requires: [vector-index]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Pure relevance ordering (lambda=1.0 equivalent)
+  # ---------------------------------------------------------------------------
+
+  - name: pure_relevance_top_3
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.95, 0.05, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'd', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'e', embedding: vector([0.0, 0.0, 1.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS relevance
+      RETURN n.id AS id, relevance
+      ORDER BY relevance DESC
+      LIMIT 3
+    expect:
+      ordered: true
+      count: 3
+
+  - name: pure_relevance_returns_closest_first
+    setup:
+      - "INSERT (:Doc {id: 'close', embedding: vector([0.99, 0.01, 0.0])})"
+      - "INSERT (:Doc {id: 'far', embedding: vector([0.0, 0.0, 1.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS relevance
+      RETURN n.id AS id, relevance
+      ORDER BY relevance DESC
+      LIMIT 1
+    expect:
+      ordered: true
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Diversity via inter-document distance
+  # ---------------------------------------------------------------------------
+
+  - name: pairwise_distance_for_diversity
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (a:Doc {id: 'a'}), (b:Doc {id: 'b'})
+      RETURN euclidean_distance(a.embedding, b.embedding) AS dist
+    expect:
+      count: 1
+
+  - name: diverse_candidates_have_low_pairwise_similarity
+    setup:
+      - "INSERT (:Doc {id: 'x', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'y', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'z', embedding: vector([0.0, 0.0, 1.0])})"
+    query: |
+      MATCH (a:Doc), (b:Doc)
+      WHERE a.id < b.id
+      WITH a.id AS id1, b.id AS id2,
+           cosine_similarity(a.embedding, b.embedding) AS sim
+      WHERE sim < 0.1
+      RETURN count(*) AS pair_count
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Relevance + diversity threshold
+  # ---------------------------------------------------------------------------
+
+  - name: filter_high_relevance_and_diverse
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.95, 0.05, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd', embedding: vector([0.0, 0.0, 1.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([0.5, 0.5, 0.0])) AS relevance
+      WHERE relevance > 0.3
+      RETURN n.id AS id, relevance
+      ORDER BY relevance DESC
+    expect:
+      ordered: true
+      count: 3
+
+  - name: relevance_threshold_excludes_dissimilar
+    setup:
+      - "INSERT (:Doc {id: 'near', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'mid', embedding: vector([0.5, 0.5, 0.0])})"
+      - "INSERT (:Doc {id: 'far', embedding: vector([0.0, 0.0, 1.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS relevance
+      WHERE relevance > 0.6
+      RETURN n.id AS id, relevance
+      ORDER BY relevance DESC
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Dot product for unnormalized relevance
+  # ---------------------------------------------------------------------------
+
+  - name: dot_product_ranking
+    setup:
+      - "INSERT (:Doc {id: 'strong', embedding: vector([2.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'medium', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'weak', embedding: vector([0.5, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, dot_product(n.embedding, vector([1.0, 0.0, 0.0])) AS dp
+      RETURN n.id AS id, dp
+      ORDER BY dp DESC
+    expect:
+      ordered: true
+      count: 3
+
+  - name: dot_product_with_limit
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([3.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([2.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, dot_product(n.embedding, vector([1.0, 0.0, 0.0])) AS dp
+      RETURN n.id AS id, dp
+      ORDER BY dp DESC
+      LIMIT 2
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Manhattan distance for diversity measurement
+  # ---------------------------------------------------------------------------
+
+  - name: manhattan_distance_diversity_check
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (a:Doc {id: 'a'}), (b:Doc {id: 'b'})
+      RETURN manhattan_distance(a.embedding, b.embedding) AS dist
+    expect:
+      count: 1

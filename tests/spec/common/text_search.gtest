@@ -1,0 +1,284 @@
+# Common: Text search (string predicates)
+#
+# Covers: CONTAINS, STARTS WITH, ENDS WITH string predicates,
+# combined predicates, edge cases.
+# Note: BM25 ranked results and text index DDL are tested via
+# the programmatic API in grafeo-engine integration tests.
+
+meta:
+  language: gql
+  model: lpg
+  section: text-search
+  title: Text search
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # CONTAINS predicate (substring matching)
+  # ---------------------------------------------------------------------------
+
+  - name: contains_single_word
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Rust systems programming'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'Rust' RETURN n.title ORDER BY n.title"
+    expect:
+      ordered: true
+      rows:
+        - [Rust graph database engine]
+        - [Rust systems programming]
+
+  - name: contains_substring
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Graph databases and knowledge graphs'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'graph' RETURN n.title ORDER BY n.title"
+    expect:
+      ordered: true
+      rows:
+        - [Graph databases and knowledge graphs]
+        - [Rust graph database engine]
+
+  - name: contains_multi_word_substring
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Graph databases and knowledge graphs'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'machine learning' RETURN n.title"
+    expect:
+      rows:
+        - [Python machine learning]
+
+  - name: contains_case_sensitive
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'python' RETURN n.title"
+    expect:
+      empty: true
+
+  - name: contains_case_sensitive_match
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'Python' RETURN n.title"
+    expect:
+      rows:
+        - [Python machine learning]
+
+  - name: contains_no_matches
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'nonexistentxyz' RETURN n.title"
+    expect:
+      empty: true
+
+  - name: contains_empty_string_matches_all
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS '' RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: contains_full_string
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title CONTAINS 'Rust graph database engine' RETURN n.title"
+    expect:
+      rows:
+        - [Rust graph database engine]
+
+  - name: contains_single_character
+    setup:
+      - "INSERT (:Doc {text: 'abc'})"
+      - "INSERT (:Doc {text: 'def'})"
+      - "INSERT (:Doc {text: 'abcdef'})"
+    query: "MATCH (n:Doc) WHERE n.text CONTAINS 'a' RETURN n.text ORDER BY n.text"
+    expect:
+      ordered: true
+      rows:
+        - [abc]
+        - [abcdef]
+
+  # ---------------------------------------------------------------------------
+  # STARTS WITH predicate
+  # ---------------------------------------------------------------------------
+
+  - name: starts_with_match
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Rust systems programming'})"
+    query: "MATCH (n:Article) WHERE n.title STARTS WITH 'Rust' RETURN n.title ORDER BY n.title"
+    expect:
+      ordered: true
+      rows:
+        - [Rust graph database engine]
+        - [Rust systems programming]
+
+  - name: starts_with_no_match
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title STARTS WITH 'Python' RETURN n.title"
+    expect:
+      empty: true
+
+  - name: starts_with_case_sensitive
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title STARTS WITH 'rust' RETURN n.title"
+    expect:
+      empty: true
+
+  - name: starts_with_empty_string
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title STARTS WITH '' RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: starts_with_full_string
+    setup:
+      - "INSERT (:Article {title: 'Rust'})"
+    query: "MATCH (n:Article) WHERE n.title STARTS WITH 'Rust' RETURN n.title"
+    expect:
+      rows:
+        - [Rust]
+
+  # ---------------------------------------------------------------------------
+  # ENDS WITH predicate
+  # ---------------------------------------------------------------------------
+
+  - name: ends_with_match
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Rust systems programming'})"
+    query: "MATCH (n:Article) WHERE n.title ENDS WITH 'programming' RETURN n.title"
+    expect:
+      rows:
+        - [Rust systems programming]
+
+  - name: ends_with_no_match
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title ENDS WITH 'xyz' RETURN n.title"
+    expect:
+      empty: true
+
+  - name: ends_with_case_sensitive
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title ENDS WITH 'Engine' RETURN n.title"
+    expect:
+      empty: true
+
+  - name: ends_with_empty_string
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+    query: "MATCH (n:Article) WHERE n.title ENDS WITH '' RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: ends_with_full_string
+    setup:
+      - "INSERT (:Article {title: 'Rust'})"
+    query: "MATCH (n:Article) WHERE n.title ENDS WITH 'Rust' RETURN n.title"
+    expect:
+      rows:
+        - [Rust]
+
+  # ---------------------------------------------------------------------------
+  # Combined predicates
+  # ---------------------------------------------------------------------------
+
+  - name: contains_and_starts_with_combined
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Rust systems programming'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+    query: |
+      MATCH (n:Article)
+      WHERE n.title STARTS WITH 'Rust' AND n.title CONTAINS 'graph'
+      RETURN n.title
+    expect:
+      rows:
+        - [Rust graph database engine]
+
+  - name: contains_or_combined
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Go web framework'})"
+    query: |
+      MATCH (n:Article)
+      WHERE n.title CONTAINS 'Rust' OR n.title CONTAINS 'Python'
+      RETURN n.title ORDER BY n.title
+    expect:
+      ordered: true
+      rows:
+        - [Python machine learning]
+        - [Rust graph database engine]
+
+  - name: starts_with_and_ends_with
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Rust systems programming'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+    query: |
+      MATCH (n:Article)
+      WHERE n.title STARTS WITH 'Rust' AND n.title ENDS WITH 'engine'
+      RETURN n.title
+    expect:
+      rows:
+        - [Rust graph database engine]
+
+  - name: not_contains
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine'})"
+      - "INSERT (:Article {title: 'Python machine learning'})"
+      - "INSERT (:Article {title: 'Go web framework'})"
+    query: |
+      MATCH (n:Article)
+      WHERE NOT n.title CONTAINS 'Rust'
+      RETURN n.title ORDER BY n.title
+    expect:
+      ordered: true
+      rows:
+        - [Go web framework]
+        - [Python machine learning]
+
+  # ---------------------------------------------------------------------------
+  # Predicates with property filter
+  # ---------------------------------------------------------------------------
+
+  - name: contains_with_label_filter
+    setup:
+      - "INSERT (:Article {title: 'Rust graph database engine', category: 'tech'})"
+      - "INSERT (:Article {title: 'Python machine learning', category: 'ai'})"
+      - "INSERT (:Article {title: 'Rust systems programming', category: 'tech'})"
+    query: |
+      MATCH (n:Article)
+      WHERE n.category = 'tech' AND n.title CONTAINS 'graph'
+      RETURN n.title
+    expect:
+      rows:
+        - [Rust graph database engine]
+
+  - name: contains_with_count
+    setup:
+      - "INSERT (:Doc {content: 'machine learning with neural networks'})"
+      - "INSERT (:Doc {content: 'graph databases and knowledge graphs'})"
+      - "INSERT (:Doc {content: 'machine learning on graphs'})"
+    query: "MATCH (n:Doc) WHERE n.content CONTAINS 'machine' RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]

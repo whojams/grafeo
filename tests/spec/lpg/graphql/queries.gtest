@@ -1,0 +1,1026 @@
+# GraphQL query support for Grafeo LPG
+#
+# Covers: type-based node queries, field selection, named and shorthand syntax,
+# field aliases, direct argument equality filters, range filters (_gt, _gte,
+# _lt, _lte, _ne), string operators (_contains, _starts_with, _ends_with),
+# compound filters, where/filter object syntax, _in operator, pagination
+# (first, skip, limit, offset), ordering (orderBy), nested relationship
+# traversals, empty result cases, fragment spreads, inline fragments with type
+# conditions, aliased root fields, mixed where + direct args, nested traversal
+# aliases, delete nonexistent nodes, boolean/float property values, where with
+# bare equality, multi-key orderBy, orderBy combined with where, nested field
+# compound filters, deeply nested traversals, multiple fragment spreads,
+# fragments with nested fields, inline fragments without type condition, and
+# edge case property values (zero, false, empty string).
+
+meta:
+  language: graphql
+  model: lpg
+  title: GraphQL queries
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # 1. Basic node queries by type
+  # ---------------------------------------------------------------------------
+
+  - name: query_all_persons
+    query: "query { person { name } }"
+    expect:
+      count: 3
+
+  - name: query_all_persons_with_values
+    query: "query { person { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: query_all_companies
+    query: "query { company { name } }"
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  - name: query_person_multiple_fields
+    query: "query { person { name age city } }"
+    expect:
+      rows:
+        - [Alix, 30, Amsterdam]
+        - [Gus, 25, Berlin]
+        - [Vincent, 35, Paris]
+
+  - name: query_company_multiple_fields
+    query: "query { company { name founded } }"
+    expect:
+      rows:
+        - [Grafeo OSS, 2025]
+
+  - name: query_nonexistent_type
+    query: "query { animal { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 2. Named and shorthand queries
+  # ---------------------------------------------------------------------------
+
+  - name: named_query_with_keyword
+    query: "query GetPeople { person { name } }"
+    expect:
+      count: 3
+
+  - name: shorthand_query_no_keyword
+    query: "{ person { name } }"
+    expect:
+      count: 3
+
+  - name: shorthand_with_filter
+    query: "{ person(name: \"Alix\") { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: named_query_with_filter
+    query: "query FindGus { person(name: \"Gus\") { name city } }"
+    expect:
+      rows:
+        - [Gus, Berlin]
+
+  # ---------------------------------------------------------------------------
+  # 3. Field aliases
+  # ---------------------------------------------------------------------------
+
+  - name: alias_single_field
+    query: "{ person(name: \"Alix\") { userName: name } }"
+    expect:
+      columns: [userName]
+      rows:
+        - [Alix]
+
+  - name: alias_multiple_fields
+    query: "{ person(name: \"Vincent\") { personName: name personAge: age } }"
+    expect:
+      columns: [personName, personAge]
+      rows:
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # 4. Direct argument equality filters
+  # ---------------------------------------------------------------------------
+
+  - name: filter_by_name
+    query: "{ person(name: \"Alix\") { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: filter_by_age
+    query: "{ person(age: 25) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_by_city
+    query: "{ person(city: \"Amsterdam\") { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: filter_by_multiple_args
+    query: "{ person(name: \"Alix\", age: 30) { name city } }"
+    expect:
+      rows:
+        - [Alix, Amsterdam]
+
+  - name: filter_no_match
+    query: "{ person(name: \"Django\") { name } }"
+    expect:
+      empty: true
+
+  - name: filter_company_by_name
+    query: "{ company(name: \"Grafeo OSS\") { name founded } }"
+    expect:
+      rows:
+        - [Grafeo OSS, 2025]
+
+  - name: filter_company_no_match
+    query: "{ company(name: \"Acme\") { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 5. Direct argument range filters (_gt, _gte, _lt, _lte, _ne)
+  # ---------------------------------------------------------------------------
+
+  - name: filter_age_gt
+    query: "{ person(age_gt: 28) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: filter_age_gte
+    query: "{ person(age_gte: 30) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: filter_age_lt
+    query: "{ person(age_lt: 30) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_age_lte
+    query: "{ person(age_lte: 30) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: filter_age_ne
+    query: "{ person(age_ne: 30) { name } }"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: filter_founded_gt
+    query: "{ company(founded_gt: 2020) { name } }"
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  - name: filter_founded_lt_no_match
+    query: "{ company(founded_lt: 2000) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 6. Direct argument string operators (_contains, _starts_with, _ends_with)
+  # ---------------------------------------------------------------------------
+
+  - name: filter_name_contains
+    query: "{ person(name_contains: \"li\") { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: filter_name_starts_with
+    query: "{ person(name_starts_with: \"Vi\") { name } }"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: filter_name_ends_with
+    query: "{ person(name_ends_with: \"us\") { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_city_contains
+    query: "{ person(city_contains: \"er\") { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: filter_city_starts_with
+    query: "{ person(city_starts_with: \"Am\") { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: filter_city_ends_with
+    query: "{ person(city_ends_with: \"is\") { name } }"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: filter_name_contains_no_match
+    query: "{ person(name_contains: \"xyz\") { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 7. Compound range filters
+  # ---------------------------------------------------------------------------
+
+  - name: compound_age_range
+    query: "{ person(age_gt: 20, age_lt: 35) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: compound_age_range_inclusive
+    query: "{ person(age_gte: 25, age_lte: 30) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: compound_city_and_age_gt
+    query: "{ person(city: \"Amsterdam\", age_gt: 25) { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: compound_three_filters
+    query: "{ person(age_gte: 25, age_lte: 35, city: \"Berlin\") { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: compound_range_no_match
+    query: "{ person(age_gt: 36, age_lt: 40) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 8. Where/filter object syntax
+  # ---------------------------------------------------------------------------
+
+  - name: where_object_equality
+    query: "query { person(where: { name: \"Alix\" }) { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: where_object_age_gt
+    query: "query { person(where: { age_gt: 28 }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: where_object_age_lt
+    query: "query { person(where: { age_lt: 30 }) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: where_object_compound
+    query: "query { person(where: { age_gte: 25, city: \"Berlin\" }) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_object_equality
+    query: "query { person(filter: { name: \"Vincent\" }) { name age } }"
+    expect:
+      rows:
+        - [Vincent, 35]
+
+  - name: filter_object_age_gt
+    query: "query { person(filter: { age_gt: 28 }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: filter_object_name_contains
+    query: "query { person(filter: { name_contains: \"in\" }) { name } }"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: filter_object_city_starts_with
+    query: "query { person(filter: { city_starts_with: \"Pa\" }) { name } }"
+    expect:
+      rows:
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # 9. Where with _in operator
+  # ---------------------------------------------------------------------------
+
+  - name: filter_age_in
+    query: "{ person(age_in: [25, 35]) { name } }"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: filter_city_in
+    query: "{ person(city_in: [\"Amsterdam\", \"Paris\"]) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: where_object_age_in
+    query: "query { person(where: { age_in: [25, 30] }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: filter_city_in_single
+    query: "{ person(city_in: [\"Berlin\"]) { name } }"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: filter_age_in_no_match
+    query: "{ person(age_in: [99, 100]) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 10. Pagination (first, skip, limit, offset)
+  # ---------------------------------------------------------------------------
+
+  - name: first_limits_results
+    query: "{ person(first: 2) { name } }"
+    expect:
+      count: 2
+
+  - name: first_one_result
+    query: "{ person(first: 1) { name } }"
+    expect:
+      count: 1
+
+  - name: limit_alias_for_first
+    query: "{ person(limit: 2) { name } }"
+    expect:
+      count: 2
+
+  - name: skip_offsets_results
+    query: "{ person(first: 2, skip: 1) { name } }"
+    expect:
+      count: 2
+
+  - name: offset_alias_for_skip
+    query: "{ person(limit: 2, offset: 1) { name } }"
+    expect:
+      count: 2
+
+  - name: skip_all
+    query: "{ person(skip: 3) { name } }"
+    expect:
+      empty: true
+
+  - name: first_exceeds_total
+    query: "{ person(first: 100) { name } }"
+    expect:
+      count: 3
+
+  - name: skip_and_first_combined
+    query: "{ person(skip: 1, first: 1) { name } }"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # 11. Ordering (orderBy)
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_name_asc
+    query: |
+      query {
+        person(orderBy: { name: ASC }) {
+          name
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: order_by_name_desc
+    query: |
+      query {
+        person(orderBy: { name: DESC }) {
+          name
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Vincent]
+        - [Gus]
+        - [Alix]
+
+  - name: order_by_age_asc
+    query: |
+      query {
+        person(orderBy: { age: ASC }) {
+          name
+          age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: order_by_age_desc
+    query: |
+      query {
+        person(orderBy: { age: DESC }) {
+          name
+          age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Vincent, 35]
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: order_by_age_asc_with_first
+    query: |
+      query {
+        person(orderBy: { age: ASC }, first: 2) {
+          name
+          age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+
+  - name: order_by_age_desc_with_first
+    query: |
+      query {
+        person(orderBy: { age: DESC }, first: 1) {
+          name
+          age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Vincent, 35]
+
+  - name: order_by_with_skip_and_first
+    query: |
+      query {
+        person(orderBy: { age: ASC }, skip: 1, first: 1) {
+          name
+          age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 30]
+
+  - name: order_by_with_skip
+    query: |
+      query {
+        person(orderBy: { age: ASC }, skip: 2) {
+          name
+          age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # 12. Nested relationship traversals
+  # ---------------------------------------------------------------------------
+
+  - name: nested_knows_traversal
+    # Alix->Gus and Gus->Vincent, so 2 rows with outgoing KNOWS
+    query: "query { person { name knows { name } } }"
+    expect:
+      count: 2
+
+  - name: nested_knows_with_parent_filter
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows {
+            name
+          }
+        }
+      }
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: nested_knows_from_gus
+    query: |
+      query {
+        person(name: "Gus") {
+          name
+          knows {
+            name
+          }
+        }
+      }
+    expect:
+      rows:
+        - [Gus, Vincent]
+
+  - name: nested_works_at_traversal
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          works_at {
+            name
+          }
+        }
+      }
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+
+  - name: nested_knows_with_filter_on_target
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows(age: 25) {
+            name
+            age
+          }
+        }
+      }
+    expect:
+      count: 1
+
+  - name: nested_knows_with_age_gt_on_target
+    query: |
+      query {
+        person(name: "Gus") {
+          name
+          knows(age_gt: 30) {
+            name
+            age
+          }
+        }
+      }
+    expect:
+      count: 1
+
+  - name: nested_no_outgoing_relationships
+    # Vincent has no outgoing KNOWS edges
+    query: |
+      query {
+        person(name: "Vincent") {
+          name
+          knows {
+            name
+          }
+        }
+      }
+    expect:
+      empty: true
+
+  - name: nested_works_at_no_match
+    # Gus has no WORKS_AT edges
+    query: |
+      query {
+        person(name: "Gus") {
+          name
+          works_at {
+            name
+          }
+        }
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 13. Empty results (nonexistent label, no match filter)
+  # ---------------------------------------------------------------------------
+
+  - name: empty_nonexistent_label
+    query: "{ robot { name } }"
+    expect:
+      empty: true
+
+  - name: empty_filter_no_match_age
+    query: "{ person(age: 99) { name } }"
+    expect:
+      empty: true
+
+  - name: empty_filter_no_match_city
+    query: "{ person(city: \"Tokyo\") { name } }"
+    expect:
+      empty: true
+
+  - name: empty_compound_filter_contradictory
+    query: "{ person(age_gt: 40, age_lt: 20) { name } }"
+    expect:
+      empty: true
+
+  - name: empty_string_filter_no_match
+    query: "{ person(name_starts_with: \"Zz\") { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 14. Fragment spreads
+  # ---------------------------------------------------------------------------
+
+  - name: fragment_multiple_scalar_fields
+    query: |
+      fragment PersonFields on Person { name age }
+      query { person { ...PersonFields } }
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+        - [Vincent, 35]
+
+  - name: fragment_subset_of_fields
+    query: |
+      fragment NameOnly on Person { name }
+      query { person { ...NameOnly } }
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # 15. Inline fragments with type condition
+  # ---------------------------------------------------------------------------
+
+  - name: inline_fragment_with_type_condition
+    query: "query { person { ... on Person { name age } } }"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # 16. Aliased root field
+  # ---------------------------------------------------------------------------
+
+  - name: aliased_root_field
+    query: "{ people: person { name } }"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # 17. Mixed where + direct args (AND semantics)
+  # ---------------------------------------------------------------------------
+
+  - name: mixed_where_and_direct_args
+    query: "{ person(age_gt: 20, where: { city: \"Amsterdam\" }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # 18. Nested traversal alias
+  # ---------------------------------------------------------------------------
+
+  - name: nested_traversal_alias
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          friends: knows {
+            name
+          }
+        }
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # 19. Delete nonexistent node (silent success)
+  # ---------------------------------------------------------------------------
+
+  - name: delete_nonexistent_node_silent_success
+    query: "mutation { deletePerson(name: \"NonExistent\") }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 20. Boolean and float property values in create
+  # ---------------------------------------------------------------------------
+
+  - name: create_person_with_boolean_property
+    statements:
+      - "mutation { createPerson(name: \"Beatrix\", active: true) { name } }"
+      - "{ person(name: \"Beatrix\") { name active } }"
+    expect:
+      rows:
+        - [Beatrix, true]
+
+  - name: create_person_with_float_property
+    statements:
+      - "mutation { createPerson(name: \"Django\", score: 9.5) { name } }"
+      - "{ person(name: \"Django\") { name score } }"
+    expect:
+      rows:
+        - [Django, 9.5]
+
+  # ---------------------------------------------------------------------------
+  # 21. Where with bare equality (no suffix)
+  # ---------------------------------------------------------------------------
+
+  - name: where_bare_equality_no_suffix
+    query: "{ person(where: { age: 30 }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # 22. OrderBy with multiple sort keys
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_two_keys
+    query: |
+      query {
+        person(orderBy: { city: ASC, age: DESC }) {
+          name city age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Amsterdam, 30]
+        - [Gus, Berlin, 25]
+        - [Vincent, Paris, 35]
+
+  # ---------------------------------------------------------------------------
+  # 23. OrderBy combined with where
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_with_where_filter
+    query: |
+      query {
+        person(where: { age_gt: 24 }, orderBy: { age: ASC }) {
+          name age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: order_by_with_where_and_first
+    query: |
+      query {
+        person(where: { age_gt: 24 }, orderBy: { age: ASC }, first: 2) {
+          name age
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+
+  # ---------------------------------------------------------------------------
+  # 24. Nested field compound filters
+  # ---------------------------------------------------------------------------
+
+  - name: nested_compound_filter
+    query: |
+      query {
+        person {
+          name
+          knows(age_gte: 25, age_lte: 35) {
+            name
+          }
+        }
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # 25. Deeply nested traversals (3 levels)
+  # ---------------------------------------------------------------------------
+
+  - name: deeply_nested_three_levels
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows {
+            name
+            knows {
+              name
+            }
+          }
+        }
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # 26. Multiple fragment spreads
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_fragment_spreads
+    query: |
+      fragment Names on Person { name }
+      fragment Ages on Person { age }
+      query { person { ...Names ...Ages } }
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # 27. Fragment with nested fields
+  # ---------------------------------------------------------------------------
+
+  - name: fragment_with_nested_fields
+    query: |
+      fragment PersonWithFriends on Person {
+        name
+        knows { name }
+      }
+      query { person(name: "Alix") { ...PersonWithFriends } }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # 28. Inline fragment without type condition
+  # ---------------------------------------------------------------------------
+
+  - name: inline_fragment_no_type_condition
+    query: "query { person { ... { name age } } }"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # 29. Edge case property values
+  # ---------------------------------------------------------------------------
+
+  - name: create_and_query_zero_value
+    statements:
+      - "mutation { createPerson(name: \"Mia\", age: 0) { name } }"
+      - "{ person(age: 0) { name age } }"
+    expect:
+      rows:
+        - [Mia, 0]
+
+  - name: create_and_query_false_value
+    statements:
+      - "mutation { createPerson(name: \"Butch\", active: false) { name } }"
+      - "{ person(name: \"Butch\") { name active } }"
+    expect:
+      rows:
+        - [Butch, false]
+
+  - name: create_and_query_empty_string
+    statements:
+      - "mutation { createPerson(name: \"Jules\", city: \"\") { name } }"
+      - "{ person(name: \"Jules\") { name city } }"
+    expect:
+      rows:
+        - [Jules, ""]
+
+  # ---------------------------------------------------------------------------
+  # 30. Null argument behavior
+  # ---------------------------------------------------------------------------
+
+  - name: filter_null_matches_nothing
+    # Filtering by null matches nodes where property is literally null, not missing
+    query: "{ person(city: null) { name } }"
+    expect:
+      empty: true
+
+  - name: query_after_create_with_null_property
+    statements:
+      - "mutation { createPerson(name: \"Jules\", nickname: null) { name } }"
+      - "{ person(name: \"Jules\") { name nickname } }"
+    expect:
+      rows:
+        - [Jules, null]
+
+  # ---------------------------------------------------------------------------
+  # 31. Negative numeric arguments
+  # ---------------------------------------------------------------------------
+
+  - name: filter_negative_integer
+    query: "{ person(age_gt: -1) { name } }"
+    expect:
+      count: 3
+
+  - name: create_and_query_negative_float
+    statements:
+      - "mutation { createPerson(name: \"Mia\", score: -2.5) { name } }"
+      - "{ person(name: \"Mia\") { name score } }"
+    expect:
+      rows:
+        - [Mia, -2.5]
+
+  # ---------------------------------------------------------------------------
+  # 32. Block strings (triple-quote)
+  # ---------------------------------------------------------------------------
+
+  - name: block_string_in_mutation
+    statements:
+      - |
+        mutation {
+          createPerson(name: "Hans", bio: """A long bio text""") {
+            name
+          }
+        }
+      - "{ person(name: \"Hans\") { name bio } }"
+    expect:
+      rows:
+        - [Hans, A long bio text]
+
+  # ---------------------------------------------------------------------------
+  # 33. String escape sequences
+  # ---------------------------------------------------------------------------
+
+  - name: string_escape_single_quote
+    statements:
+      - "mutation { createPerson(name: \"O'Brien\") { name } }"
+      - "{ person(name: \"O'Brien\") { name } }"
+    expect:
+      rows:
+        - ["O'Brien"]
+
+  # ---------------------------------------------------------------------------
+  # 34. Empty list in filter
+  # ---------------------------------------------------------------------------
+
+  - name: empty_list_in_filter
+    query: "{ person(age_in: []) { name } }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 35. Lowercase enum in orderBy
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_lowercase_enum
+    query: |
+      query {
+        person(orderBy: { name: asc }) {
+          name
+        }
+      }
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # 36. Multiple operations (first selected)
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_operations_first_selected
+    # When multiple operations exist without explicit selection, first is used
+    query: "query A { person { name } } query B { company { name } }"
+    expect:
+      count: 3

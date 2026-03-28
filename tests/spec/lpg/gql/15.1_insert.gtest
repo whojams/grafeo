@@ -1,0 +1,91 @@
+# GQL INSERT clause: ISO/IEC 39075:2024 sec 15.1
+
+meta:
+  language: gql
+  model: lpg
+  section: "15.1"
+  title: INSERT clause
+  dataset: empty
+
+tests:
+
+  - name: insert_single_node
+    statements:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "MATCH (n:Person) RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: insert_node_label_only
+    statements:
+      - "INSERT (:Marker)"
+      - "MATCH (n:Marker) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: insert_multiple_labels
+    statements:
+      - "INSERT (:Person:Developer {name: 'Alix'})"
+      - "MATCH (n:Person:Developer) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: insert_multi_pattern
+    statements:
+      - "INSERT (:Person {name: 'Alix'}), (:City {name: 'Amsterdam'})"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: insert_edge_inline
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})"
+      - "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a.name, b.name, r.since"
+    expect:
+      rows:
+        - [Alix, Gus, 2020]
+
+  - name: insert_edge_creates_two_nodes
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: match_then_insert_edge
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a)-[:KNOWS]->(b) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: match_insert_no_phantom_nodes
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: match_insert_edge_count
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH ()-[r:KNOWS]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [1]

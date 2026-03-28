@@ -1,0 +1,203 @@
+# GQL algebraic equivalence: semantically equivalent queries must return
+# identical results.
+#
+# Verifies that different syntactic forms of the same logical query produce
+# the same output, catching optimizer bugs, clause rewriting errors, and
+# evaluation order issues.
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.4"
+  title: Algebraic equivalence
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # WHERE vs inline property filter
+  # ---------------------------------------------------------------------------
+
+  - name: where_vs_inline_property_where
+    query: "MATCH (n:Person) WHERE n.name = 'Alix' RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: where_vs_inline_property_inline
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  # ---------------------------------------------------------------------------
+  # Comma-separated patterns (cross product)
+  # ---------------------------------------------------------------------------
+
+  - name: comma_separated_patterns
+    query: "MATCH (a:Person {name: 'Alix'}), (b:Company) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # FILTER vs WHERE equivalence
+  # ---------------------------------------------------------------------------
+
+  - name: filter_vs_where_filter
+    query: MATCH (n:Person) FILTER n.age > 28 RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: filter_vs_where_where
+    query: MATCH (n:Person) WHERE n.age > 28 RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # COUNT(*) vs COUNT(n) equivalence (no NULLs)
+  # ---------------------------------------------------------------------------
+
+  - name: count_star_vs_count_var_star
+    query: MATCH (n:Person) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  - name: count_star_vs_count_var_var
+    query: MATCH (n:Person) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # DISTINCT: RETURN DISTINCT vs WITH DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: distinct_in_return
+    query: MATCH (n:Person) RETURN DISTINCT n.city
+    expect:
+      count: 3
+
+  - name: distinct_via_with
+    query: |
+      MATCH (n:Person)
+      WITH DISTINCT n.city AS city
+      RETURN city
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY alias vs expression
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_alias
+    query: |
+      MATCH (n:Person)
+      RETURN n.name AS name, n.age AS age
+      ORDER BY age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: order_by_expression
+    query: |
+      MATCH (n:Person)
+      RETURN n.name AS name, n.age AS age
+      ORDER BY n.age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # LIMIT 0 returns empty
+  # ---------------------------------------------------------------------------
+
+  - name: limit_zero_returns_empty
+    query: MATCH (n:Person) RETURN n.name LIMIT 0
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # SKIP >= total returns empty
+  # ---------------------------------------------------------------------------
+
+  - name: skip_beyond_total_returns_empty
+    query: MATCH (n:Person) RETURN n.name SKIP 100
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # UNWIND single-element list is identity
+  # ---------------------------------------------------------------------------
+
+  - name: unwind_single_element_identity
+    query: UNWIND [42] AS x RETURN x
+    expect:
+      rows:
+        - [42]
+
+  # ---------------------------------------------------------------------------
+  # WHERE + ORDER BY equivalence: filter then sort = sort then filter
+  # ---------------------------------------------------------------------------
+
+  - name: where_then_order
+    query: |
+      MATCH (n:Person) WHERE n.age > 28
+      RETURN n.name ORDER BY n.age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: match_all_then_with_filter_then_order
+    query: |
+      MATCH (n:Person)
+      WITH n WHERE n.age > 28
+      RETURN n.name ORDER BY n.age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation: GROUP BY in RETURN
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_in_return
+    query: |
+      MATCH (n:Person)
+      RETURN n.city AS city, count(n) AS cnt
+    expect:
+      rows:
+        - [Amsterdam, 1]
+        - [Berlin, 1]
+        - [Paris, 1]
+
+  # ---------------------------------------------------------------------------
+  # Element-level WHERE vs clause-level WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: element_where_equivalent
+    query: MATCH (n:Person WHERE n.age > 30) RETURN n.name
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: clause_where_equivalent
+    query: MATCH (n:Person) WHERE n.age > 30 RETURN n.name
+    expect:
+      rows:
+        - [Vincent]

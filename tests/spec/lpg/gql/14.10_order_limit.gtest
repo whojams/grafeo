@@ -1,0 +1,129 @@
+# GQL ORDER BY, LIMIT, SKIP/OFFSET, FETCH
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.10"
+  title: ORDER BY, LIMIT, SKIP, FETCH
+  dataset: social_network
+
+tests:
+
+  - name: order_by_asc
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Alix]
+        - [Vincent]
+
+  - name: order_by_desc
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age DESC
+    expect:
+      ordered: true
+      rows:
+        - [Vincent]
+        - [Alix]
+        - [Gus]
+
+  - name: order_by_default_asc
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Alix]
+        - [Vincent]
+
+  - name: order_by_string
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: order_by_nulls_first
+    setup:
+      - "INSERT (:Item {name: 'A', rank: 1})"
+      - "INSERT (:Item {name: 'B'})"
+      - "INSERT (:Item {name: 'C', rank: 3})"
+    query: MATCH (n:Item) RETURN n.name, n.rank ORDER BY n.rank ASC NULLS FIRST
+    expect:
+      ordered: true
+      rows:
+        - [B, null]
+        - [A, 1]
+        - [C, 3]
+
+  - name: order_by_nulls_last
+    setup:
+      - "INSERT (:Item {name: 'A', rank: 1})"
+      - "INSERT (:Item {name: 'B'})"
+      - "INSERT (:Item {name: 'C', rank: 3})"
+    query: MATCH (n:Item) RETURN n.name, n.rank ORDER BY n.rank ASC NULLS LAST
+    expect:
+      ordered: true
+      rows:
+        - [A, 1]
+        - [C, 3]
+        - [B, null]
+
+  - name: limit_restricts_rows
+    query: MATCH (n:Person) RETURN n.name LIMIT 2
+    expect:
+      count: 2
+
+  - name: limit_one_with_order
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC LIMIT 1
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+
+  - name: skip_rows
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC SKIP 1
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: skip_all
+    query: MATCH (n:Person) RETURN n.name SKIP 10
+    expect:
+      empty: true
+
+  - name: offset_synonym_for_skip
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC OFFSET 2
+    expect:
+      ordered: true
+      rows:
+        - [Vincent]
+
+  - name: skip_and_limit_pagination
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC SKIP 1 LIMIT 1
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+
+  - name: fetch_first_n_rows_only
+    query: MATCH (n:Person) RETURN n.name FETCH FIRST 2 ROWS ONLY
+    expect:
+      count: 2
+
+  - name: fetch_next_n_row_only
+    query: MATCH (n:Person) RETURN n.name FETCH NEXT 1 ROW ONLY
+    expect:
+      count: 1
+
+  - name: fetch_first_with_order_by
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC FETCH FIRST 2 ROWS ONLY
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Alix]

@@ -1,0 +1,93 @@
+# Regression tests: Unicode handling and type edge cases
+#
+# Covers emoji roundtrips, CJK characters, combining diacritics,
+# SUM overflow, float precision, and NULL coercion.
+
+meta:
+  language: gql
+  model: lpg
+  section: regression
+  title: Unicode and type edge cases
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Unicode property value roundtrips
+  # ---------------------------------------------------------------------------
+
+  - name: emoji_roundtrip
+    setup:
+      - "INSERT (:Tag {symbol: '\U0001F389', name: 'party'})"
+    query: MATCH (t:Tag) RETURN t.symbol, t.name
+    expect:
+      rows:
+        - ["\U0001F389", party]
+
+  - name: cjk_roundtrip
+    # Tokyo in kanji
+    setup:
+      - "INSERT (:City {name: '\u6771\u4EAC'})"
+    query: MATCH (c:City) RETURN c.name
+    expect:
+      rows:
+        - ["\u6771\u4EAC"]
+
+  - name: combining_diacritics_roundtrip
+    # e + combining acute accent (two codepoints)
+    setup:
+      - "INSERT (:Word {text: 'calf\u0065\u0301'})"
+    query: MATCH (w:Word) RETURN w.text
+    expect:
+      rows:
+        - ["calf\u0065\u0301"]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: sum_overflow_returns_infinity
+    query: |
+      UNWIND [1.7976931348623157e308, 1.7976931348623157e308] AS val
+      RETURN SUM(val) AS total
+    expect:
+      rows:
+        - [Infinity]
+
+  - name: count_on_empty_set
+    query: MATCH (n:NonExistent) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  - name: sum_on_empty_set
+    # SUM over empty set returns null per SQL/GQL semantics
+    query: MATCH (n:NonExistent) RETURN sum(n.val) AS total
+    expect:
+      rows:
+        - [null]
+
+  - name: collect_gathers_all_elements
+    setup:
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Jules'})"
+      - "INSERT (:Person {name: 'Mia'})"
+    query: MATCH (p:Person) RETURN collect(p.name) AS names
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Subquery aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: count_inside_call_subquery
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+    query: "CALL { MATCH (n:Person) RETURN count(n) AS cnt } RETURN cnt"
+    expect:
+      rows:
+        - [3]

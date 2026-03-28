@@ -1,0 +1,386 @@
+# Cypher extended functions: math, trigonometry, string, temporal, path, aggregation
+#
+# Tests functions from the openCypher specification not covered by functions.gtest.
+# Covers: log/exp/trig, ltrim/rtrim/char_length, stDev/percentile,
+#         temporal accessors, path node/relationship extraction.
+
+meta:
+  language: cypher
+  model: lpg
+  section: "6b"
+  title: Functions Extended
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Math Functions: log(), log10(), exp(), e(), pi()
+  # ---------------------------------------------------------------------------
+
+  - name: log_of_e
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN round(log(e()) * 1000) / 1000 AS r"
+    expect:
+      rows:
+        - [1]
+
+  - name: log10_of_100
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN log10(100) AS r"
+    expect:
+      rows:
+        - [2]
+
+  - name: exp_of_zero
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN exp(0) AS r"
+    expect:
+      rows:
+        - [1]
+
+  - name: e_constant
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN e() > 2.71 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: pi_constant
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN pi() > 3.14 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: rand_in_range
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN rand() >= 0 AND rand() <= 1 AS r"
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # Trigonometric Functions: sin, cos, tan, asin, acos, atan, atan2
+  # ---------------------------------------------------------------------------
+
+  - name: sin_of_zero
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN sin(0) AS r"
+    expect:
+      rows:
+        - [0]
+
+  - name: cos_of_zero
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN cos(0) AS r"
+    expect:
+      rows:
+        - [1]
+
+  - name: tan_of_zero
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN tan(0) AS r"
+    expect:
+      rows:
+        - [0]
+
+  - name: asin_of_one
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN asin(1) > 1.57 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: acos_of_one
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN acos(1) AS r"
+    expect:
+      rows:
+        - [0]
+
+  - name: atan_of_one
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN atan(1) > 0.78 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: atan2_unit
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN atan2(1, 1) > 0.78 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: degrees_from_pi
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN degrees(pi()) AS r"
+    expect:
+      rows:
+        - [180]
+
+  - name: radians_from_180
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN radians(180) > 3.14 AS r"
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # Extended String Functions: ltrim(), rtrim(), char_length()
+  # ---------------------------------------------------------------------------
+
+  - name: ltrim_whitespace
+    setup:
+      - "CREATE (:N {v: '  hello'})"
+    query: MATCH (n:N) RETURN ltrim(n.v) AS r
+    expect:
+      rows:
+        - [hello]
+
+  - name: rtrim_whitespace
+    setup:
+      - "CREATE (:N {v: 'hello  '})"
+    query: MATCH (n:N) RETURN rtrim(n.v) AS r
+    expect:
+      rows:
+        - [hello]
+
+  - name: char_length_string
+    setup:
+      - "CREATE (:N {v: 'hello'})"
+    query: MATCH (n:N) RETURN char_length(n.v) AS r
+    expect:
+      rows:
+        - [5]
+
+  - name: length_of_string
+    setup:
+      - "CREATE (:N {v: 'Amsterdam'})"
+    query: "MATCH (n:N) RETURN length(n.v) AS r"
+    expect:
+      rows:
+        - [9]
+
+  # ---------------------------------------------------------------------------
+  # Extended List Functions: reverse() on list, keys() on map
+  # ---------------------------------------------------------------------------
+
+  - name: reverse_list
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN reverse([1, 2, 3]) AS r"
+    expect:
+      rows:
+        - ["[3, 2, 1]"]
+
+  - name: keys_of_map
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size(keys({a: 1, b: 2})) AS r"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Extended Aggregation: stDev(), stDevP(), percentileCont(), percentileDisc()
+  # ---------------------------------------------------------------------------
+
+  - name: stdev_sample
+    setup:
+      - "CREATE (:N {v: 2})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 5})"
+      - "CREATE (:N {v: 5})"
+      - "CREATE (:N {v: 7})"
+      - "CREATE (:N {v: 9})"
+    query: "MATCH (n:N) RETURN stDev(n.v) > 0 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: stdevp_population
+    setup:
+      - "CREATE (:N {v: 2})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 5})"
+      - "CREATE (:N {v: 5})"
+      - "CREATE (:N {v: 7})"
+      - "CREATE (:N {v: 9})"
+    query: "MATCH (n:N) RETURN stDevP(n.v) > 0 AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: percentile_cont_median
+    setup:
+      - "CREATE (:N {v: 1})"
+      - "CREATE (:N {v: 2})"
+      - "CREATE (:N {v: 3})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 5})"
+    query: "MATCH (n:N) RETURN percentileCont(n.v, 0.5) AS r"
+    expect:
+      rows:
+        - [3]
+
+  - name: percentile_disc_median
+    setup:
+      - "CREATE (:N {v: 1})"
+      - "CREATE (:N {v: 2})"
+      - "CREATE (:N {v: 3})"
+      - "CREATE (:N {v: 4})"
+      - "CREATE (:N {v: 5})"
+    query: "MATCH (n:N) RETURN percentileDisc(n.v, 0.5) AS r"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Scalar Functions: elementId(), count(*)
+  # ---------------------------------------------------------------------------
+
+  - name: element_id_not_null
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN elementId(n) IS NOT NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: count_star
+    setup:
+      - "CREATE (:N {v: 1})"
+      - "CREATE (:N {v: 2})"
+    query: "MATCH (n:N) RETURN count(*) AS r"
+    expect:
+      rows:
+        - [2]
+
+  - name: count_expr
+    setup:
+      - "CREATE (:N {v: 1})"
+      - "CREATE (:N {v: 2})"
+    query: "MATCH (n:N) RETURN count(n) AS r"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Path Functions: nodes(), relationships()
+  # ---------------------------------------------------------------------------
+
+  - name: nodes_of_path
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})"
+    query: "MATCH p = (a:N {v: 1})-[:NEXT]->(b) RETURN size(nodes(p)) AS r"
+    expect:
+      rows:
+        - [2]
+
+  - name: relationships_of_path
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})"
+    query: "MATCH p = (a:N {v: 1})-[:NEXT]->(b) RETURN size(relationships(p)) AS r"
+    expect:
+      rows:
+        - [1]
+
+  - name: nodes_of_multi_hop_path
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+    query: "MATCH p = (a:N {v: 1})-[:NEXT*2]->(c:N {v: 3}) RETURN size(nodes(p)) AS r"
+    expect:
+      rows:
+        - [3]
+
+  - name: relationships_of_multi_hop_path
+    setup:
+      - "CREATE (:N {v: 1})-[:NEXT]->(:N {v: 2})-[:NEXT]->(:N {v: 3})"
+    query: "MATCH p = (a:N {v: 1})-[:NEXT*2]->(c:N {v: 3}) RETURN size(relationships(p)) AS r"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Temporal Accessors: year(), month(), day(), now(), date()
+  # ---------------------------------------------------------------------------
+
+  - name: date_no_args
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN date() IS NOT NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: now_returns_value
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN now() IS NOT NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: year_accessor
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN year(date('2024-03-15')) AS r"
+    expect:
+      rows:
+        - [2024]
+
+  - name: month_accessor
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN month(date('2024-03-15')) AS r"
+    expect:
+      rows:
+        - [3]
+
+  - name: day_accessor
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN day(date('2024-03-15')) AS r"
+    expect:
+      rows:
+        - [15]
+
+  - name: time_from_string
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN time('14:30:00') IS NOT NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # Duration Arithmetic
+  # ---------------------------------------------------------------------------
+
+  - name: duration_from_map
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN duration({years: 1, months: 6}) IS NOT NULL AS r"
+    expect:
+      rows:
+        - [true]

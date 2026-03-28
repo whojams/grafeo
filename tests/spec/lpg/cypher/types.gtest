@@ -1,0 +1,338 @@
+# Cypher type system: literals, collections, temporal types, graph element types
+#
+# Based on openCypher specification section 7 (Types).
+# Tests type-specific behavior not covered by expressions.gtest or functions.gtest.
+
+meta:
+  language: cypher
+  model: lpg
+  section: "7"
+  title: Types
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Integer Literals
+  # ---------------------------------------------------------------------------
+
+  - name: integer_decimal
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 42 AS r"
+    expect:
+      rows:
+        - [42]
+
+  - name: integer_negative
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN -17 AS r"
+    expect:
+      rows:
+        - [-17]
+
+  - name: integer_zero
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 0 AS r"
+    expect:
+      rows:
+        - [0]
+
+  - name: integer_hex
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 0xFF AS r"
+    expect:
+      rows:
+        - [255]
+
+  - name: integer_octal
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 0o77 AS r"
+    expect:
+      rows:
+        - [63]
+
+  # ---------------------------------------------------------------------------
+  # Float Literals
+  # ---------------------------------------------------------------------------
+
+  - name: float_decimal
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 3.14 AS r"
+    expect:
+      count: 1
+
+  - name: float_scientific
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 1.5e2 AS r"
+    expect:
+      rows:
+        - [150]
+
+  - name: float_negative
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN -2.5 AS r"
+    expect:
+      rows:
+        - [-2.5]
+
+  # ---------------------------------------------------------------------------
+  # String Literals
+  # ---------------------------------------------------------------------------
+
+  - name: string_single_quoted
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 'hello' AS r"
+    expect:
+      rows:
+        - [hello]
+
+  - name: string_double_quoted
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: 'MATCH (n:N) RETURN "hello" AS r'
+    expect:
+      rows:
+        - [hello]
+
+  - name: string_empty
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN '' AS r"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Boolean Literals
+  # ---------------------------------------------------------------------------
+
+  - name: boolean_true
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN true AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: boolean_false
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN false AS r"
+    expect:
+      rows:
+        - [false]
+
+  # ---------------------------------------------------------------------------
+  # Null
+  # ---------------------------------------------------------------------------
+
+  - name: null_literal
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN null AS r"
+    expect:
+      rows:
+        - [null]
+
+  - name: null_comparison_is_null
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN null IS NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: null_comparison_is_not_null
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN null IS NOT NULL AS r"
+    expect:
+      rows:
+        - [false]
+
+  - name: null_equality_returns_null
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN null = null IS NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: missing_property_is_null
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN n.nonexistent IS NULL AS r"
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # List Types
+  # ---------------------------------------------------------------------------
+
+  - name: list_of_integers
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [1, 2, 3] AS r"
+    expect:
+      rows:
+        - ["[1, 2, 3]"]
+
+  - name: list_empty
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [] AS r"
+    expect:
+      rows:
+        - ["[]"]
+
+  - name: list_nested
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [[1, 2], [3, 4]] AS r"
+    expect:
+      count: 1
+
+  - name: list_size
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size([10, 20, 30, 40]) AS r"
+    expect:
+      rows:
+        - [4]
+
+  # ---------------------------------------------------------------------------
+  # Map Types
+  # ---------------------------------------------------------------------------
+
+  - name: map_literal
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN {name: 'Alix', age: 30} AS r"
+    expect:
+      count: 1
+
+  - name: map_key_count
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN size(keys({name: 'Alix', age: 30})) AS r"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Graph Element Types (node, relationship, path)
+  # ---------------------------------------------------------------------------
+
+  - name: node_return
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN n"
+    expect:
+      count: 1
+
+  - name: relationship_return
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})"
+    query: "MATCH ()-[r:KNOWS]->() RETURN r"
+    expect:
+      count: 1
+
+  - name: path_return
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH p = (:Person)-[:KNOWS]->(:Person) RETURN p"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Temporal Types
+  # ---------------------------------------------------------------------------
+
+  - name: date_from_string
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN date('2024-01-15') AS r"
+    expect:
+      rows:
+        - [2024-01-15]
+
+  - name: time_from_string
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN time('14:30:00') AS r"
+    expect:
+      count: 1
+
+  - name: datetime_from_string
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN datetime('2024-01-15T14:30:00') AS r"
+    expect:
+      count: 1
+
+  - name: duration_from_string
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN duration('P1Y2M3D') AS r"
+    expect:
+      count: 1
+
+  - name: date_stored_as_property
+    setup:
+      - "CREATE (:Event {name: 'Launch', day: date('2024-06-15')})"
+    query: "MATCH (e:Event {name: 'Launch'}) RETURN e.day"
+    expect:
+      rows:
+        - [2024-06-15]
+
+  # ---------------------------------------------------------------------------
+  # Type Coercion and Conversion
+  # ---------------------------------------------------------------------------
+
+  - name: integer_to_float_arithmetic
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 10 / 3.0 AS r"
+    expect:
+      count: 1
+
+  - name: to_integer_truncation
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN toInteger(9.7) AS r"
+    expect:
+      rows:
+        - [9]
+
+  - name: to_float_from_integer
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN toFloat(42) AS r"
+    expect:
+      rows:
+        - [42]
+
+  - name: to_string_from_boolean
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN toString(true) AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: to_boolean_from_string_false
+    setup:
+      - "CREATE (:N {v: 'false'})"
+    query: MATCH (n:N) RETURN toBoolean(n.v) AS r
+    expect:
+      rows:
+        - [false]

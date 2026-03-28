@@ -1,0 +1,318 @@
+# GQL Advanced Aggregation: ISO/IEC 39075:2024 sec 19.2
+#
+# Covers: group_concat, listagg, sample, variance, var_pop,
+# HAVING clause, wrapped aggregates, list predicates (all, any),
+# NULLIF, mixed aggregates with GROUP BY.
+
+meta:
+  language: gql
+  model: lpg
+  section: "19.2"
+  title: Advanced aggregation
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # group_concat
+  # ---------------------------------------------------------------------------
+
+  - name: group_concat_default_separator
+    setup:
+      - "INSERT (:Data {name: 'Alix', x: 1.0, score: 10})"
+      - "INSERT (:Data {name: 'Gus', x: 2.0, score: 20})"
+      - "INSERT (:Data {name: 'Vincent', x: 3.0, score: 30})"
+    query: "MATCH (d:Data) RETURN group_concat(d.name) AS names"
+    expect:
+      count: 1
+
+  - name: group_concat_custom_separator
+    setup:
+      - "INSERT (:Data {name: 'Alix'})"
+      - "INSERT (:Data {name: 'Gus'})"
+      - "INSERT (:Data {name: 'Vincent'})"
+    query: "MATCH (d:Data) RETURN group_concat(d.name, ';') AS names"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # listagg
+  # ---------------------------------------------------------------------------
+
+  - name: listagg_default_comma
+    setup:
+      - "INSERT (:Data {name: 'Alix'})"
+      - "INSERT (:Data {name: 'Gus'})"
+      - "INSERT (:Data {name: 'Vincent'})"
+    query: "MATCH (d:Data) RETURN listagg(d.name) AS names"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # sample
+  # ---------------------------------------------------------------------------
+
+  - name: sample_returns_one_value
+    setup:
+      - "INSERT (:Data {name: 'Alix'})"
+      - "INSERT (:Data {name: 'Gus'})"
+      - "INSERT (:Data {name: 'Vincent'})"
+    query: "MATCH (d:Data) RETURN sample(d.name) AS picked"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # variance / var_pop with numeric validation
+  # ---------------------------------------------------------------------------
+
+  # Sample variance of [10,20,30,40,50]: mean=30, sum_sq_dev=1000, n-1=4, result=250
+  - name: variance_sample_numeric
+    setup:
+      - "INSERT (:Data {score: 10})"
+      - "INSERT (:Data {score: 20})"
+      - "INSERT (:Data {score: 30})"
+      - "INSERT (:Data {score: 40})"
+      - "INSERT (:Data {score: 50})"
+    query: "MATCH (d:Data) RETURN variance(d.score) AS v"
+    expect:
+      rows:
+        - [250]
+
+  # Population variance of [10,20,30,40,50]: sum_sq_dev=1000, n=5, result=200
+  - name: var_pop_numeric
+    setup:
+      - "INSERT (:Data {score: 10})"
+      - "INSERT (:Data {score: 20})"
+      - "INSERT (:Data {score: 30})"
+      - "INSERT (:Data {score: 40})"
+      - "INSERT (:Data {score: 50})"
+    query: "MATCH (d:Data) RETURN var_pop(d.score) AS vp"
+    expect:
+      rows:
+        - [200]
+
+  # ---------------------------------------------------------------------------
+  # HAVING clause
+  # ---------------------------------------------------------------------------
+
+  - name: having_filters_groups
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+      - "INSERT (:Person {name: 'Jules', city: 'Berlin'})"
+      - "INSERT (:Person {name: 'Mia', city: 'Paris'})"
+    query: "MATCH (p:Person) RETURN p.city AS city, count(p) AS cnt ORDER BY city HAVING cnt > 1"
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, 2]
+        - [Berlin, 2]
+
+  # All groups have cnt=1, none pass the HAVING threshold
+  - name: having_no_matching_groups
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+    query: "MATCH (c:City) RETURN c.name AS name, count(c) AS cnt HAVING cnt > 10"
+    expect:
+      empty: true
+
+  # HAVING with SUM: Engineering=170, Sales=110, Marketing=70
+  - name: having_with_sum_aggregate
+    setup:
+      - "INSERT (:Employee {name: 'Alix', dept: 'Engineering', salary: 90})"
+      - "INSERT (:Employee {name: 'Gus', dept: 'Engineering', salary: 80})"
+      - "INSERT (:Employee {name: 'Vincent', dept: 'Sales', salary: 50})"
+      - "INSERT (:Employee {name: 'Jules', dept: 'Sales', salary: 60})"
+      - "INSERT (:Employee {name: 'Mia', dept: 'Marketing', salary: 70})"
+    query: "MATCH (e:Employee) RETURN e.dept AS dept, sum(e.salary) AS total ORDER BY dept HAVING total > 100"
+    expect:
+      ordered: true
+      rows:
+        - [Engineering, 170]
+        - [Sales, 110]
+
+  # ---------------------------------------------------------------------------
+  # Mixed aggregates with GROUP BY: count + min + max per group
+  # ---------------------------------------------------------------------------
+
+  # Two groups of 2: Amsterdam (80,90) and Berlin (70,85)
+  - name: mixed_aggregates_group_by
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam', score: 80})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam', score: 90})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin', score: 70})"
+      - "INSERT (:Person {name: 'Jules', city: 'Berlin', score: 85})"
+    query: "MATCH (p:Person) RETURN p.city AS city, count(p) AS cnt, min(p.score) AS lo, max(p.score) AS hi ORDER BY city"
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, 2, 80, 90]
+        - [Berlin, 2, 70, 85]
+
+  # ---------------------------------------------------------------------------
+  # Wrapped aggregates (aggregate inside expression)
+  # ---------------------------------------------------------------------------
+
+  - name: wrapped_aggregate_count_gt_zero
+    setup:
+      - "INSERT (:Data {v: 1})"
+      - "INSERT (:Data {v: 2})"
+    query: "MATCH (d:Data) RETURN count(d) > 0 AS has_data"
+    expect:
+      rows:
+        - [true]
+
+  # sum([10..50]) - 10 = 150 - 10 = 140
+  - name: wrapped_aggregate_sum_minus_literal
+    setup:
+      - "INSERT (:Data {score: 10})"
+      - "INSERT (:Data {score: 20})"
+      - "INSERT (:Data {score: 30})"
+      - "INSERT (:Data {score: 40})"
+      - "INSERT (:Data {score: 50})"
+    query: "MATCH (d:Data) RETURN sum(d.score) - 10 AS adjusted"
+    expect:
+      rows:
+        - [140]
+
+  # NOT wrapping an aggregate comparison: 5 nodes, count(d)=5, 5 > 100 is false, NOT false = true
+  - name: wrapped_aggregate_not_count_gt_threshold
+    setup:
+      - "INSERT (:Data {v: 1})"
+      - "INSERT (:Data {v: 2})"
+      - "INSERT (:Data {v: 3})"
+      - "INSERT (:Data {v: 4})"
+      - "INSERT (:Data {v: 5})"
+    query: "MATCH (d:Data) RETURN NOT (count(d) > 100) AS few"
+    expect:
+      rows:
+        - [true]
+
+  # Literal on the left side of binary with aggregate on the right: 100 + 5 = 105
+  - name: wrapped_aggregate_literal_plus_count
+    setup:
+      - "INSERT (:Data {v: 1})"
+      - "INSERT (:Data {v: 2})"
+      - "INSERT (:Data {v: 3})"
+      - "INSERT (:Data {v: 4})"
+      - "INSERT (:Data {v: 5})"
+    query: "MATCH (d:Data) RETURN 100 + count(d) AS total"
+    expect:
+      rows:
+        - [105]
+
+  # ---------------------------------------------------------------------------
+  # NULLIF expression
+  # ---------------------------------------------------------------------------
+
+  # NULLIF returns NULL when both args equal, otherwise the first arg.
+  # Scores: 10,20,30,40,50 ordered by x. First row (score=10) matches NULLIF second arg.
+  - name: nullif_returns_null_on_match
+    setup:
+      - "INSERT (:Data {x: 1.0, score: 10})"
+      - "INSERT (:Data {x: 2.0, score: 20})"
+      - "INSERT (:Data {x: 3.0, score: 30})"
+    query: "MATCH (d:Data) RETURN nullif(d.score, 10) AS v ORDER BY d.x"
+    expect:
+      ordered: true
+      rows:
+        - [null]
+        - [20]
+        - [30]
+
+  # ---------------------------------------------------------------------------
+  # List predicates
+  # ---------------------------------------------------------------------------
+
+  - name: list_predicate_all
+    setup:
+      - "INSERT (:Flag {v: 1})"
+    query: "MATCH (f:Flag) WHERE all(x IN [2, 4, 6] WHERE x % 2 = 0) RETURN f.v AS v"
+    expect:
+      rows:
+        - [1]
+
+  - name: list_predicate_any
+    setup:
+      - "INSERT (:Flag {v: 1})"
+    query: "MATCH (f:Flag) WHERE any(x IN [1, 2, 3] WHERE x > 2) RETURN f.v AS v"
+    expect:
+      rows:
+        - [1]
+
+  - name: list_predicate_all_false
+    setup:
+      - "INSERT (:Flag {v: 1})"
+    query: "MATCH (f:Flag) WHERE all(x IN [1, 3, 5] WHERE x % 2 = 0) RETURN f.v AS v"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # COUNT(DISTINCT x) with specific expected value
+  # ---------------------------------------------------------------------------
+
+  # 5 nodes with 3 distinct city names
+  - name: count_distinct_cities
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+    query: "MATCH (c:City) RETURN count(DISTINCT c.name) AS unique_cities"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # COUNT(expr) that excludes NULLs
+  # ---------------------------------------------------------------------------
+
+  # 3 nodes, one has no val property (NULL), count(expr) should return 2
+  - name: count_expression_skips_null
+    setup:
+      - "INSERT (:Item {val: 1})"
+      - "INSERT (:Item {})"
+      - "INSERT (:Item {val: 3})"
+    query: "MATCH (i:Item) RETURN count(i.val) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY aggregate alias
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_alias_after_aggregation
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Berlin'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+      - "INSERT (:Person {name: 'Jules', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Mia', city: 'Paris'})"
+    query: "MATCH (p:Person) RETURN p.city AS city, count(p) AS cnt ORDER BY city"
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, 2]
+        - [Berlin, 2]
+        - [Paris, 1]
+
+  # ORDER BY aggregate alias DESC: Amsterdam(2), Berlin(2) first (tied), Paris(1) last
+  - name: order_by_aggregate_desc
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Berlin'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+      - "INSERT (:Person {name: 'Jules', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Mia', city: 'Paris'})"
+    query: "MATCH (p:Person) RETURN p.city AS city, count(p) AS cnt ORDER BY cnt DESC, city"
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, 2]
+        - [Berlin, 2]
+        - [Paris, 1]

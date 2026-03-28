@@ -1,0 +1,292 @@
+# Cypher reading clauses: MATCH, OPTIONAL MATCH, WHERE, WITH, UNWIND, UNION, CALL
+#
+# Converted from Python spec tests (test_01_reading_clauses.py).
+
+meta:
+  language: cypher
+  model: lpg
+  section: "1"
+  title: Reading Clauses
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # MATCH
+  # ---------------------------------------------------------------------------
+
+  - name: match_single_node
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: MATCH (n) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: match_by_label
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Animal {name: 'Rex'})"
+    query: MATCH (n:Person) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: match_by_property
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "CREATE (:Person {name: 'Gus', age: 25})"
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.age"
+    expect:
+      rows:
+        - [30]
+
+  - name: match_multi_label
+    setup:
+      - "CREATE (:Person:Developer {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: MATCH (n:Person:Developer) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: match_comma_patterns
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Company {name: 'Acme'})"
+    query: "MATCH (p:Person), (c:Company) RETURN p.name, c.name"
+    expect:
+      rows:
+        - [Alix, Acme]
+
+  - name: match_multiple_clauses
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:City {name: 'Amsterdam'})"
+    query: MATCH (p:Person) MATCH (c:City) RETURN p.name, c.name
+    expect:
+      rows:
+        - [Alix, Amsterdam]
+
+  - name: match_edge_outgoing
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: match_edge_incoming
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (b:Person)<-[:KNOWS]-(a:Person) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: match_edge_undirected
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a:Person {name: 'Alix'})-[:KNOWS]-(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL MATCH
+  # ---------------------------------------------------------------------------
+
+  - name: optional_match_with_result
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (a:Person {name: 'Alix'}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: optional_match_null
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: "MATCH (a:Person {name: 'Alix'}) OPTIONAL MATCH (a)-[:MANAGES]->(b) RETURN a.name, b"
+    expect:
+      rows:
+        - [Alix, null]
+
+  # ---------------------------------------------------------------------------
+  # WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: where_comparison
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "CREATE (:Person {name: 'Gus', age: 25})"
+    query: MATCH (n:Person) WHERE n.age > 28 RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: where_and
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30, city: 'Amsterdam'})"
+      - "CREATE (:Person {name: 'Gus', age: 25, city: 'Berlin'})"
+    query: "MATCH (n:Person) WHERE n.age > 20 AND n.city = 'Amsterdam' RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: where_or
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+      - "CREATE (:Person {name: 'Vincent'})"
+    query: "MATCH (n:Person) WHERE n.name = 'Alix' OR n.name = 'Gus' RETURN n.name"
+    expect:
+      count: 2
+
+  - name: where_not
+    setup:
+      - "CREATE (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "CREATE (:Person {name: 'Gus', city: 'Berlin'})"
+    query: "MATCH (n:Person) WHERE NOT n.city = 'Amsterdam' RETURN n.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: where_xor
+    setup:
+      - "CREATE (:Person {name: 'Alix', active: true, admin: false})"
+      - "CREATE (:Person {name: 'Gus', active: true, admin: true})"
+      - "CREATE (:Person {name: 'Vincent', active: false, admin: false})"
+    query: MATCH (n:Person) WHERE n.active XOR n.admin RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # WITH
+  # ---------------------------------------------------------------------------
+
+  - name: with_projection
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+    query: "MATCH (n:Person) WITH n.name AS name, n.age AS age RETURN name, age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: with_distinct
+    setup:
+      - "CREATE (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "CREATE (:Person {name: 'Gus', city: 'Amsterdam'})"
+    query: MATCH (n:Person) WITH DISTINCT n.city AS city RETURN city
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: with_where
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+      - "CREATE (:Person {name: 'Gus', age: 25})"
+    query: MATCH (n:Person) WITH n WHERE n.age > 28 RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: with_star
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: MATCH (n:Person) WITH * RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # UNWIND
+  # ---------------------------------------------------------------------------
+
+  - name: unwind_list
+    query: UNWIND [1, 2, 3] AS x RETURN x
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [2]
+        - [3]
+
+  - name: unwind_with_match
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: "UNWIND ['Alix', 'Gus'] AS name MATCH (n:Person {name: name}) RETURN n.name"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # UNION
+  # ---------------------------------------------------------------------------
+
+  - name: union
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:City {name: 'Amsterdam'})"
+    query: "MATCH (n:Person) RETURN n.name AS name UNION MATCH (c:City) RETURN c.name AS name"
+    expect:
+      count: 2
+
+  - name: union_all
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: "MATCH (n:Person) RETURN n.name AS name UNION ALL MATCH (n:Person) RETURN n.name AS name"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # CALL procedure
+  # ---------------------------------------------------------------------------
+
+  - name: call_db_labels
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:City {name: 'Amsterdam'})"
+    query: CALL db.labels() YIELD label
+    expect:
+      count: 2
+
+  - name: call_db_relationship_types
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: CALL db.relationshipTypes() YIELD relationshipType
+    expect:
+      count: 1
+
+  - name: call_db_property_keys
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+    query: CALL db.propertyKeys() YIELD propertyKey
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # CALL { subquery }
+  # ---------------------------------------------------------------------------
+
+  - name: call_subquery_basic
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: "CALL { MATCH (n:Person) RETURN count(n) AS total } RETURN total"
+    expect:
+      rows:
+        - [2]
+
+  - name: call_subquery_with_outer_scope
+    setup:
+      - "CREATE (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      CALL { WITH p MATCH (p)-[:KNOWS]->(q) RETURN q.name AS friend }
+      RETURN p.name, friend
+    expect:
+      rows:
+        - [Alix, Gus]

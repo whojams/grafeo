@@ -1,0 +1,30 @@
+MATCH (n:Person) RETURN n.name ORDER BY n.age ASC
+MATCH (n:Person) RETURN n.name ORDER BY n.age DESC
+MATCH (n:Person) RETURN n.name ORDER BY n.age
+MATCH (n:Person) RETURN n.name ORDER BY n.name ASC
+MATCH (n:Item) RETURN n.name, n.rank ORDER BY n.rank ASC NULLS FIRST
+MATCH (n:Item) RETURN n.name, n.rank ORDER BY n.rank ASC NULLS LAST
+MATCH (n:Person) RETURN n.name LIMIT 2
+MATCH (n:Person) RETURN n.name ORDER BY n.age ASC LIMIT 1
+MATCH (n:Person) RETURN n.name ORDER BY n.age ASC SKIP 1
+MATCH (n:Person) RETURN n.name SKIP 10
+MATCH (n:Person) RETURN n.name ORDER BY n.age ASC OFFSET 2
+MATCH (n:Person) RETURN n.name ORDER BY n.age ASC SKIP 1 LIMIT 1
+MATCH (n:Person) RETURN n.name FETCH FIRST 2 ROWS ONLY
+MATCH (n:Person) RETURN n.name FETCH NEXT 1 ROW ONLY
+MATCH (n:Person) RETURN n.name ORDER BY n.age ASC FETCH FIRST 2 ROWS ONLY
+MATCH (n:Person {name: 'Alix'}) WITH n RETURN n.name
+MATCH (n:Person) WITH * RETURN n.name
+MATCH (n:Person) WITH * WHERE n.age > 28 RETURN n.name
+UNWIND [1, 2, 3] AS x RETURN x
+UNWIND ['Alix', 'Gus', 'Vincent'] AS name RETURN name
+UNWIND [] AS x RETURN x
+MATCH (n:Item) UNWIND n.tags AS tag RETURN tag
+UNWIND [1, 2, 3, 4, 5] AS x RETURN count(x) AS cnt
+UNWIND [10, 20, 30] AS x RETURN sum(x) AS total
+UNWIND [1, 2, 3, 4, 5] AS x WHERE x > 3 RETURN x
+UNWIND [1, 2, 3] AS x RETURN x * 10 AS val
+MATCH (n:Person) RETURN n.name UNION ALL MATCH (n:City) RETURN n.name
+MATCH (n:Person) RETURN n.name UNION DISTINCT MATCH (n:City) RETURN n.name
+MATCH (n:Person) RETURN n.name UNION ALL MATCH (n:City) RETURN n.name
+MATCH (n:N) RETURN n.v EXCEPT MATCH (m:M) RETURN m.v

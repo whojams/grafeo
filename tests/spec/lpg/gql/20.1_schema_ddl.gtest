@@ -1,0 +1,194 @@
+# GQL Schema DDL: ISO/IEC 39075:2024 sec 20.1
+#
+# Covers: CREATE/DROP NODE TYPE, EDGE TYPE, GRAPH TYPE, SCHEMA,
+# ALTER types, NOT NULL constraints, CREATE OR REPLACE, full lifecycle.
+
+meta:
+  language: gql
+  model: lpg
+  section: "20.1"
+  title: Schema DDL
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # CREATE / DROP NODE TYPE
+  # ---------------------------------------------------------------------------
+
+  - name: create_node_type_and_insert
+    statements:
+      - "CREATE NODE TYPE Vehicle (make STRING NOT NULL, year INTEGER)"
+      - "INSERT (:Vehicle {make: 'Volvo', year: 2024})"
+      - "MATCH (v:Vehicle) RETURN v.make, v.year"
+    expect:
+      rows:
+        - [Volvo, 2024]
+
+  - name: drop_node_type
+    statements:
+      - "CREATE NODE TYPE Ephemeral (name STRING)"
+      - "DROP NODE TYPE Ephemeral"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: create_node_type_duplicate_fails
+    statements:
+      - "CREATE NODE TYPE Gadget (name STRING)"
+      - "CREATE NODE TYPE Gadget (name STRING)"
+    expect:
+      error: Gadget
+
+  - name: create_or_replace_node_type
+    statements:
+      - "CREATE NODE TYPE Widget (name STRING)"
+      - "CREATE OR REPLACE NODE TYPE Widget (name STRING, color STRING)"
+      - "INSERT (:Widget {name: 'cog', color: 'red'})"
+      - "MATCH (w:Widget) RETURN w.name, w.color"
+    expect:
+      rows:
+        - [cog, red]
+
+  - name: drop_nonexistent_node_type_fails
+    statements:
+      - "DROP NODE TYPE Nonexistent"
+    expect:
+      error: not found
+
+  # ---------------------------------------------------------------------------
+  # CREATE / DROP EDGE TYPE
+  # ---------------------------------------------------------------------------
+
+  - name: create_edge_type_and_drop
+    statements:
+      - "CREATE EDGE TYPE SUPPLIES (quantity INTEGER)"
+      - "DROP EDGE TYPE SUPPLIES"
+      - "MATCH ()-[r:SUPPLIES]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: create_or_replace_edge_type
+    statements:
+      - "CREATE EDGE TYPE RATES (stars INTEGER)"
+      - "CREATE OR REPLACE EDGE TYPE RATES (stars INTEGER, comment STRING)"
+      - "MATCH ()-[r:RATES]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # ALTER NODE TYPE: ADD / DROP PROPERTY
+  # ---------------------------------------------------------------------------
+
+  - name: alter_node_type_add_and_drop_property
+    statements:
+      - "CREATE NODE TYPE Sensor (id INTEGER NOT NULL)"
+      - "ALTER NODE TYPE Sensor ADD PROPERTY location STRING"
+      - "ALTER NODE TYPE Sensor DROP PROPERTY location"
+      - "INSERT (:Sensor {id: 1})"
+      - "MATCH (s:Sensor) RETURN s.id"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # ALTER EDGE TYPE: ADD / DROP PROPERTY
+  # ---------------------------------------------------------------------------
+
+  - name: alter_edge_type_add_and_drop_property
+    statements:
+      - "CREATE EDGE TYPE MONITORS (interval INTEGER)"
+      - "ALTER EDGE TYPE MONITORS ADD PROPERTY threshold FLOAT"
+      - "ALTER EDGE TYPE MONITORS DROP PROPERTY threshold"
+      - "MATCH ()-[r:MONITORS]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # CREATE / DROP GRAPH TYPE
+  # ---------------------------------------------------------------------------
+
+  - name: create_graph_type_and_drop
+    statements:
+      - "CREATE GRAPH TYPE temp_type (NODE TYPE Temp (v INTEGER))"
+      - "DROP GRAPH TYPE temp_type"
+      - "CREATE GRAPH TYPE temp_type (NODE TYPE Temp2 (v INTEGER))"
+      - "DROP GRAPH TYPE temp_type"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: alter_graph_type_add_drop_members
+    statements:
+      - "CREATE NODE TYPE Device (serial STRING)"
+      - "CREATE EDGE TYPE CONNECTS"
+      - "CREATE GRAPH TYPE iot_network (NODE TYPE Device)"
+      - "ALTER GRAPH TYPE iot_network ADD EDGE TYPE CONNECTS"
+      - "ALTER GRAPH TYPE iot_network DROP EDGE TYPE CONNECTS"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # CREATE / DROP SCHEMA
+  # ---------------------------------------------------------------------------
+
+  - name: create_and_drop_schema
+    statements:
+      - "CREATE SCHEMA analytics"
+      - "DROP SCHEMA analytics"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: create_duplicate_schema_fails
+    statements:
+      - "CREATE SCHEMA reporting"
+      - "CREATE SCHEMA reporting"
+    expect:
+      error: reporting
+
+  # ---------------------------------------------------------------------------
+  # NOT NULL constraints
+  # ---------------------------------------------------------------------------
+
+  - name: not_null_constraint_allows_valid_insert
+    statements:
+      - "CREATE NODE TYPE Invoice (number INTEGER NOT NULL, total FLOAT NOT NULL)"
+      - "INSERT (:Invoice {number: 42, total: 99.95})"
+      - "MATCH (i:Invoice) RETURN i.number, i.total"
+    expect:
+      rows:
+        - [42, 99.95]
+
+  - name: not_null_constraint_rejects_missing_property
+    statements:
+      - "CREATE NODE TYPE Account (owner STRING NOT NULL, balance INTEGER)"
+      - "INSERT (:Account {balance: 500})"
+    expect:
+      error: owner
+
+  # ---------------------------------------------------------------------------
+  # Full lifecycle: type -> graph type -> bind
+  # ---------------------------------------------------------------------------
+
+  - name: full_schema_lifecycle
+    statements:
+      - "CREATE NODE TYPE Employee (name STRING NOT NULL)"
+      - "CREATE EDGE TYPE REPORTS_TO"
+      - "CREATE GRAPH TYPE org_chart (NODE TYPE Employee, EDGE TYPE REPORTS_TO)"
+      - "CREATE GRAPH hr_graph TYPED org_chart"
+      - "DROP GRAPH TYPE org_chart"
+      - "DROP NODE TYPE Employee"
+      - "DROP EDGE TYPE REPORTS_TO"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]

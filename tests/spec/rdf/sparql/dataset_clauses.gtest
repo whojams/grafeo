@@ -1,0 +1,373 @@
+# SPARQL Dataset Clauses: W3C SPARQL 1.1 Query sec 13.1 and 13.2
+#
+# Covers: FROM clause (specifying default graph), FROM NAMED clause (specifying
+# named graphs), combined FROM + FROM NAMED, and edge cases around dataset
+# restriction. FROM and FROM NAMED are parsed but not yet enforced at execution
+# level, so most tests are marked skip.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "13.1"
+  title: Dataset Clauses (FROM / FROM NAMED)
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # FROM clause (Section 13.1): specifying the default graph
+  # ---------------------------------------------------------------------------
+
+  - name: from_specifies_default_graph
+    skip: "FROM clause not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/friends> {
+            <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+            <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/vincent> .
+          }
+        }
+    query: |
+      SELECT ?who
+      FROM <http://ex.org/friends>
+      WHERE {
+        <http://ex.org/alix> <http://ex.org/knows> ?who .
+      }
+    expect:
+      rows:
+        - [http://ex.org/gus]
+
+  - name: from_multiple_default_graphs
+    skip: "FROM clause not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/berlin> {
+            <http://ex.org/gus> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+    query: |
+      SELECT ?person ?city
+      FROM <http://ex.org/amsterdam>
+      FROM <http://ex.org/berlin>
+      WHERE {
+        ?person <http://ex.org/livesIn> ?city .
+      }
+    expect:
+      # Merge of both graphs into default: two results
+      count: 2
+
+  - name: from_restricts_visible_data
+    skip: "FROM clause not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/paris> {
+            <http://ex.org/mia> <http://ex.org/livesIn> "Paris" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/prague> {
+            <http://ex.org/jules> <http://ex.org/livesIn> "Prague" .
+          }
+        }
+    query: |
+      SELECT ?person ?city
+      FROM <http://ex.org/paris>
+      WHERE {
+        ?person <http://ex.org/livesIn> ?city .
+      }
+    expect:
+      # Only Paris data is visible as the default graph
+      rows:
+        - [http://ex.org/mia, Paris]
+
+  # ---------------------------------------------------------------------------
+  # FROM NAMED clause (Section 13.2): specifying named graphs
+  # ---------------------------------------------------------------------------
+
+  - name: from_named_restricts_named_graphs
+    skip: "FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/berlin> {
+            <http://ex.org/gus> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/paris> {
+            <http://ex.org/vincent> <http://ex.org/livesIn> "Paris" .
+          }
+        }
+    query: |
+      SELECT ?person ?city
+      FROM NAMED <http://ex.org/amsterdam>
+      WHERE {
+        GRAPH <http://ex.org/amsterdam> {
+          ?person <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      rows:
+        - [http://ex.org/alix, Amsterdam]
+
+  - name: from_named_multiple
+    skip: "FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/berlin> {
+            <http://ex.org/gus> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/barcelona> {
+            <http://ex.org/butch> <http://ex.org/livesIn> "Barcelona" .
+          }
+        }
+    query: |
+      SELECT ?g ?person ?city
+      FROM NAMED <http://ex.org/amsterdam>
+      FROM NAMED <http://ex.org/berlin>
+      WHERE {
+        GRAPH ?g {
+          ?person <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      # Only Amsterdam and Berlin graphs are visible, not Barcelona
+      count: 2
+
+  - name: from_named_with_graph_variable
+    skip: "FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/prague> {
+            <http://ex.org/jules> <http://ex.org/visited> "Prague" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/paris> {
+            <http://ex.org/mia> <http://ex.org/visited> "Paris" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/visited> "Amsterdam" .
+          }
+        }
+    query: |
+      SELECT ?g ?person
+      FROM NAMED <http://ex.org/prague>
+      FROM NAMED <http://ex.org/paris>
+      WHERE {
+        GRAPH ?g {
+          ?person <http://ex.org/visited> ?place .
+        }
+      }
+    expect:
+      # ?g enumerates only Prague and Paris, not Amsterdam
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Combined FROM + FROM NAMED (Section 13.2)
+  # ---------------------------------------------------------------------------
+
+  - name: from_and_from_named_combined
+    skip: "FROM and FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/people> {
+            <http://ex.org/alix> <http://ex.org/name> "Alix" .
+            <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/cities> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+            <http://ex.org/gus> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+    query: |
+      SELECT ?name ?city
+      FROM <http://ex.org/people>
+      FROM NAMED <http://ex.org/cities>
+      WHERE {
+        ?person <http://ex.org/name> ?name .
+        GRAPH <http://ex.org/cities> {
+          ?person <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      # Default graph from people, named graph from cities
+      count: 2
+
+  - name: from_named_without_graph_keyword
+    skip: "FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/scores> {
+            <http://ex.org/vincent> <http://ex.org/score> "42" .
+          }
+        }
+    query: |
+      SELECT ?score
+      FROM NAMED <http://ex.org/scores>
+      WHERE {
+        <http://ex.org/vincent> <http://ex.org/score> ?score .
+      }
+    expect:
+      # FROM NAMED data is not in the default graph, so without GRAPH it is invisible
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: from_nonexistent_graph
+    skip: "FROM clause not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/real> {
+            <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          }
+        }
+    query: |
+      SELECT ?s ?p ?o
+      FROM <http://ex.org/nonexistent>
+      WHERE {
+        ?s ?p ?o .
+      }
+    expect:
+      # FROM references a graph that does not exist: empty default graph
+      empty: true
+
+  - name: query_without_from_uses_all_data
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 2
+
+  - name: from_named_excludes_unlisted_graph
+    skip: "FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/berlin> {
+            <http://ex.org/gus> <http://ex.org/livesIn> "Berlin" .
+          }
+        }
+    query: |
+      SELECT ?city
+      FROM NAMED <http://ex.org/amsterdam>
+      WHERE {
+        GRAPH <http://ex.org/berlin> {
+          ?person <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      # Berlin is not listed in FROM NAMED, so it should be invisible
+      empty: true
+
+  - name: from_same_graph_twice_no_duplicates
+    skip: "FROM clause not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/data> {
+            <http://ex.org/butch> <http://ex.org/name> "Butch" .
+          }
+        }
+    query: |
+      SELECT ?name
+      FROM <http://ex.org/data>
+      FROM <http://ex.org/data>
+      WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+    expect:
+      # Listing the same IRI twice in FROM should not produce duplicate triples
+      rows:
+        - [Butch]
+
+  - name: from_named_graph_variable_binds_iri
+    skip: "FROM NAMED not enforced at execution level"
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/amsterdam> {
+            <http://ex.org/alix> <http://ex.org/livesIn> "Amsterdam" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/prague> {
+            <http://ex.org/jules> <http://ex.org/livesIn> "Prague" .
+          }
+        }
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/barcelona> {
+            <http://ex.org/mia> <http://ex.org/livesIn> "Barcelona" .
+          }
+        }
+    query: |
+      SELECT ?g
+      FROM NAMED <http://ex.org/amsterdam>
+      FROM NAMED <http://ex.org/prague>
+      WHERE {
+        GRAPH ?g {
+          ?person <http://ex.org/livesIn> ?city .
+        }
+      }
+    expect:
+      # ?g should bind only to the two specified graphs
+      count: 2

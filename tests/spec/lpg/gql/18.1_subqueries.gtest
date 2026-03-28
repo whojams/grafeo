@@ -1,0 +1,63 @@
+# GQL Subqueries: ISO/IEC 39075:2024 sec 18.1
+
+meta:
+  language: gql
+  model: lpg
+  section: "18.1"
+  title: Subqueries
+  dataset: empty
+
+tests:
+
+  - name: exists_basic
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+    query: "MATCH (p:Person) WHERE EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: not_exists_subquery
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    query: "MATCH (p:Person) WHERE NOT EXISTS { MATCH (p)-[:KNOWS]->() } RETURN p.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: exists_correlated_variable
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Berlin'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: |
+      MATCH (p:Person)
+      WHERE EXISTS {
+        MATCH (c:City) WHERE c.name = p.city
+      }
+      RETURN p.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: count_subquery_in_return
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}) INSERT (a)-[:KNOWS]->(:Person {name: 'Vincent'})"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      RETURN p.name, COUNT { MATCH (p)-[:KNOWS]->() } AS friend_count
+    expect:
+      rows:
+        - [Alix, 2]
+
+  - name: call_subquery_aggregation
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+    query: "CALL { MATCH (n:Person) RETURN count(n) AS total } RETURN total"
+    expect:
+      rows:
+        - [3]

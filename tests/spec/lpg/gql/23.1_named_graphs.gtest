@@ -1,0 +1,268 @@
+# GQL Named Graphs: ISO/IEC 39075:2024 sec 23.1
+#
+# Covers: CREATE GRAPH, CREATE GRAPH IF NOT EXISTS, DROP GRAPH,
+# DROP GRAPH IF EXISTS, USE GRAPH, data isolation between named graphs,
+# SESSION SET GRAPH, SESSION RESET, SHOW GRAPHS.
+
+meta:
+  language: gql
+  model: lpg
+  section: "23.1"
+  title: Named graphs
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # CREATE GRAPH
+  # ---------------------------------------------------------------------------
+
+  - name: create_graph_basic
+    statements:
+      - "CREATE GRAPH analytics"
+      - "SHOW GRAPHS"
+    expect:
+      rows:
+        - [analytics]
+
+  - name: create_graph_if_not_exists
+    statements:
+      - "CREATE GRAPH analytics"
+      - "CREATE GRAPH IF NOT EXISTS analytics"
+      - "SHOW GRAPHS"
+    expect:
+      rows:
+        - [analytics]
+
+  - name: create_graph_duplicate_fails
+    statements:
+      - "CREATE GRAPH analytics"
+      - "CREATE GRAPH analytics"
+    expect:
+      error: analytics
+
+  - name: create_multiple_graphs
+    statements:
+      - "CREATE GRAPH alpha"
+      - "CREATE GRAPH beta"
+      - "SHOW GRAPHS"
+    expect:
+      ordered: true
+      rows:
+        - [alpha]
+        - [beta]
+
+  # ---------------------------------------------------------------------------
+  # DROP GRAPH
+  # ---------------------------------------------------------------------------
+
+  - name: drop_graph_basic
+    statements:
+      - "CREATE GRAPH temp"
+      - "DROP GRAPH temp"
+      - "SHOW GRAPHS"
+    expect:
+      empty: true
+
+  - name: drop_graph_if_exists
+    statements:
+      - "DROP GRAPH IF EXISTS nonexistent"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: drop_graph_nonexistent_fails
+    statements:
+      - "DROP GRAPH nonexistent"
+    expect:
+      error: nonexistent
+
+  # ---------------------------------------------------------------------------
+  # USE GRAPH: data isolation
+  # ---------------------------------------------------------------------------
+
+  - name: use_graph_isolates_inserts
+    statements:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "CREATE GRAPH analytics"
+      - "USE GRAPH analytics"
+      - "INSERT (:Event {type: 'click'})"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: default_graph_unchanged_after_named_insert
+    statements:
+      - "CREATE GRAPH analytics"
+      - "USE GRAPH analytics"
+      - "INSERT (:Event {type: 'click'})"
+      - "USE GRAPH default"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: two_named_graphs_independent
+    statements:
+      - "CREATE GRAPH alpha"
+      - "CREATE GRAPH beta"
+      - "USE GRAPH alpha"
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "USE GRAPH beta"
+      - "INSERT (:Animal {species: 'Cat'})"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: switch_back_to_alpha_sees_two_nodes
+    statements:
+      - "CREATE GRAPH alpha"
+      - "CREATE GRAPH beta"
+      - "USE GRAPH alpha"
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "USE GRAPH beta"
+      - "INSERT (:Animal {species: 'Cat'})"
+      - "USE GRAPH alpha"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: default_empty_after_named_graph_inserts
+    statements:
+      - "CREATE GRAPH alpha"
+      - "CREATE GRAPH beta"
+      - "USE GRAPH alpha"
+      - "INSERT (:Person {name: 'Alix'})"
+      - "USE GRAPH beta"
+      - "INSERT (:Animal {species: 'Cat'})"
+      - "USE GRAPH default"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # Edge isolation
+  # ---------------------------------------------------------------------------
+
+  - name: edges_isolated_between_graphs
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "CREATE GRAPH social"
+      - "USE GRAPH social"
+      - "INSERT (:Person {name: 'Vincent'})-[:WORKS_WITH]->(:Person {name: 'Jules'})"
+      - "MATCH ()-[r]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: default_edge_still_exists
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "CREATE GRAPH social"
+      - "USE GRAPH social"
+      - "INSERT (:Person {name: 'Vincent'})-[:WORKS_WITH]->(:Person {name: 'Jules'})"
+      - "USE GRAPH default"
+      - "MATCH ()-[r]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # SESSION SET GRAPH / SESSION RESET
+  # ---------------------------------------------------------------------------
+
+  - name: session_set_graph_isolates
+    statements:
+      - "CREATE GRAPH mydb"
+      - "SESSION SET GRAPH mydb"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: session_set_graph_default_empty
+    statements:
+      - "CREATE GRAPH mydb"
+      - "SESSION SET GRAPH mydb"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "SESSION SET GRAPH default"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: session_reset_returns_to_default
+    statements:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "CREATE GRAPH other"
+      - "USE GRAPH other"
+      - "SESSION RESET"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # SHOW GRAPHS
+  # ---------------------------------------------------------------------------
+
+  - name: show_graphs_empty_initially
+    query: "SHOW GRAPHS"
+    expect:
+      empty: true
+
+  - name: show_graphs_sorted_alphabetically
+    statements:
+      - "CREATE GRAPH beta"
+      - "CREATE GRAPH alpha"
+      - "SHOW GRAPHS"
+    expect:
+      ordered: true
+      rows:
+        - [alpha]
+        - [beta]
+
+  - name: show_graphs_reflects_drop
+    statements:
+      - "CREATE GRAPH temp"
+      - "DROP GRAPH temp"
+      - "SHOW GRAPHS"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Drop active graph
+  # ---------------------------------------------------------------------------
+
+  - name: drop_active_graph_resets_to_default
+    statements:
+      - "CREATE GRAPH temp"
+      - "USE GRAPH temp"
+      - "INSERT (:Temp {val: 'ephemeral'})"
+      - "DROP GRAPH temp"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # Same query, different graph (cache isolation)
+  # ---------------------------------------------------------------------------
+
+  - name: same_query_different_graph
+    statements:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "CREATE GRAPH empty_g"
+      - "USE GRAPH empty_g"
+      - "MATCH (n) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]

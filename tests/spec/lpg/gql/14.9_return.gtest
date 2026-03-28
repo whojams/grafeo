@@ -1,0 +1,81 @@
+# GQL RETURN clause: ISO/IEC 39075:2024 sec 14.9
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.9"
+  title: RETURN clause
+  dataset: social_network
+
+tests:
+
+  - name: return_single_property
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: return_multiple_properties
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: return_count_aggregate
+    query: MATCH (n:Person) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  - name: return_alias
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.name AS person_name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: return_distinct_deduplicates
+    query: MATCH (n:Person) RETURN DISTINCT n.city
+    expect:
+      count: 3
+
+  - name: return_star_single_variable
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN *"
+    expect:
+      count: 1
+
+  - name: return_arithmetic_expression
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.age + 10 AS future_age"
+    expect:
+      rows:
+        - [40]
+
+  - name: return_string_function
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN toUpper(n.name) AS upper_name"
+    expect:
+      rows:
+        - [ALIX]
+
+  - name: return_boolean_expression
+    query: "MATCH (n:Person {name: 'Alix'}) RETURN n.age > 25 AS is_older"
+    expect:
+      rows:
+        - [true]
+
+  - name: return_case_expression
+    query: |
+      MATCH (n:Person {name: 'Alix'})
+      RETURN CASE WHEN n.age >= 30 THEN 'senior' ELSE 'junior' END AS level
+    expect:
+      rows:
+        - [senior]
+
+  - name: finish_returns_empty
+    query: MATCH (n:Person) FINISH
+    expect:
+      empty: true
+
+  - name: select_synonym_for_return
+    query: "MATCH (n:Person {name: 'Alix'}) SELECT n.name"
+    expect:
+      rows:
+        - [Alix]

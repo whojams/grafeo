@@ -1,0 +1,171 @@
+# SPARQL aggregation
+#
+# Covers: COUNT, SUM, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET.
+# Inspired by Oxigraph #646 (GROUP BY with HAVING returns 0 rows)
+# and RDF4J #1978 (aggregate on empty set behavior).
+
+meta:
+  language: sparql
+  model: rdf
+  section: aggregation
+  title: Aggregation and sorting
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # COUNT
+  # ---------------------------------------------------------------------------
+
+  - name: count_all_triples
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: "SELECT (COUNT(?s) AS ?cnt) WHERE { ?s <http://ex.org/name> ?o }"
+    expect:
+      rows:
+        - [3]
+
+  - name: count_on_empty_returns_zero
+    query: "SELECT (COUNT(?s) AS ?cnt) WHERE { ?s <http://ex.org/nonexistent> ?o }"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # SUM
+  # ---------------------------------------------------------------------------
+
+  - name: sum_numeric_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "10" .
+          <http://ex.org/b> <http://ex.org/val> "20" .
+          <http://ex.org/c> <http://ex.org/val> "30" .
+        }
+    query: "SELECT (SUM(?v) AS ?total) WHERE { ?s <http://ex.org/val> ?v }"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # GROUP BY
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_with_count
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/type> "Person" .
+          <http://ex.org/b> <http://ex.org/type> "Person" .
+          <http://ex.org/c> <http://ex.org/type> "City" .
+        }
+    query: |
+      SELECT ?t (COUNT(?s) AS ?cnt) WHERE {
+        ?s <http://ex.org/type> ?t
+      } GROUP BY ?t ORDER BY ?t
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # HAVING
+  # ---------------------------------------------------------------------------
+
+  - name: having_filters_groups
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/b> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/c> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?city (COUNT(?s) AS ?cnt) WHERE {
+        ?s <http://ex.org/city> ?city
+      } GROUP BY ?city
+      HAVING (COUNT(?s) > 1)
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_ascending
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/c> <http://ex.org/name> "Vincent" .
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+        }
+    query: "SELECT ?n WHERE { ?s <http://ex.org/name> ?n } ORDER BY ?n"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: order_by_descending
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/c> <http://ex.org/name> "Vincent" .
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+        }
+    query: "SELECT ?n WHERE { ?s <http://ex.org/name> ?n } ORDER BY DESC(?n)"
+    expect:
+      ordered: true
+      rows:
+        - [Vincent]
+        - [Gus]
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # LIMIT
+  # ---------------------------------------------------------------------------
+
+  - name: limit_restricts_results
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "1" .
+          <http://ex.org/b> <http://ex.org/val> "2" .
+          <http://ex.org/c> <http://ex.org/val> "3" .
+          <http://ex.org/d> <http://ex.org/val> "4" .
+          <http://ex.org/e> <http://ex.org/val> "5" .
+        }
+    query: "SELECT ?s WHERE { ?s <http://ex.org/val> ?v } LIMIT 3"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # OFFSET
+  # ---------------------------------------------------------------------------
+
+  - name: limit_with_offset
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+          <http://ex.org/c> <http://ex.org/name> "Jules" .
+          <http://ex.org/d> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n
+      } ORDER BY ?n LIMIT 2 OFFSET 1
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Jules]

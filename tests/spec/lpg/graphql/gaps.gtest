@@ -1,0 +1,161 @@
+# Known GraphQL LPG implementation gaps
+#
+# Covers: variable/parameter substitution, directive execution (@skip, @include),
+# multiple root fields, and aggregation. All tests here are skipped because
+# the features are not yet implemented. Expected results reflect correct behavior.
+
+meta:
+  language: graphql
+  model: lpg
+  title: GraphQL LPG implementation gaps
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # 1. Variable / Parameter Substitution
+  # ---------------------------------------------------------------------------
+
+  - name: variable_in_argument_position
+    skip: "Variable references ($var) in arguments resolve to Null, not wired to parameters"
+    query: "{ person(name: $name) { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: variable_declaration_syntax
+    skip: "Query-level variable declarations not parsed (query($name: String) syntax)"
+    query: "query($name: String) { person(name: $name) { name } }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: variable_in_nested_argument
+    skip: "Variable references in nested field arguments not resolved"
+    query: |
+      {
+        person {
+          name
+          knows(age_gt: $minAge) {
+            name
+          }
+        }
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # 2. Directive Execution
+  # ---------------------------------------------------------------------------
+
+  - name: skip_directive_true_excludes_field
+    skip: "@skip directive not executed, all fields returned regardless"
+    query: "{ person { name age @skip(if: true) } }"
+    expect:
+      columns: [name]
+
+  - name: skip_directive_false_includes_field
+    skip: "@skip(if: false) not evaluated, directive syntax ignored"
+    query: "{ person { name age @skip(if: false) } }"
+    expect:
+      columns: [name, age]
+
+  - name: include_directive_false_excludes_field
+    skip: "@include directive not executed, all fields returned regardless"
+    query: "{ person { name @include(if: false) age } }"
+    expect:
+      columns: [age]
+
+  - name: include_directive_true_includes_field
+    skip: "@include(if: true) not evaluated, directive syntax ignored"
+    query: "{ person { name @include(if: true) age } }"
+    expect:
+      columns: [name, age]
+
+  # ---------------------------------------------------------------------------
+  # 3. Multiple Root Fields
+  # ---------------------------------------------------------------------------
+
+  - name: two_root_fields_in_one_query
+    skip: "Only the first root field is executed, subsequent root fields are ignored"
+    query: "{ person { name } company { name } }"
+    expect:
+      count: 4
+
+  - name: three_root_fields
+    skip: "Multiple root fields not supported, only first selection set is processed"
+    query: "{ person { name } company { name } person { age } }"
+    expect:
+      count: 7
+
+  # ---------------------------------------------------------------------------
+  # 4. Aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: count_aggregate_field
+    skip: "No aggregation mechanism exposed via GraphQL (count, sum, avg not mapped)"
+    query: "{ personCount }"
+    expect:
+      rows:
+        - [3]
+
+  - name: sum_avg_on_numeric_fields
+    skip: "Numeric aggregation functions (sum, avg) have no GraphQL projection syntax"
+    query: "{ personAggregate { sum_age avg_age } }"
+    expect:
+      rows:
+        - [90, 30]
+
+  # ---------------------------------------------------------------------------
+  # 5. Deep nesting failure (4+ levels)
+  # ---------------------------------------------------------------------------
+
+  - name: deeply_nested_four_levels
+    skip: "4-level nesting fails with column resolution error (GRAFEO-V001)"
+    query: |
+      query {
+        person(name: "Alix") {
+          name
+          knows {
+            name
+            knows {
+              name
+              knows {
+                name
+              }
+            }
+          }
+        }
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 6. Variable with default value
+  # ---------------------------------------------------------------------------
+
+  - name: variable_with_default_value
+    skip: "Variable declarations with defaults not wired to parameter expressions"
+    query: "query($limit: Int = 2) { person(first: $limit) { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # 7. Subscription with fields
+  # ---------------------------------------------------------------------------
+
+  - name: subscription_with_selection
+    skip: "Subscriptions explicitly not supported"
+    query: "subscription { personCreated { name age } }"
+    expect:
+      error: "not supported"
+
+  # ---------------------------------------------------------------------------
+  # 8. Multiple root fields returning combined results
+  # ---------------------------------------------------------------------------
+
+  - name: multiple_root_fields_combined_results
+    skip: "Only first root field executed, subsequent silently dropped"
+    query: "{ person(name: \"Alix\") { name } company { name } }"
+    expect:
+      count: 2

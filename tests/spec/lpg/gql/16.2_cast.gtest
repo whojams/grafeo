@@ -1,0 +1,81 @@
+# GQL CAST expressions: ISO/IEC 39075:2024 sec 16.2
+
+meta:
+  language: gql
+  model: lpg
+  section: "16.2"
+  title: CAST expressions
+  dataset: empty
+
+tests:
+
+  - name: cast_string_to_int
+    setup:
+      - "INSERT (:N {v: '42'})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS INT) AS r"
+    expect:
+      rows:
+        - [42]
+
+  - name: cast_float_to_int
+    setup:
+      - "INSERT (:N {v: 3.7})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS INT) AS r"
+    expect:
+      rows:
+        - [3]
+
+  - name: cast_string_to_float
+    setup:
+      - "INSERT (:N {v: '3.14'})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS FLOAT) AS r"
+    expect:
+      rows:
+        - [3.14]
+
+  - name: cast_int_to_string
+    setup:
+      - "INSERT (:N {v: 42})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS STRING) AS r"
+    expect:
+      rows:
+        - [42]
+
+  - name: cast_string_true_to_boolean
+    setup:
+      - "INSERT (:N {v: 'true'})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS BOOLEAN) AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: cast_int_zero_to_boolean
+    setup:
+      - "INSERT (:N {v: 0})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS BOOLEAN) AS r"
+    expect:
+      rows:
+        - [null]
+
+  - name: cast_string_to_date
+    setup:
+      - "INSERT (:N {v: '2024-01-15'})"
+    query: "MATCH (n:N) RETURN CAST(n.v AS DATE) AS r"
+    expect:
+      rows:
+        - [2024-01-15]
+
+  - name: date_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-01-15' AS r"
+    expect:
+      rows:
+        - [2024-01-15]
+
+  - name: duration_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DURATION 'P1Y2M' AS r"
+    expect:
+      count: 1

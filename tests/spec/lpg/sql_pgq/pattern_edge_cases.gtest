@@ -1,0 +1,312 @@
+# SQL/PGQ pattern matching edge cases
+#
+# Covers: anonymous nodes/edges, edge type alternatives, incoming edges,
+# label-free matching, cross-label edges, multi-hop chains, comma-separated
+# patterns, LEFT JOIN edge cases, empty results, variable-length paths.
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: Pattern matching edge cases
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Anonymous nodes (no variable binding)
+  # ---------------------------------------------------------------------------
+
+  - name: anonymous_node_count
+    query: |
+      SELECT COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (:Person)
+        COLUMNS (1 AS one)
+      )
+    expect:
+      rows:
+        - [3]
+
+  - name: anonymous_edge_count
+    query: |
+      SELECT COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (:Person)-[:KNOWS]->(:Person)
+        COLUMNS (1 AS one)
+      )
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Edge type alternatives (KNOWS | WORKS_AT)
+  # ---------------------------------------------------------------------------
+
+  - name: edge_type_alternatives
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS|WORKS_AT]->(b)
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Gus, Vincent]
+        - [Alix, Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # Incoming edges (reverse direction)
+  # ---------------------------------------------------------------------------
+
+  - name: incoming_edge_direction
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)<-[e:KNOWS]-(b:Person)
+        COLUMNS (a.name AS target, b.name AS source)
+      )
+    expect:
+      rows:
+        - [Gus, Alix]
+        - [Vincent, Gus]
+
+  - name: incoming_edge_with_property
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)<-[e:KNOWS]-(b:Person)
+        COLUMNS (a.name AS target, b.name AS source, e.since AS year)
+      )
+    expect:
+      rows:
+        - [Gus, Alix, 2020]
+        - [Vincent, Gus, 2021]
+
+  # ---------------------------------------------------------------------------
+  # Node without label (match any node)
+  # ---------------------------------------------------------------------------
+
+  - name: match_any_node
+    query: |
+      SELECT COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (n)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [4]
+
+  # ---------------------------------------------------------------------------
+  # Cross-label edge patterns
+  # ---------------------------------------------------------------------------
+
+  - name: cross_label_works_at
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # Multi-hop chains
+  # ---------------------------------------------------------------------------
+
+  - name: two_hop_knows_chain
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person)
+        COLUMNS (a.name AS first, b.name AS middle, c.name AS last)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, Vincent]
+
+  - name: mixed_edge_types_chain
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[:KNOWS]->(f:Person), (p)-[:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, f.name AS friend, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # Multiple comma-separated patterns (cross product)
+  # ---------------------------------------------------------------------------
+
+  - name: cross_product_person_company
+    query: |
+      SELECT COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (a:Person), (b:Company)
+        COLUMNS (a.name AS person, b.name AS company)
+      )
+    expect:
+      rows:
+        - [3]
+
+  - name: cross_product_person_person
+    query: |
+      SELECT COUNT(*) AS cnt FROM GRAPH_TABLE (
+        MATCH (a:Person), (b:Person)
+        COLUMNS (a.name AS left_name, b.name AS right_name)
+      )
+    expect:
+      rows:
+        - [9]
+
+  # ---------------------------------------------------------------------------
+  # LEFT JOIN edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: left_outer_join_match
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)
+        LEFT OUTER JOIN MATCH (p)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+        - [Gus, null]
+        - [Vincent, null]
+
+  - name: left_join_without_outer_keyword
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)
+        LEFT JOIN MATCH (p)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+        - [Gus, null]
+        - [Vincent, null]
+
+  - name: two_left_joins
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)
+        LEFT JOIN MATCH (p)-[e:KNOWS]->(friend:Person)
+        LEFT JOIN MATCH (p)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS person, friend.name AS friend, c.name AS company)
+      )
+    expect:
+      count: 3
+
+  - name: left_join_all_nulls
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (c:Company)
+        LEFT JOIN MATCH (c)-[e:KNOWS]->(p:Person)
+        COLUMNS (c.name AS company, p.name AS person)
+      )
+    expect:
+      rows:
+        - [Grafeo OSS, null]
+
+  # ---------------------------------------------------------------------------
+  # Empty results
+  # ---------------------------------------------------------------------------
+
+  - name: non_existent_label
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:NonExistent)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      empty: true
+
+  - name: non_existent_edge_type
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:MARRIED_TO]->(b:Person)
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      empty: true
+
+  - name: where_filters_everything
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age > 100
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Edge without variable (type only)
+  # ---------------------------------------------------------------------------
+
+  - name: edge_type_no_variable
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Gus, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Variable-length path edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: exact_1_hop
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..1]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Gus, Vincent]
+
+  - name: exact_2_hops
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*2..2]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: range_exceeding_graph_depth
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*5..5]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      empty: true
+
+  - name: zero_to_n_hops
+    skip: "zero-length paths not yet implemented"
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*0..2]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      count: 6
+
+  - name: unbounded_upper_range
+    skip: "unbounded upper range not yet implemented"
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (src:Person)-[p:KNOWS*1..]->(dst:Person)
+        COLUMNS (src.name AS source, dst.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Alix, Vincent]
+        - [Gus, Vincent]

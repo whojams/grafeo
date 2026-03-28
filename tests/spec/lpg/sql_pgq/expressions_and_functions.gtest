@@ -1,0 +1,856 @@
+# SQL/PGQ expressions and functions
+#
+# Covers: arithmetic in COLUMNS, literals, string functions, math functions,
+# type conversion, comparison operators, logical operators, NULL arithmetic,
+# type coercion, statistical aggregates, nested functions, COALESCE, NULLIF,
+# and parameterized queries.
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: Expressions and functions
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Arithmetic in COLUMNS
+  # ---------------------------------------------------------------------------
+
+  - name: addition_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age + 10 AS age_plus)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 40]
+        - [Gus, 35]
+        - [Vincent, 45]
+
+  - name: subtraction_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age - 5 AS age_minus)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 25]
+        - [Gus, 20]
+        - [Vincent, 30]
+
+  - name: multiplication_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age * 2 AS age_doubled)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 60]
+        - [Gus, 50]
+        - [Vincent, 70]
+
+  - name: division_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age / 5 AS age_div)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 6]
+        - [Gus, 5]
+        - [Vincent, 7]
+
+  - name: modulo_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age % 10 AS age_mod)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 0]
+        - [Gus, 5]
+        - [Vincent, 5]
+
+  - name: complex_arithmetic_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, (n.age * 2) + 10 AS computed)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 70]
+        - [Gus, 60]
+        - [Vincent, 80]
+
+  # ---------------------------------------------------------------------------
+  # Literals in COLUMNS
+  # ---------------------------------------------------------------------------
+
+  - name: integer_literal_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.name AS name, 42 AS answer)
+      )
+    expect:
+      rows:
+        - [Alix, 42]
+
+  - name: string_literal_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.name AS name, 'active' AS status)
+      )
+    expect:
+      rows:
+        - [Alix, active]
+
+  - name: boolean_literal_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.name AS name, TRUE AS active)
+      )
+    expect:
+      rows:
+        - [Alix, true]
+
+  - name: null_literal_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.name AS name, NULL AS empty)
+      )
+    expect:
+      rows:
+        - [Alix, null]
+
+  - name: list_literal_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.name AS name, [1, 2, 3] AS nums)
+      )
+    expect:
+      rows:
+        - [Alix, "[1, 2, 3]"]
+
+  - name: map_literal_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.name AS name, {type: 'Person'} AS meta)
+      )
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # String functions
+  # ---------------------------------------------------------------------------
+
+  - name: upper_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (toUpper(n.name) AS upper_name)
+      ) AS g
+      ORDER BY g.upper_name ASC
+    expect:
+      ordered: true
+      rows:
+        - [ALIX]
+        - [GUS]
+        - [VINCENT]
+
+  - name: lower_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (toLower(n.name) AS lower_name)
+      ) AS g
+      ORDER BY g.lower_name ASC
+    expect:
+      ordered: true
+      rows:
+        - [alix]
+        - [gus]
+        - [vincent]
+
+  - name: trim_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (trim('  Alix  ') AS trimmed)
+      )
+    expect:
+      rows:
+        - [Alix]
+
+  - name: substring_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, substring(n.name, 0, 3) AS prefix)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Ali]
+        - [Gus, Gus]
+        - [Vincent, Vin]
+
+  - name: replace_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (replace(n.city, 'dam', 'DAM') AS replaced)
+      )
+    expect:
+      rows:
+        - [AmsterDAM]
+
+  - name: size_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, size(n.name) AS len)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 4]
+        - [Gus, 3]
+        - [Vincent, 7]
+
+  - name: char_length_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (char_length(n.name) AS len)
+      )
+    expect:
+      rows:
+        - [4]
+
+  - name: reverse_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (reverse(n.name) AS reversed)
+      )
+    expect:
+      rows:
+        - [xilA]
+
+  - name: string_concatenation
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name + ' from ' + n.city AS label)
+      ) AS g
+      ORDER BY g.label ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix from Amsterdam]
+        - [Gus from Berlin]
+        - [Vincent from Paris]
+
+  - name: to_string_conversion
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (toString(n.age) AS age_str)
+      )
+    expect:
+      rows:
+        - [30]
+
+  # ---------------------------------------------------------------------------
+  # Math functions
+  # ---------------------------------------------------------------------------
+
+  - name: abs_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, abs(n.age - 30) AS dist)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 0]
+        - [Gus, 5]
+        - [Vincent, 5]
+
+  - name: ceil_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (ceil(3.2) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: floor_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (floor(3.9) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: round_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (round(3.5) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: sqrt_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (sqrt(16) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: sign_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (sign(-7) AS val)
+      )
+    expect:
+      rows:
+        - [-1]
+
+  - name: power_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (power(3, 2) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: exp_of_zero
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (exp(0) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: log_function
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (log(2.718281828) AS val)
+      )
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Type conversion functions
+  # ---------------------------------------------------------------------------
+
+  - name: to_integer_from_float
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (toInteger(3.9) AS val)
+      )
+    expect:
+      rows:
+        - [3]
+
+  - name: to_float_from_int
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (toFloat(30) AS val)
+      )
+    expect:
+      rows:
+        - [30]
+
+  - name: to_boolean_from_string
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (toBoolean('true') AS val)
+      )
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # Comparison operators in WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: less_than_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age < 30
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Gus, 25]
+
+  - name: less_than_or_equal_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age <= 30
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: greater_than_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age > 30
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Vincent, 35]
+
+  - name: greater_than_or_equal_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age >= 30
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: equality_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age = 25
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Gus]
+
+  - name: not_equal_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age <> 30
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Gus, 25]
+        - [Vincent, 35]
+
+  - name: between_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age BETWEEN 25 AND 32
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: like_prefix_wildcard
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.name LIKE 'A%'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Alix]
+
+  - name: like_suffix_wildcard
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.name LIKE '%ent'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: like_single_char_wildcard
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.name LIKE '_lix'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Alix]
+
+  - name: is_null_predicate
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        OPTIONAL MATCH (n)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (n.name AS person, c.name AS company)
+      ) AS g
+      WHERE g.company IS NULL
+    expect:
+      rows:
+        - [Gus, null]
+        - [Vincent, null]
+
+  - name: is_not_null_predicate
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        OPTIONAL MATCH (n)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (n.name AS person, c.name AS company)
+      ) AS g
+      WHERE g.company IS NOT NULL
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+
+  - name: in_list_predicate
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.city IN ['Amsterdam', 'Paris']
+        COLUMNS (n.name AS name, n.city AS city)
+      )
+    expect:
+      rows:
+        - [Alix, Amsterdam]
+        - [Vincent, Paris]
+
+  # ---------------------------------------------------------------------------
+  # Logical operators
+  # ---------------------------------------------------------------------------
+
+  - name: and_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age > 25 AND n.city = 'Amsterdam'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Alix]
+
+  - name: or_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.city = 'Berlin' OR n.city = 'Paris'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: not_operator
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE NOT n.city = 'Amsterdam'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: combined_and_or_with_parens
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE (n.city = 'Amsterdam' AND n.age > 25) OR n.city = 'Paris'
+        COLUMNS (n.name AS name, n.age AS age, n.city AS city)
+      )
+    expect:
+      rows:
+        - [Alix, 30, Amsterdam]
+        - [Vincent, 35, Paris]
+
+  # ---------------------------------------------------------------------------
+  # NULL arithmetic
+  # ---------------------------------------------------------------------------
+
+  - name: null_plus_integer
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (NULL + 5 AS val)
+      )
+    expect:
+      rows:
+        - [null]
+
+  - name: null_times_float
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (NULL * 2.5 AS val)
+      )
+    expect:
+      rows:
+        - [null]
+
+  - name: null_equals_null_filters_out
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE NULL = NULL
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Type coercion
+  # ---------------------------------------------------------------------------
+
+  - name: int_compared_to_float
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age > 29.5
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: int_plus_float
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (n.age + 0.5 AS val)
+      )
+    expect:
+      rows:
+        - [30.5]
+
+  # ---------------------------------------------------------------------------
+  # Statistical aggregates
+  # ---------------------------------------------------------------------------
+
+  - name: stdev_aggregate
+    query: |
+      SELECT STDEV(age) AS sd FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.age AS age)
+      )
+    expect:
+      count: 1
+
+  - name: variance_aggregate
+    query: |
+      SELECT VARIANCE(age) AS var FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.age AS age)
+      )
+    expect:
+      count: 1
+
+  - name: collect_aggregate
+    query: |
+      SELECT COLLECT(name) AS names FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Nested functions
+  # ---------------------------------------------------------------------------
+
+  - name: lower_of_upper_roundtrip
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (toLower(toUpper(n.name)) AS name_lower)
+      ) AS g
+      ORDER BY g.name_lower ASC
+    expect:
+      ordered: true
+      rows:
+        - [alix]
+        - [gus]
+        - [vincent]
+
+  - name: ceil_of_abs_chained
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (ceil(abs(-3.7)) AS val)
+      )
+    expect:
+      count: 1
+
+  - name: upper_in_where_clause
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE toUpper(n.name) = 'ALIX'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # COALESCE
+  # ---------------------------------------------------------------------------
+
+  - name: coalesce_first_non_null
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        OPTIONAL MATCH (n)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (n.name AS person, COALESCE(c.name, 'none') AS company)
+      ) AS g
+      ORDER BY g.person ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Grafeo OSS]
+        - [Gus, none]
+        - [Vincent, none]
+
+  - name: coalesce_all_null_except_default
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Alix'})
+        COLUMNS (COALESCE(NULL, NULL, 'default') AS val)
+      )
+    expect:
+      rows:
+        - [default]
+
+  # ---------------------------------------------------------------------------
+  # NULLIF
+  # ---------------------------------------------------------------------------
+
+  - name: nullif_match_returns_null
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, NULLIF(n.name, 'Alix') AS filtered)
+      ) AS g
+      ORDER BY g.name ASC
+    expect:
+      ordered: true
+      rows:
+        - [Alix, null]
+        - [Gus, Gus]
+        - [Vincent, Vincent]
+
+  - name: nullif_no_match_returns_value
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person {name: 'Gus'})
+        COLUMNS (NULLIF(n.name, 'Alix') AS val)
+      )
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # Parameterized queries
+  # ---------------------------------------------------------------------------
+
+  - name: param_string_in_where
+    skip: "Test runner does not yet pass params to execute"
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.name = $name
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    params:
+      name: Alix
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: param_integer_in_where
+    skip: "Test runner does not yet pass params to execute"
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age > $min_age
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    params:
+      min_age: 28
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: param_multiple_in_where
+    skip: "Test runner does not yet pass params to execute"
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.age >= $min AND n.age <= $max
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    params:
+      min: 25
+      max: 32
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]

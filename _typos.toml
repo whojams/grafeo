@@ -20,6 +20,8 @@ fofName = "fofName"
 ue = "ue"
 # "$nin" = "not in" filter operator (MongoDB-style)
 nin = "nin"
+# "hel" = intentional property name for prefix-matching test (alongside "hello")
+hel = "hel"
 
 [default.extend-identifiers]
 abd = "abd"         # Levenshtein distance test input

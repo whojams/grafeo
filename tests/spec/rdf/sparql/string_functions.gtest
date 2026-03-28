@@ -1,0 +1,408 @@
+# SPARQL String Functions and Numeric Functions
+#
+# Covers: STRLEN, UCASE, LCASE, CONTAINS, STRSTARTS, STRENDS, CONCAT,
+# SUBSTR, REPLACE, REGEX, ABS, ROUND, FLOOR, CEIL.
+# Based on W3C SPARQL 1.1 Query specification sections 17.4.3 and 17.4.4.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "17.4.3"
+  title: String Functions
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # STRLEN (17.4.3.2)
+  # ---------------------------------------------------------------------------
+
+  - name: strlen_returns_length
+    skip: "STRLEN not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT (STRLEN(?name) AS ?len) WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - [4]
+
+  - name: strlen_empty_string
+    skip: "STRLEN not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/note> "" .
+        }
+    query: |
+      SELECT (STRLEN(?note) AS ?len) WHERE {
+        <http://ex.org/alix> <http://ex.org/note> ?note
+      }
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # UCASE (17.4.3.3)
+  # ---------------------------------------------------------------------------
+
+  - name: ucase_converts_to_uppercase
+    skip: "UCASE not yet evaluated by RDF executor"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT (UCASE(?name) AS ?upper) WHERE {
+        <http://ex.org/gus> <http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - [GUS]
+
+  # ---------------------------------------------------------------------------
+  # LCASE (17.4.3.4)
+  # ---------------------------------------------------------------------------
+
+  - name: lcase_converts_to_lowercase
+    skip: "LCASE not yet evaluated by RDF executor"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT (LCASE(?name) AS ?lower) WHERE {
+        <http://ex.org/vincent> <http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - [vincent]
+
+  # ---------------------------------------------------------------------------
+  # CONTAINS (17.4.3.6)
+  # ---------------------------------------------------------------------------
+
+  - name: contains_filters_matching_substring
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(CONTAINS(?name, "lix"))
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: contains_no_match_returns_empty
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(CONTAINS(?name, "zzz"))
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # STRSTARTS (17.4.3.7)
+  # ---------------------------------------------------------------------------
+
+  - name: strstarts_prefix_match
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STRSTARTS(?name, "Ju"))
+      }
+    expect:
+      rows:
+        - [Jules]
+
+  - name: strstarts_full_string_match
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STRSTARTS(?name, "Mia"))
+      }
+    expect:
+      rows:
+        - [Mia]
+
+  # ---------------------------------------------------------------------------
+  # STRENDS (17.4.3.8)
+  # ---------------------------------------------------------------------------
+
+  - name: strends_suffix_match
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STRENDS(?name, "tch"))
+      }
+    expect:
+      rows:
+        - [Butch]
+
+  # ---------------------------------------------------------------------------
+  # CONCAT (17.4.3.10)
+  # ---------------------------------------------------------------------------
+
+  - name: concat_two_variables_via_bind
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/first> "Alix" .
+          <http://ex.org/alix> <http://ex.org/last> "Amsterdam" .
+        }
+    query: |
+      SELECT ?full WHERE {
+        <http://ex.org/alix> <http://ex.org/first> ?first .
+        <http://ex.org/alix> <http://ex.org/last> ?last .
+        BIND(CONCAT(?first, " ", ?last) AS ?full)
+      }
+    expect:
+      rows:
+        - ["Alix Amsterdam"]
+
+  # ---------------------------------------------------------------------------
+  # SUBSTR (17.4.3.9)
+  # ---------------------------------------------------------------------------
+
+  - name: substr_from_position
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT (SUBSTR(?name, 1, 3) AS ?sub) WHERE {
+        <http://ex.org/vincent> <http://ex.org/name> ?name
+      }
+    expect:
+      count: 1
+
+  - name: substr_to_end
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT (SUBSTR(?name, 3) AS ?sub) WHERE {
+        <http://ex.org/jules> <http://ex.org/name> ?name
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # REPLACE (17.4.3.14)
+  # ---------------------------------------------------------------------------
+
+  - name: replace_substring
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT (REPLACE(?city, "dam", "DAM") AS ?replaced) WHERE {
+        <http://ex.org/alix> <http://ex.org/city> ?city
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # REGEX (17.4.3.13)
+  # ---------------------------------------------------------------------------
+
+  - name: regex_basic_pattern
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(REGEX(?name, "^V"))
+      }
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: regex_case_insensitive_flag
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(REGEX(?name, "mia", "i"))
+      }
+    expect:
+      rows:
+        - [Mia]
+
+  # ---------------------------------------------------------------------------
+  # ABS (17.4.4.1)
+  # ---------------------------------------------------------------------------
+
+  - name: abs_positive_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "42" .
+        }
+    query: |
+      SELECT (ABS(?v) AS ?result) WHERE {
+        <http://ex.org/a> <http://ex.org/val> ?v
+      }
+    expect:
+      count: 1
+
+  - name: abs_negative_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "-7" .
+        }
+    query: |
+      SELECT (ABS(?v) AS ?result) WHERE {
+        <http://ex.org/a> <http://ex.org/val> ?v
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # ROUND (17.4.4.2)
+  # ---------------------------------------------------------------------------
+
+  - name: round_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "3.7" .
+        }
+    query: |
+      SELECT (ROUND(?v) AS ?result) WHERE {
+        <http://ex.org/a> <http://ex.org/val> ?v
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # FLOOR (17.4.4.4)
+  # ---------------------------------------------------------------------------
+
+  - name: floor_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "5.9" .
+        }
+    query: |
+      SELECT (FLOOR(?v) AS ?result) WHERE {
+        <http://ex.org/a> <http://ex.org/val> ?v
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # CEIL (17.4.4.3)
+  # ---------------------------------------------------------------------------
+
+  - name: ceil_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "2.1" .
+        }
+    query: |
+      SELECT (CEIL(?v) AS ?result) WHERE {
+        <http://ex.org/a> <http://ex.org/val> ?v
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Combined: STRLEN in FILTER
+  # ---------------------------------------------------------------------------
+
+  - name: strlen_in_filter
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name
+        FILTER(STRLEN(?name) > 3)
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Combined: CONTAINS with multiple matches
+  # ---------------------------------------------------------------------------
+
+  - name: contains_multiple_matches
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/amsterdam> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/berlin> <http://ex.org/city> "Berlin" .
+          <http://ex.org/barcelona> <http://ex.org/city> "Barcelona" .
+          <http://ex.org/paris> <http://ex.org/city> "Paris" .
+        }
+    query: |
+      SELECT ?city WHERE {
+        ?s <http://ex.org/city> ?city
+        FILTER(CONTAINS(?city, "ar"))
+      }
+    expect:
+      count: 2

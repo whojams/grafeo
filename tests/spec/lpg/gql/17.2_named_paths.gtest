@@ -1,0 +1,163 @@
+# GQL Named Paths: ISO/IEC 39075:2024 sec 17.2
+#
+# Covers: path variable assignment, length(p), nodes(p), edges(p),
+# multi-hop path length, path as return value.
+
+meta:
+  language: gql
+  model: lpg
+  section: "17.2"
+  title: Named paths
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Path variable assignment
+  # ---------------------------------------------------------------------------
+
+  - name: path_assignment_single_hop
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [1]
+
+  - name: path_as_return_value
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN p"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # length(p) function
+  # ---------------------------------------------------------------------------
+
+  - name: path_length_single_hop
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [1]
+
+  - name: path_length_two_hops
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'}) INSERT (b)-[:KNOWS]->(c)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS*]->(c:Person {name: 'Vincent'}) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [2]
+
+  - name: path_length_variable_length
+    setup:
+      - "INSERT (:Node {name: 'A'})"
+      - "INSERT (:Node {name: 'B'})"
+      - "INSERT (:Node {name: 'C'})"
+      - "INSERT (:Node {name: 'D'})"
+      - "INSERT (:Node {name: 'E'})"
+      - "MATCH (a:Node {name: 'A'}), (b:Node {name: 'B'}) INSERT (a)-[:LINK]->(b)"
+      - "MATCH (b:Node {name: 'B'}), (c:Node {name: 'C'}) INSERT (b)-[:LINK]->(c)"
+      - "MATCH (c:Node {name: 'C'}), (d:Node {name: 'D'}) INSERT (c)-[:LINK]->(d)"
+      - "MATCH (d:Node {name: 'D'}), (e:Node {name: 'E'}) INSERT (d)-[:LINK]->(e)"
+    query: "MATCH p = (a:Node {name: 'A'})-[:LINK *1..4]->(b:Node {name: 'E'}) RETURN length(p) AS len"
+    expect:
+      rows:
+        - [4]
+
+  # ---------------------------------------------------------------------------
+  # nodes(p) function
+  # ---------------------------------------------------------------------------
+
+  - name: path_nodes_single_hop
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN nodes(p) AS node_list"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # edges(p) function
+  # ---------------------------------------------------------------------------
+
+  - name: path_edges_single_hop
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN edges(p) AS edge_list"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Path predicates: isAcyclic, isSimple, isTrail
+  # ---------------------------------------------------------------------------
+
+  - name: path_is_acyclic_simple_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN isAcyclic(p) AS result"
+    expect:
+      rows:
+        - [true]
+
+  - name: path_is_simple_simple_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN isSimple(p) AS result"
+    expect:
+      rows:
+        - [true]
+
+  - name: path_is_trail_simple_path
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person) RETURN isTrail(p) AS result"
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # Subpath variable with quantified pattern
+  # ---------------------------------------------------------------------------
+
+  - name: subpath_variable_with_length
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (b:Person {name: 'Gus'}), (c:Person {name: 'Vincent'}) INSERT (b)-[:KNOWS]->(c)"
+    query: "MATCH (p = (a:Person {name: 'Alix'})-[:KNOWS]->(b)){1,1} RETURN length(p) AS len"
+    expect:
+      rows:
+        - [1]
+
+  - name: subpath_variable_nodes_function
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "MATCH (p = (a:Person {name: 'Alix'})-[:KNOWS]->(b)){1,1} RETURN nodes(p) AS ns"
+    expect:
+      count: 1

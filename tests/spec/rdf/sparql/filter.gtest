@@ -1,0 +1,194 @@
+# SPARQL FILTER clause
+#
+# Covers: numeric comparison, string equality, logical AND/OR,
+# REGEX, FILTER NOT EXISTS, FILTER EXISTS.
+# Inspired by Blazegraph and Jena filter evaluation bugs.
+
+meta:
+  language: sparql
+  model: rdf
+  section: filter
+  title: FILTER clause
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Numeric comparison
+  # ---------------------------------------------------------------------------
+
+  - name: filter_greater_than
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "10" .
+          <http://ex.org/b> <http://ex.org/val> "20" .
+          <http://ex.org/c> <http://ex.org/val> "30" .
+        }
+    query: "SELECT ?v WHERE { ?s <http://ex.org/val> ?v FILTER(?v > \"15\") }"
+    expect:
+      count: 2
+
+  - name: filter_less_than
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "10" .
+          <http://ex.org/b> <http://ex.org/val> "20" .
+          <http://ex.org/c> <http://ex.org/val> "30" .
+        }
+    query: "SELECT ?v WHERE { ?s <http://ex.org/val> ?v FILTER(?v < \"25\") }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # String equality
+  # ---------------------------------------------------------------------------
+
+  - name: filter_string_equals
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: "SELECT ?name WHERE { ?s <http://ex.org/name> ?name FILTER(?name = \"Alix\") }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Logical AND
+  # ---------------------------------------------------------------------------
+
+  - name: filter_logical_and
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/age> "35" .
+          <http://ex.org/vincent> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/age> ?age .
+        ?s <http://ex.org/city> ?city .
+        FILTER (?city = "Amsterdam" && ?age > "31")
+      }
+    expect:
+      rows:
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Logical OR
+  # ---------------------------------------------------------------------------
+
+  - name: filter_logical_or
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+        FILTER (?city = "Berlin" || ?city = "Paris")
+      }
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # REGEX
+  # ---------------------------------------------------------------------------
+
+  - name: filter_regex_starts_with
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n
+        FILTER(REGEX(?n, "^A"))
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: filter_regex_case_insensitive
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n
+        FILTER(REGEX(?n, "alix", "i"))
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # FILTER NOT EXISTS
+  # ---------------------------------------------------------------------------
+
+  - name: filter_not_exists
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n .
+        FILTER NOT EXISTS { ?s <http://ex.org/age> ?a }
+      }
+    expect:
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # FILTER EXISTS
+  # ---------------------------------------------------------------------------
+
+  - name: filter_exists
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?n WHERE {
+        ?s <http://ex.org/name> ?n .
+        FILTER EXISTS { ?s <http://ex.org/age> ?a }
+      }
+    expect:
+      rows:
+        - [Alix]

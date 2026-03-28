@@ -1,0 +1,153 @@
+# SPARQL UNION and MINUS
+#
+# Covers: UNION combining two branches, UNION with disjoint variables,
+# MINUS excluding matching solutions.
+# Inspired by Blazegraph and Jena UNION/MINUS handling bugs.
+
+meta:
+  language: sparql
+  model: rdf
+  section: union_minus
+  title: UNION and MINUS
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # UNION
+  # ---------------------------------------------------------------------------
+
+  - name: union_returns_both_branches
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/a> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        { <http://ex.org/a> <http://ex.org/name> ?val }
+        UNION
+        { <http://ex.org/a> <http://ex.org/city> ?val }
+      }
+    expect:
+      rows:
+        - [Alix]
+        - [Amsterdam]
+
+  - name: union_no_dedup_by_default
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/x> "same" .
+          <http://ex.org/a> <http://ex.org/y> "same" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        { <http://ex.org/a> <http://ex.org/x> ?val }
+        UNION
+        { <http://ex.org/a> <http://ex.org/y> ?val }
+      }
+    expect:
+      count: 2
+
+  - name: union_with_different_predicates
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/nick> "Gus" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        { ?s <http://ex.org/name> ?val }
+        UNION
+        { ?s <http://ex.org/nick> ?val }
+      }
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: union_one_branch_empty
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        { <http://ex.org/a> <http://ex.org/name> ?val }
+        UNION
+        { <http://ex.org/a> <http://ex.org/nonexistent> ?val }
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # MINUS
+  # ---------------------------------------------------------------------------
+
+  - name: minus_excludes_matching_solutions
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+        MINUS {
+          ?s <http://ex.org/city> "Amsterdam" .
+        }
+      }
+    expect:
+      rows:
+        - [Gus]
+
+  - name: minus_no_shared_variables_keeps_all
+    skip: "MINUS with no shared variables incorrectly removes all solutions"
+    # MINUS with no overlapping variables has no effect per SPARQL spec
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/age> "30" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        MINUS {
+          ?other <http://ex.org/age> ?a .
+        }
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: minus_excludes_all_when_all_match
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/a> <http://ex.org/flag> "yes" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+          <http://ex.org/b> <http://ex.org/flag> "yes" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        MINUS {
+          ?s <http://ex.org/flag> "yes" .
+        }
+      }
+    expect:
+      empty: true

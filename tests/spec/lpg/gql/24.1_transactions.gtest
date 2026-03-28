@@ -1,0 +1,168 @@
+# GQL Transactions and Sessions: ISO/IEC 39075:2024 sec 24.1
+#
+# Covers: multi-statement data persistence, insert-then-read sequences,
+# error recovery, session set/reset operations.
+#
+# Note: explicit BEGIN/COMMIT/ROLLBACK cannot be expressed in .gtest because
+# the runner auto-commits each statement. These tests exercise sequential
+# statement execution and data visibility across statements.
+
+meta:
+  language: gql
+  model: lpg
+  section: "24.1"
+  title: Transactions and sessions
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Data persistence across statements
+  # ---------------------------------------------------------------------------
+
+  - name: insert_then_read
+    statements:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "MATCH (n:Person) RETURN n.name, n.age"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: two_inserts_then_count
+    statements:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: insert_and_update_then_read
+    statements:
+      - "INSERT (:Account {owner: 'Alix', balance: 1000})"
+      - "MATCH (a:Account {owner: 'Alix'}) SET a.balance = 2000"
+      - "MATCH (a:Account {owner: 'Alix'}) RETURN a.balance"
+    expect:
+      rows:
+        - [2000]
+
+  - name: insert_edge_then_traverse
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})"
+      - "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a.name, b.name, r.since"
+    expect:
+      rows:
+        - [Alix, Gus, 2020]
+
+  # ---------------------------------------------------------------------------
+  # Multiple mutations in sequence
+  # ---------------------------------------------------------------------------
+
+  - name: insert_update_delete_sequence
+    statements:
+      - "INSERT (:Item {name: 'alpha'})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "MATCH (i:Item {name: 'alpha'}) DELETE i"
+      - "MATCH (i:Item) RETURN i.name"
+    expect:
+      rows:
+        - [beta]
+
+  - name: multiple_set_operations
+    statements:
+      - "INSERT (:Counter {name: 'hits', value: 0})"
+      - "MATCH (c:Counter {name: 'hits'}) SET c.value = 1"
+      - "MATCH (c:Counter {name: 'hits'}) SET c.value = 2"
+      - "MATCH (c:Counter {name: 'hits'}) SET c.value = 3"
+      - "MATCH (c:Counter {name: 'hits'}) RETURN c.value"
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Label mutation persistence
+  # ---------------------------------------------------------------------------
+
+  - name: add_label_persists
+    statements:
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (p:Person {name: 'Vincent'}) SET p:VIP"
+      - "MATCH (p:VIP) RETURN p.name"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: remove_label_persists
+    statements:
+      - "INSERT (:Person:Employee {name: 'Jules'})"
+      - "MATCH (p:Employee {name: 'Jules'}) REMOVE p:Employee"
+      - "MATCH (p:Employee) RETURN count(p) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # Property addition and removal
+  # ---------------------------------------------------------------------------
+
+  - name: add_property_then_read
+    statements:
+      - "INSERT (:Person {name: 'Mia'})"
+      - "MATCH (p:Person {name: 'Mia'}) SET p.status = 'active'"
+      - "MATCH (p:Person {name: 'Mia'}) RETURN p.status"
+    expect:
+      rows:
+        - [active]
+
+  - name: remove_property_then_read
+    statements:
+      - "INSERT (:Person {name: 'Butch', nickname: 'champ'})"
+      - "MATCH (p:Person {name: 'Butch'}) REMOVE p.nickname"
+      - "MATCH (p:Person {name: 'Butch'}) RETURN p.nickname"
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Session SET / RESET (fire-and-forget statements)
+  # ---------------------------------------------------------------------------
+
+  - name: session_set_time_zone
+    statements:
+      - "SESSION SET TIME ZONE '+01:00'"
+      - "INSERT (:N {v: 1})"
+      - "MATCH (n:N) RETURN n.v"
+    expect:
+      rows:
+        - [1]
+
+  - name: session_reset_all
+    statements:
+      - "SESSION RESET ALL"
+      - "INSERT (:N {v: 1})"
+      - "MATCH (n:N) RETURN n.v"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Edge deletion persistence
+  # ---------------------------------------------------------------------------
+
+  - name: delete_edge_persists
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) DELETE r"
+      - "MATCH ()-[r:KNOWS]->() RETURN count(r) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  - name: nodes_survive_edge_deletion
+    statements:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) DELETE r"
+      - "MATCH (n:Person) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]

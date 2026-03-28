@@ -1,0 +1,358 @@
+# SPARQL Conditional and Functional Forms (Section 17.4.1)
+#
+# Covers: BOUND, IF, COALESCE, IN/NOT IN, EXISTS/NOT EXISTS.
+# Based on W3C SPARQL 1.1 Query Language specification, Section 17.4.1.
+# EXISTS/NOT EXISTS have basic coverage in filter.gtest; this file tests
+# them in combination with other conditional forms.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "17.4.1"
+  title: Conditional and Functional Forms
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # BOUND (17.4.1.1)
+  # ---------------------------------------------------------------------------
+
+  - name: bound_with_optional_matched
+    skip: "BOUND() with OPTIONAL returns true for all rows, including unbound"
+    # When the OPTIONAL matches, BOUND(?city) should be true.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/city> ?city }
+        FILTER(BOUND(?city))
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: not_bound_with_optional_unmatched
+    skip: "BOUND() with OPTIONAL returns true for all rows, including unbound"
+    # When the OPTIONAL does not match, !BOUND(?city) should be true.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/city> ?city }
+        FILTER(!BOUND(?city))
+      }
+    expect:
+      rows:
+        - [Gus]
+
+  - name: bound_without_optional
+    # All variables are bound (no OPTIONAL), so BOUND(?name) is always true.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER(BOUND(?name))
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  - name: bound_in_filter_all_bound
+    # FILTER(BOUND(?x)) where ?x always exists: all rows returned.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+        }
+    query: |
+      SELECT ?age WHERE {
+        ?s <http://ex.org/age> ?age .
+        FILTER(BOUND(?age))
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # IF (17.4.1.2)
+  # ---------------------------------------------------------------------------
+
+  - name: if_in_bind_expression
+    skip: "Projection functions (IF in BIND) not evaluated in expression context"
+    # BIND(IF(?age > "28", "senior", "junior") AS ?category)
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/age> "35" .
+        }
+    query: |
+      SELECT ?name ?category WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/age> ?age .
+        BIND(IF(?age > "28", "senior", "junior") AS ?category)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, senior]
+        - [Gus, junior]
+        - [Vincent, senior]
+
+  - name: if_in_filter
+    skip: "IF function not evaluated in FILTER context"
+    # FILTER(IF(?val > "10", true, false)) should keep rows where val > 10.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/val> "5" .
+          <http://ex.org/b> <http://ex.org/val> "15" .
+          <http://ex.org/c> <http://ex.org/val> "25" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        ?s <http://ex.org/val> ?val .
+        FILTER(IF(?val > "10", true, false))
+      }
+    expect:
+      count: 2
+
+  - name: if_with_bound_check
+    skip: "BOUND() with OPTIONAL returns true for all rows, including unbound"
+    # IF(BOUND(?opt), ?opt, "default") to provide a fallback for unbound.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/nick> "Lix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name ?display WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/nick> ?nick }
+        BIND(IF(BOUND(?nick), ?nick, "default") AS ?display)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Lix]
+        - [Gus, default]
+
+  # ---------------------------------------------------------------------------
+  # COALESCE (17.4.1.3)
+  # ---------------------------------------------------------------------------
+
+  - name: coalesce_first_non_null
+    skip: "Projection functions (COALESCE in BIND) may not be evaluated"
+    # COALESCE(?nick, ?name) where nick exists, should return nick.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/nick> "Lix" .
+        }
+    query: |
+      SELECT ?display WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        <http://ex.org/alix> <http://ex.org/nick> ?nick .
+        BIND(COALESCE(?nick, ?name) AS ?display)
+      }
+    expect:
+      rows:
+        - [Lix]
+
+  - name: coalesce_fallback_to_second
+    skip: "Projection functions (COALESCE in BIND) may not be evaluated"
+    # COALESCE(?missing, ?name) where first is unbound via OPTIONAL.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?display WHERE {
+        <http://ex.org/gus> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/gus> <http://ex.org/nick> ?nick }
+        BIND(COALESCE(?nick, ?name) AS ?display)
+      }
+    expect:
+      rows:
+        - [Gus]
+
+  - name: coalesce_all_present
+    skip: "Projection functions (COALESCE in BIND) may not be evaluated"
+    # All arguments present: returns the first.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+          <http://ex.org/mia> <http://ex.org/nick> "M" .
+          <http://ex.org/mia> <http://ex.org/alias> "Wallace" .
+        }
+    query: |
+      SELECT ?result WHERE {
+        <http://ex.org/mia> <http://ex.org/nick> ?nick .
+        <http://ex.org/mia> <http://ex.org/alias> ?alias .
+        <http://ex.org/mia> <http://ex.org/name> ?name .
+        BIND(COALESCE(?nick, ?alias, ?name) AS ?result)
+      }
+    expect:
+      rows:
+        - [M]
+
+  # ---------------------------------------------------------------------------
+  # IN / NOT IN (17.4.1.7 / 17.4.1.8)
+  # ---------------------------------------------------------------------------
+
+  - name: in_operator_matches
+    skip: "IN operator evaluates as always-false"
+    # FILTER(?name IN ("Alix", "Gus")) should return matching rows.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER(?name IN ("Alix", "Gus"))
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: in_operator_no_match
+    skip: "IN operator evaluates as always-false"
+    # FILTER(?name IN ("Django", "Shosanna")) should return no rows.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER(?name IN ("Django", "Shosanna"))
+      }
+    expect:
+      empty: true
+
+  - name: not_in_operator
+    skip: "NOT IN operator evaluates as always-false"
+    # FILTER(?name NOT IN ("Alix")) should return everyone except Alix.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER(?name NOT IN ("Alix"))
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: not_in_empty_list
+    skip: "NOT IN operator evaluates as always-false"
+    # FILTER(?name NOT IN ()) should return all rows (empty exclusion list).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER(?name NOT IN ())
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # EXISTS / NOT EXISTS in conditional context (17.4.1.4 / 17.4.1.5)
+  # ---------------------------------------------------------------------------
+
+  - name: exists_with_bound_variable_correlation
+    # EXISTS with a correlated variable from the outer pattern.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER EXISTS { ?s <http://ex.org/knows> ?other }
+      }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: not_exists_filters_connected_nodes
+    # NOT EXISTS to find isolated nodes (no outgoing knows edges).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        FILTER NOT EXISTS { ?s <http://ex.org/knows> ?other }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Butch]
+        - [Gus]

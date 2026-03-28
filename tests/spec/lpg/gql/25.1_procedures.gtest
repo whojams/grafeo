@@ -1,0 +1,99 @@
+# GQL Procedures: ISO/IEC 39075:2024 sec 25.1
+#
+# Covers: CALL db.labels(), db.relationshipTypes(), db.propertyKeys(),
+# CALL with WHERE/alias, inline CALL subquery.
+
+meta:
+  language: gql
+  model: lpg
+  section: "25.1"
+  title: Procedures
+  dataset: empty
+  requires: [algos]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # db.labels()
+  # ---------------------------------------------------------------------------
+
+  - name: call_db_labels
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: "CALL db.labels() YIELD label RETURN label ORDER BY label"
+    expect:
+      ordered: true
+      rows:
+        - [City]
+        - [Person]
+
+  - name: call_db_labels_empty
+    query: "CALL db.labels() YIELD label RETURN label"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # db.relationshipTypes()
+  # ---------------------------------------------------------------------------
+
+  - name: call_db_relationship_types
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
+    expect:
+      rows:
+        - [KNOWS]
+
+  # ---------------------------------------------------------------------------
+  # db.propertyKeys()
+  # ---------------------------------------------------------------------------
+
+  - name: call_db_property_keys
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey ORDER BY propertyKey"
+    expect:
+      ordered: true
+      rows:
+        - [age]
+        - [name]
+
+  # ---------------------------------------------------------------------------
+  # CALL with WHERE filter
+  # ---------------------------------------------------------------------------
+
+  - name: call_with_where_filter
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: "CALL db.labels() YIELD label WHERE label = 'Person' RETURN label"
+    expect:
+      rows:
+        - [Person]
+
+  # ---------------------------------------------------------------------------
+  # CALL with alias
+  # ---------------------------------------------------------------------------
+
+  - name: call_with_alias
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "CALL db.labels() YIELD label AS l RETURN l"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Inline CALL subquery
+  # ---------------------------------------------------------------------------
+
+  - name: call_subquery_aggregation
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    query: "CALL { MATCH (n:Person) RETURN count(n) AS total } RETURN total"
+    expect:
+      rows:
+        - [2]

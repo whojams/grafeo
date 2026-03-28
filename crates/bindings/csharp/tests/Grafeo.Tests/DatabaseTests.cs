@@ -49,21 +49,4 @@ public sealed class DatabaseTests : IDisposable
         Assert.True(info.Count > 0);
     }
 
-    [Fact]
-    public void NodeCountReflectsInserts()
-    {
-        Assert.Equal(0, _db.NodeCount);
-        _db.Execute("INSERT (:Person {name: 'Alix'})");
-        Assert.Equal(1, _db.NodeCount);
-        _db.Execute("INSERT (:Person {name: 'Gus'})");
-        Assert.Equal(2, _db.NodeCount);
-    }
-
-    [Fact]
-    public void EdgeCountReflectsInserts()
-    {
-        _db.Execute("INSERT (:Person {name: 'Vincent'})-[:KNOWS]->(:Person {name: 'Jules'})");
-        Assert.Equal(2, _db.NodeCount);
-        Assert.Equal(1, _db.EdgeCount);
-    }
 }

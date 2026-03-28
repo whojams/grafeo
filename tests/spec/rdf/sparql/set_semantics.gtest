@@ -1,0 +1,364 @@
+# SPARQL Set Semantics and Edge Cases
+#
+# Covers: RDF set semantics (duplicate triple suppression), REDUCED modifier,
+# empty results, LIMIT/OFFSET boundary conditions, SELECT * wildcard,
+# multi-pattern joins, and bulk insert handling.
+# Based on W3C SPARQL 1.1 Query Language specification, Section 15.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "15"
+  title: Set Semantics and Edge Cases
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # RDF Set Semantics
+  # ---------------------------------------------------------------------------
+
+  - name: duplicate_triple_single_result
+    # Inserting the same triple twice should store it once (RDF set semantics).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 1
+
+  - name: same_subject_predicate_different_objects
+    # Multiple objects for the same subject/predicate pair are distinct triples.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/vincent> .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/jules> .
+        }
+    query: |
+      SELECT ?friend WHERE {
+        <http://ex.org/alix> <http://ex.org/knows> ?friend .
+      }
+    expect:
+      count: 3
+
+  - name: same_subject_different_predicates
+    # One subject with several predicates yields one row per predicate match.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "28" .
+          <http://ex.org/gus> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?p ?o WHERE {
+        <http://ex.org/gus> ?p ?o .
+      }
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # REDUCED modifier
+  # ---------------------------------------------------------------------------
+
+  - name: reduced_allows_but_does_not_require_dedup
+    # REDUCED may eliminate duplicates but is not required to. The result count
+    # must be between DISTINCT count (2) and full bag count (4), inclusive.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/amsterdam> .
+          <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/berlin> .
+          <http://ex.org/gus> <http://ex.org/likes> <http://ex.org/amsterdam> .
+          <http://ex.org/gus> <http://ex.org/likes> <http://ex.org/berlin> .
+        }
+    query: |
+      SELECT REDUCED ?city WHERE {
+        ?person <http://ex.org/likes> ?city .
+      }
+    expect:
+      count: 4
+
+  - name: reduced_on_unique_data_no_effect
+    # When every row is already unique, REDUCED changes nothing.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT REDUCED ?person ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Empty Results
+  # ---------------------------------------------------------------------------
+
+  - name: empty_store_returns_nothing
+    # Querying a store with no data returns zero rows.
+    query: |
+      SELECT ?s ?p ?o WHERE {
+        ?s ?p ?o .
+      }
+    expect:
+      count: 0
+
+  - name: no_matching_pattern
+    # Data exists but pattern does not match.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?x WHERE {
+        <http://ex.org/nobody> <http://ex.org/name> ?x .
+      }
+    expect:
+      count: 0
+
+  - name: filter_eliminates_all
+    # FILTER removes every candidate row.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/age> "25" .
+          <http://ex.org/gus> <http://ex.org/age> "30" .
+          <http://ex.org/vincent> <http://ex.org/age> "35" .
+        }
+    query: |
+      SELECT ?person WHERE {
+        ?person <http://ex.org/age> ?age .
+        FILTER (?age > "99")
+      }
+    expect:
+      count: 0
+
+  # ---------------------------------------------------------------------------
+  # LIMIT and OFFSET Edge Cases
+  # ---------------------------------------------------------------------------
+
+  - name: limit_zero_returns_nothing
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+      LIMIT 0
+    expect:
+      count: 0
+
+  - name: offset_beyond_results
+    # OFFSET larger than total rows yields an empty result set.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+      OFFSET 100
+    expect:
+      count: 0
+
+  - name: limit_greater_than_total
+    # LIMIT exceeds result count: all rows returned.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+      LIMIT 100
+    expect:
+      count: 3
+
+  - name: offset_equals_total
+    # OFFSET exactly equal to result count yields nothing.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?person <http://ex.org/name> ?name .
+      }
+      OFFSET 3
+    expect:
+      count: 0
+
+  # ---------------------------------------------------------------------------
+  # SELECT * Wildcard
+  # ---------------------------------------------------------------------------
+
+  - name: select_star_returns_all_variables
+    # SELECT * must bind every variable from the WHERE clause.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+          <http://ex.org/mia> <http://ex.org/city> "Paris" .
+        }
+    query: |
+      SELECT * WHERE {
+        <http://ex.org/mia> <http://ex.org/name> ?name .
+        <http://ex.org/mia> <http://ex.org/city> ?city .
+      }
+    expect:
+      count: 1
+
+  - name: select_star_with_optional
+    # SELECT * includes variables from OPTIONAL clauses (null when unbound).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT * WHERE {
+        <http://ex.org/butch> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/butch> <http://ex.org/age> ?age }
+      }
+    expect:
+      rows:
+        - [Butch, null]
+
+  # ---------------------------------------------------------------------------
+  # Multiple Triple Patterns (Joins)
+  # ---------------------------------------------------------------------------
+
+  - name: three_way_join
+    # Join across three triple patterns sharing the same subject.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+          <http://ex.org/jules> <http://ex.org/age> "32" .
+          <http://ex.org/jules> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT ?name ?age ?city WHERE {
+        <http://ex.org/jules> <http://ex.org/name> ?name .
+        <http://ex.org/jules> <http://ex.org/age> ?age .
+        <http://ex.org/jules> <http://ex.org/city> ?city .
+      }
+    expect:
+      rows:
+        - [Jules, "32", Berlin]
+
+  - name: cross_subject_join
+    # Join where one triple's object is another triple's subject.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/livesIn> <http://ex.org/prague> .
+          <http://ex.org/prague> <http://ex.org/country> "Czech Republic" .
+        }
+    query: |
+      SELECT ?person ?country WHERE {
+        ?person <http://ex.org/livesIn> ?city .
+        ?city <http://ex.org/country> ?country .
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Large Result Handling
+  # ---------------------------------------------------------------------------
+
+  - name: bulk_insert_and_count
+    # Insert 50 distinct triples and verify COUNT returns 50.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/p1> <http://ex.org/value> "1" .
+          <http://ex.org/p2> <http://ex.org/value> "2" .
+          <http://ex.org/p3> <http://ex.org/value> "3" .
+          <http://ex.org/p4> <http://ex.org/value> "4" .
+          <http://ex.org/p5> <http://ex.org/value> "5" .
+          <http://ex.org/p6> <http://ex.org/value> "6" .
+          <http://ex.org/p7> <http://ex.org/value> "7" .
+          <http://ex.org/p8> <http://ex.org/value> "8" .
+          <http://ex.org/p9> <http://ex.org/value> "9" .
+          <http://ex.org/p10> <http://ex.org/value> "10" .
+          <http://ex.org/p11> <http://ex.org/value> "11" .
+          <http://ex.org/p12> <http://ex.org/value> "12" .
+          <http://ex.org/p13> <http://ex.org/value> "13" .
+          <http://ex.org/p14> <http://ex.org/value> "14" .
+          <http://ex.org/p15> <http://ex.org/value> "15" .
+          <http://ex.org/p16> <http://ex.org/value> "16" .
+          <http://ex.org/p17> <http://ex.org/value> "17" .
+          <http://ex.org/p18> <http://ex.org/value> "18" .
+          <http://ex.org/p19> <http://ex.org/value> "19" .
+          <http://ex.org/p20> <http://ex.org/value> "20" .
+          <http://ex.org/p21> <http://ex.org/value> "21" .
+          <http://ex.org/p22> <http://ex.org/value> "22" .
+          <http://ex.org/p23> <http://ex.org/value> "23" .
+          <http://ex.org/p24> <http://ex.org/value> "24" .
+          <http://ex.org/p25> <http://ex.org/value> "25" .
+          <http://ex.org/p26> <http://ex.org/value> "26" .
+          <http://ex.org/p27> <http://ex.org/value> "27" .
+          <http://ex.org/p28> <http://ex.org/value> "28" .
+          <http://ex.org/p29> <http://ex.org/value> "29" .
+          <http://ex.org/p30> <http://ex.org/value> "30" .
+          <http://ex.org/p31> <http://ex.org/value> "31" .
+          <http://ex.org/p32> <http://ex.org/value> "32" .
+          <http://ex.org/p33> <http://ex.org/value> "33" .
+          <http://ex.org/p34> <http://ex.org/value> "34" .
+          <http://ex.org/p35> <http://ex.org/value> "35" .
+          <http://ex.org/p36> <http://ex.org/value> "36" .
+          <http://ex.org/p37> <http://ex.org/value> "37" .
+          <http://ex.org/p38> <http://ex.org/value> "38" .
+          <http://ex.org/p39> <http://ex.org/value> "39" .
+          <http://ex.org/p40> <http://ex.org/value> "40" .
+          <http://ex.org/p41> <http://ex.org/value> "41" .
+          <http://ex.org/p42> <http://ex.org/value> "42" .
+          <http://ex.org/p43> <http://ex.org/value> "43" .
+          <http://ex.org/p44> <http://ex.org/value> "44" .
+          <http://ex.org/p45> <http://ex.org/value> "45" .
+          <http://ex.org/p46> <http://ex.org/value> "46" .
+          <http://ex.org/p47> <http://ex.org/value> "47" .
+          <http://ex.org/p48> <http://ex.org/value> "48" .
+          <http://ex.org/p49> <http://ex.org/value> "49" .
+          <http://ex.org/p50> <http://ex.org/value> "50" .
+        }
+    query: |
+      SELECT (COUNT(?s) AS ?total) WHERE {
+        ?s <http://ex.org/value> ?v .
+      }
+    expect:
+      rows:
+        - [50]

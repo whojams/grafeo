@@ -1,0 +1,235 @@
+# SPARQL RDF Term Construction Functions
+#
+# Covers: STRDT, STRLANG, IRI/URI, BNODE, UUID, STRUUID.
+# Based on W3C SPARQL 1.1 Query Language specification, Section 17.4.7.
+# These functions construct new RDF terms from string values and other inputs.
+# Most parse correctly but are not yet evaluated at execution level.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "17.4.7"
+  title: RDF Term Construction
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # STRDT (17.4.7.1)
+  # ---------------------------------------------------------------------------
+
+  - name: strdt_creates_typed_literal
+    skip: "STRDT() not yet evaluated in BIND expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?typed WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        BIND(STRDT("42", <http://www.w3.org/2001/XMLSchema#integer>) AS ?typed)
+      }
+    expect:
+      count: 1
+
+  - name: strdt_in_construct
+    skip: "STRDT() not yet evaluated in CONSTRUCT templates"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/rawAge> "25" .
+        }
+    query: |
+      CONSTRUCT {
+        <http://ex.org/gus> <http://ex.org/age> ?typedAge .
+      } WHERE {
+        <http://ex.org/gus> <http://ex.org/rawAge> ?raw .
+        BIND(STRDT(?raw, <http://www.w3.org/2001/XMLSchema#integer>) AS ?typedAge)
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # STRLANG (17.4.7.2)
+  # ---------------------------------------------------------------------------
+
+  - name: strlang_creates_language_tagged_literal
+    skip: "STRLANG() not yet evaluated in BIND expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?tagged WHERE {
+        <http://ex.org/vincent> <http://ex.org/name> ?name .
+        BIND(STRLANG("chat", "fr") AS ?tagged)
+      }
+    expect:
+      count: 1
+
+  - name: strlang_with_variable
+    skip: "STRLANG() not yet evaluated in BIND expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT ?tagged WHERE {
+        ?s <http://ex.org/name> ?name .
+        BIND(STRLANG(?name, "en") AS ?tagged)
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # IRI / URI (17.4.7.3)
+  # ---------------------------------------------------------------------------
+
+  - name: iri_from_string
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?i WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        BIND(IRI("http://example.org/test") AS ?i)
+      }
+    expect:
+      count: 1
+
+  - name: iri_concat_construction
+    skip: "IRI() with CONCAT not evaluated in BIND"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/id> "alix42" .
+          <http://ex.org/gus> <http://ex.org/id> "gus17" .
+        }
+    query: |
+      SELECT ?resource WHERE {
+        ?s <http://ex.org/id> ?id .
+        BIND(IRI(CONCAT("http://ex.org/profile/", ?id)) AS ?resource)
+      }
+    expect:
+      count: 2
+
+  - name: uri_synonym
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/name> "Butch" .
+        }
+    query: |
+      SELECT ?u WHERE {
+        <http://ex.org/butch> <http://ex.org/name> ?name .
+        BIND(URI("http://example.org/test") AS ?u)
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # BNODE (17.4.7.4)
+  # ---------------------------------------------------------------------------
+
+  - name: bnode_with_label
+    skip: "BNODE() not yet evaluated in BIND expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: |
+      SELECT ?b WHERE {
+        <http://ex.org/alix> <http://ex.org/name> ?name .
+        BIND(BNODE("label1") AS ?b)
+      }
+    expect:
+      count: 1
+
+  - name: bnode_without_label
+    skip: "BNODE() not yet evaluated in BIND expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?b WHERE {
+        ?s <http://ex.org/name> ?name .
+        BIND(BNODE() AS ?b)
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # UUID (17.4.7.5)
+  # ---------------------------------------------------------------------------
+
+  - name: uuid_returns_iri
+    skip: "UUID() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (UUID() AS ?id) WHERE { }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # STRUUID (17.4.7.6)
+  # ---------------------------------------------------------------------------
+
+  - name: struuid_returns_string
+    skip: "STRUUID() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (STRUUID() AS ?id) WHERE { }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Combined: IRI used in a subsequent triple pattern
+  # ---------------------------------------------------------------------------
+
+  - name: iri_used_in_triple_pattern
+    skip: "IRI() from BIND not usable as subject in subsequent pattern"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/amsterdam> <http://ex.org/country> "Netherlands" .
+          <http://ex.org/berlin> <http://ex.org/country> "Germany" .
+          <http://ex.org/paris> <http://ex.org/country> "France" .
+        }
+    query: |
+      SELECT ?country WHERE {
+        BIND(IRI("http://ex.org/amsterdam") AS ?city)
+        ?city <http://ex.org/country> ?country .
+      }
+    expect:
+      rows:
+        - [Netherlands]
+
+  # ---------------------------------------------------------------------------
+  # Combined: STRDT with DATATYPE filter
+  # ---------------------------------------------------------------------------
+
+  - name: strdt_with_filter
+    skip: "STRDT() result not available for DATATYPE() comparison in FILTER"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/rawScore> "88" .
+          <http://ex.org/butch> <http://ex.org/rawScore> "76" .
+        }
+    query: |
+      SELECT ?typed WHERE {
+        ?s <http://ex.org/rawScore> ?raw .
+        BIND(STRDT(?raw, <http://www.w3.org/2001/XMLSchema#integer>) AS ?typed)
+        FILTER(DATATYPE(?typed) = <http://www.w3.org/2001/XMLSchema#integer>)
+      }
+    expect:
+      count: 2

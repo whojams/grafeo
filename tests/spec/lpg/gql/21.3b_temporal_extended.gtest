@@ -1,0 +1,312 @@
+# GQL Temporal Extended: ISO/IEC 39075:2024 sec 21.3
+#
+# Covers: temporal literal value assertions, hour/minute/second extraction,
+# date arithmetic, date comparison in WHERE, timestamp/current_date/current_time,
+# date_trunc, date minus date.
+
+meta:
+  language: gql
+  model: lpg
+  section: "21.3"
+  title: Temporal functions (extended)
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Typed literal value assertions (verify Display output)
+  # ---------------------------------------------------------------------------
+
+  - name: date_literal_value
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-03-15' AS d"
+    expect:
+      rows:
+        - [2024-03-15]
+
+  - name: time_literal_value
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN TIME '14:30:00' AS t"
+    expect:
+      rows:
+        - ["14:30:00"]
+
+  - name: duration_literal_value
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DURATION 'P1Y2M3D' AS d"
+    expect:
+      rows:
+        - [P1Y2M3D]
+
+  - name: datetime_literal_value
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATETIME '2024-03-15T14:30:00Z' AS dt"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Hour / minute / second extraction from TIME
+  # ---------------------------------------------------------------------------
+
+  - name: hour_extraction
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN hour(TIME '14:30:45') AS h"
+    expect:
+      rows:
+        - [14]
+
+  - name: minute_extraction
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN minute(TIME '14:30:45') AS m"
+    expect:
+      rows:
+        - [30]
+
+  - name: second_extraction
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN second(TIME '14:30:45') AS s"
+    expect:
+      rows:
+        - [45]
+
+  # ---------------------------------------------------------------------------
+  # Year/month/day on different dates
+  # ---------------------------------------------------------------------------
+
+  - name: year_extraction_leap_year
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN year(DATE '2000-02-29') AS y"
+    expect:
+      rows:
+        - [2000]
+
+  - name: month_extraction_december
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN month(DATE '2024-12-31') AS m"
+    expect:
+      rows:
+        - [12]
+
+  - name: day_extraction_first
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN day(DATE '2024-01-01') AS d"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Date + Duration arithmetic
+  # ---------------------------------------------------------------------------
+
+  - name: date_plus_one_month
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-01-15' + DURATION 'P1M' AS d"
+    expect:
+      rows:
+        - [2024-02-15]
+
+  - name: date_plus_one_year
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-03-15' + DURATION 'P1Y' AS d"
+    expect:
+      rows:
+        - [2025-03-15]
+
+  - name: date_plus_days
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-01-30' + DURATION 'P3D' AS d"
+    expect:
+      rows:
+        - [2024-02-02]
+
+  # ---------------------------------------------------------------------------
+  # Date minus Date (returns Duration)
+  # ---------------------------------------------------------------------------
+
+  - name: date_minus_date
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DATE '2024-03-15' - DATE '2024-01-01' AS diff"
+    expect:
+      rows:
+        - [P74D]
+
+  # ---------------------------------------------------------------------------
+  # Duration arithmetic
+  # ---------------------------------------------------------------------------
+
+  - name: duration_plus_duration
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN DURATION 'P1Y' + DURATION 'P6M' AS d"
+    expect:
+      rows:
+        - [P1Y6M]
+
+  # ---------------------------------------------------------------------------
+  # Date comparison in WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: date_comparison_greater
+    setup:
+      - "INSERT (:Person {name: 'Alix', birthday: DATE '1990-06-15'})"
+      - "INSERT (:Person {name: 'Gus', birthday: DATE '2000-01-01'})"
+    query: "MATCH (p:Person) WHERE p.birthday > DATE '1995-01-01' RETURN p.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: date_comparison_less
+    setup:
+      - "INSERT (:Person {name: 'Alix', birthday: DATE '1990-06-15'})"
+      - "INSERT (:Person {name: 'Gus', birthday: DATE '2000-01-01'})"
+    query: "MATCH (p:Person) WHERE p.birthday < DATE '1995-01-01' RETURN p.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: date_comparison_equal
+    setup:
+      - "INSERT (:Event {name: 'launch', date: DATE '2024-11-01'})"
+    query: "MATCH (e:Event) WHERE e.date = DATE '2024-11-01' RETURN e.name"
+    expect:
+      rows:
+        - [launch]
+
+  # ---------------------------------------------------------------------------
+  # timestamp() returns a number
+  # ---------------------------------------------------------------------------
+
+  - name: timestamp_returns_integer
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN timestamp() AS ts"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # current_date() and current_time()
+  # ---------------------------------------------------------------------------
+
+  - name: current_date_returns_value
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN current_date() AS d"
+    expect:
+      count: 1
+
+  - name: current_time_returns_value
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN current_time() AS t"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # date_trunc()
+  # ---------------------------------------------------------------------------
+
+  - name: date_trunc_to_year
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN date_trunc('year', DATE '2024-07-20') AS d"
+    expect:
+      rows:
+        - [2024-01-01]
+
+  - name: date_trunc_to_month
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN date_trunc('month', DATE '2024-07-20') AS d"
+    expect:
+      rows:
+        - [2024-07-01]
+
+  # ---------------------------------------------------------------------------
+  # Hour/minute/second extraction from DATETIME
+  # ---------------------------------------------------------------------------
+
+  - name: hour_from_datetime
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN hour(DATETIME '2024-03-15T14:30:45Z') AS h"
+    expect:
+      rows:
+        - [14]
+
+  - name: minute_from_datetime
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN minute(DATETIME '2024-03-15T14:30:45Z') AS m"
+    expect:
+      rows:
+        - [30]
+
+  - name: second_from_datetime
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN second(DATETIME '2024-03-15T14:30:45Z') AS s"
+    expect:
+      rows:
+        - [45]
+
+  # ---------------------------------------------------------------------------
+  # Year/month/day from DATETIME
+  # ---------------------------------------------------------------------------
+
+  - name: year_from_datetime
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN year(DATETIME '2024-03-15T14:30:00Z') AS y"
+    expect:
+      rows:
+        - [2024]
+
+  - name: month_from_datetime
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN month(DATETIME '2024-03-15T14:30:00Z') AS m"
+    expect:
+      rows:
+        - [3]
+
+  - name: day_from_datetime
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN day(DATETIME '2024-03-15T14:30:00Z') AS d"
+    expect:
+      rows:
+        - [15]
+
+  # ---------------------------------------------------------------------------
+  # Temporal property storage round-trip
+  # ---------------------------------------------------------------------------
+
+  - name: time_property_round_trip
+    setup:
+      - "INSERT (:Schedule {event: 'standup', time: TIME '09:00:00'})"
+    query: "MATCH (s:Schedule) RETURN s.time AS t"
+    expect:
+      rows:
+        - ["09:00:00"]
+
+  - name: duration_property_round_trip
+    setup:
+      - "INSERT (:Task {name: 'sprint', duration: DURATION 'P2W'})"
+    query: "MATCH (t:Task) RETURN t.duration AS d"
+    expect:
+      rows:
+        - [P14D]

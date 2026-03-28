@@ -1,0 +1,149 @@
+# Rosetta: cross-language CRUD equivalence tests
+#
+# Verifies that INSERT/CREATE, MATCH, SET, DELETE, and aggregation
+# operations return the same results in GQL and Cypher.
+#
+# Strategy: use setup (GQL) to create common state, then use variants
+# for the final query that verifies the result in each language.
+
+meta:
+  model: lpg
+  section: rosetta
+  title: CRUD cross-language equivalence
+  dataset: empty
+  requires: [cypher]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # CREATE / INSERT node: verify count
+  # ---------------------------------------------------------------------------
+
+  - name: create_node_and_count
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    variants:
+      gql: MATCH (n:Person) RETURN count(n) AS cnt
+      cypher: MATCH (n:Person) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  - name: create_node_read_properties
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30, city: 'Amsterdam'})"
+    variants:
+      gql: "MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age, n.city"
+      cypher: "MATCH (n:Person {name: 'Alix'}) RETURN n.name, n.age, n.city"
+    expect:
+      rows:
+        - [Alix, 30, Amsterdam]
+
+  # ---------------------------------------------------------------------------
+  # CREATE / INSERT edge: verify traversal
+  # ---------------------------------------------------------------------------
+
+  - name: create_edge_and_traverse
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})"
+    variants:
+      gql: "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a.name, b.name, r.since"
+      cypher: "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a.name, b.name, r.since"
+    expect:
+      rows:
+        - [Alix, Gus, 2020]
+
+  # ---------------------------------------------------------------------------
+  # MATCH and count: multiple nodes
+  # ---------------------------------------------------------------------------
+
+  - name: match_count_multiple_nodes
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+    variants:
+      gql: MATCH (n:Person) RETURN count(n) AS cnt
+      cypher: MATCH (n:Person) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # SET property: same syntax in both languages
+  # ---------------------------------------------------------------------------
+
+  - name: set_property_and_read
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "MATCH (n:Person {name: 'Alix'}) SET n.age = 31"
+    variants:
+      gql: "MATCH (n:Person {name: 'Alix'}) RETURN n.age"
+      cypher: "MATCH (n:Person {name: 'Alix'}) RETURN n.age"
+    expect:
+      rows:
+        - [31]
+
+  # ---------------------------------------------------------------------------
+  # DELETE: verify empty after deletion
+  # ---------------------------------------------------------------------------
+
+  - name: delete_node_and_count
+    setup:
+      - "INSERT (:Temp {v: 1})"
+      - "INSERT (:Temp {v: 2})"
+      - "MATCH (n:Temp) DELETE n"
+    variants:
+      gql: MATCH (n:Temp) RETURN count(n) AS cnt
+      cypher: MATCH (n:Temp) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation: SUM
+  # ---------------------------------------------------------------------------
+
+  - name: aggregate_sum
+    setup:
+      - "INSERT (:Item {value: 10})"
+      - "INSERT (:Item {value: 20})"
+      - "INSERT (:Item {value: 30})"
+    variants:
+      gql: MATCH (n:Item) RETURN sum(n.value) AS total
+      cypher: MATCH (n:Item) RETURN sum(n.value) AS total
+    expect:
+      rows:
+        - [60]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation: COUNT
+  # ---------------------------------------------------------------------------
+
+  - name: aggregate_count
+    setup:
+      - "INSERT (:Item {value: 10})"
+      - "INSERT (:Item {value: 20})"
+      - "INSERT (:Item {value: 30})"
+    variants:
+      gql: MATCH (n:Item) RETURN count(n) AS cnt
+      cypher: MATCH (n:Item) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation: AVG
+  # ---------------------------------------------------------------------------
+
+  - name: aggregate_avg
+    setup:
+      - "INSERT (:Item {value: 10})"
+      - "INSERT (:Item {value: 20})"
+      - "INSERT (:Item {value: 30})"
+    variants:
+      gql: MATCH (n:Item) RETURN avg(n.value) AS average
+      cypher: MATCH (n:Item) RETURN avg(n.value) AS average
+    expect:
+      rows:
+        - [20]

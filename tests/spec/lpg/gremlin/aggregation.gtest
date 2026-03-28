@@ -1,0 +1,118 @@
+# Gremlin aggregation steps: count(), sum(), min(), max(), mean(),
+#                           fold(), unfold(), group(), groupCount()
+#
+# Covers: terminal aggregation, collection steps, grouping.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Ages sum: 30+25+35 = 90, mean: 30.0
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "aggregation"
+  title: Aggregation Steps
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # count()
+  # ---------------------------------------------------------------------------
+
+  - name: count_all_vertices
+    query: g.V().count()
+    expect:
+      rows:
+        - [4]
+
+  - name: count_persons
+    query: g.V().hasLabel('Person').count()
+    expect:
+      rows:
+        - [3]
+
+  - name: count_edges
+    query: g.E().count()
+    expect:
+      rows:
+        - [3]
+
+  - name: count_after_filter
+    query: "g.V().has('age', gt(28)).count()"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # sum()
+  # ---------------------------------------------------------------------------
+
+  - name: sum_ages
+    query: g.V().hasLabel('Person').values('age').sum()
+    expect:
+      rows:
+        - [90]
+
+  # ---------------------------------------------------------------------------
+  # min()
+  # ---------------------------------------------------------------------------
+
+  - name: min_age
+    query: g.V().hasLabel('Person').values('age').min()
+    expect:
+      rows:
+        - [25]
+
+  # ---------------------------------------------------------------------------
+  # max()
+  # ---------------------------------------------------------------------------
+
+  - name: max_age
+    query: g.V().hasLabel('Person').values('age').max()
+    expect:
+      rows:
+        - [35]
+
+  # ---------------------------------------------------------------------------
+  # mean()
+  # ---------------------------------------------------------------------------
+
+  - name: mean_age
+    query: g.V().hasLabel('Person').values('age').mean()
+    expect:
+      rows:
+        - [30]
+
+  # ---------------------------------------------------------------------------
+  # fold() / unfold()
+  # ---------------------------------------------------------------------------
+
+  - name: fold_names
+    query: g.V().hasLabel('Person').values('name').fold()
+    expect:
+      count: 1
+
+  - name: fold_unfold_roundtrip
+    query: g.V().hasLabel('Person').values('name').fold().unfold()
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # group()
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_city
+    query: "g.V().hasLabel('Person').group().by('city').by('name')"
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # groupCount()
+  # ---------------------------------------------------------------------------
+
+  - name: group_count_by_label
+    query: g.V().hasLabel('Person').groupCount().by('city')
+    expect:
+      count: 1

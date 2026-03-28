@@ -1,0 +1,196 @@
+# SQL/PGQ error paths and boundary conditions
+#
+# Covers: parser errors (missing clauses, unclosed parens, empty input),
+# CREATE PROPERTY GRAPH errors, unsupported syntax, comments, semicolons.
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: Error paths and boundary conditions
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Parser errors: missing or malformed clauses
+  # ---------------------------------------------------------------------------
+
+  - name: empty_query
+    skip: "empty/whitespace queries cannot be tested via .gtest runner (parser strips whitespace)"
+    query: " "
+    expect:
+      error: "Expected"
+
+  - name: missing_from_keyword
+    query: "SELECT * GRAPH_TABLE (MATCH (n:Person) COLUMNS (n.name AS name))"
+    expect:
+      error: "Expected"
+
+  - name: missing_match_keyword
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      error: "Expected"
+
+  - name: missing_columns_clause
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+      )
+    expect:
+      error: "Expected"
+
+  - name: empty_columns_list
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS ()
+      )
+    expect:
+      error: "Expected expression"
+
+  - name: missing_column_alias
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name)
+      )
+    expect:
+      error: "Expected"
+
+  - name: unclosed_graph_table_paren
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+    expect:
+      error: "Expected"
+
+  - name: garbage_after_query
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      ) 123
+    expect:
+      error: "Expected end of query"
+
+  # ---------------------------------------------------------------------------
+  # CREATE PROPERTY GRAPH errors
+  # ---------------------------------------------------------------------------
+
+  - name: create_graph_empty_node_tables
+    query: "CREATE PROPERTY GRAPH G NODE TABLES ()"
+    expect:
+      error: "Expected identifier"
+
+  - name: create_graph_no_tables_at_all
+    query: "CREATE PROPERTY GRAPH G"
+    expect:
+      error: "Expected NODE TABLES or EDGE TABLES"
+
+  # ---------------------------------------------------------------------------
+  # Unsupported syntax (errors from sql_features.gtest not duplicated here)
+  # ---------------------------------------------------------------------------
+
+  - name: cte_with_clause
+    query: |
+      WITH friends AS (
+        SELECT * FROM GRAPH_TABLE (
+          MATCH (n:Person)
+          COLUMNS (n.name AS name)
+        )
+      )
+      SELECT * FROM friends
+    expect:
+      error: "WITH"
+
+  - name: union_queries
+    skip: "UNION not yet supported in SQL/PGQ parser"
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.city = 'Amsterdam'
+        COLUMNS (n.name AS name)
+      )
+      UNION
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        WHERE n.city = 'Berlin'
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      error: "UNION"
+
+  - name: window_function_row_number
+    query: |
+      SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      error: "OVER"
+
+  # ---------------------------------------------------------------------------
+  # Comments (should work, not produce errors)
+  # ---------------------------------------------------------------------------
+
+  - name: line_comment_before_query
+    query: |
+      -- this is a line comment
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      count: 3
+
+  - name: block_comment_before_query
+    query: |
+      /* block comment */
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      count: 3
+
+  - name: inline_block_comment
+    query: "SELECT * FROM /* inline */ GRAPH_TABLE (MATCH (n:Person) COLUMNS (n.name AS name))"
+    expect:
+      count: 3
+
+  - name: line_comment_after_query
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      ) -- trailing comment
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Semicolons
+  # ---------------------------------------------------------------------------
+
+  - name: trailing_semicolon
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      );
+    expect:
+      count: 3
+
+  - name: double_semicolons
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      );;
+    expect:
+      error: "Expected end of query"

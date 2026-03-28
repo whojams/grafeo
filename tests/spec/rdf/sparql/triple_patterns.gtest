@@ -1,0 +1,448 @@
+# SPARQL triple pattern matching
+#
+# Covers: basic triple patterns, multi-pattern joins, shared variables,
+# multiple predicates, type patterns, URI patterns, literal matching,
+# DISTINCT, SELECT *, PREFIX declarations.
+#
+# Uses statements (not setup) so INSERT DATA runs via execute_sparql.
+
+meta:
+  language: sparql
+  model: rdf
+  section: triple_patterns
+  title: Triple pattern matching
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Single triple pattern
+  # ---------------------------------------------------------------------------
+
+  - name: match_all_with_specific_predicate
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/age> "28" .
+        }
+      - "SELECT ?name WHERE { ?s <http://ex.org/name> ?name }"
+    expect:
+      count: 2
+
+  - name: match_triples_with_specific_subject
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+      - "SELECT ?p ?o WHERE { <http://ex.org/alix> ?p ?o }"
+    expect:
+      count: 2
+
+  - name: match_triples_with_specific_object
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/city> "Amsterdam" .
+        }
+      - |
+        SELECT ?s WHERE {
+          ?s <http://ex.org/city> "Amsterdam" .
+        }
+    expect:
+      count: 2
+
+  - name: wildcard_all_triples
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+        }
+      - "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+    expect:
+      count: 3
+
+  - name: no_match_returns_empty
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - "SELECT ?s WHERE { ?s <http://ex.org/nonexistent> ?o }"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Multi-pattern joins (shared variables)
+  # ---------------------------------------------------------------------------
+
+  - name: two_patterns_shared_subject
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+      - |
+        SELECT ?name ?age WHERE {
+          ?s <http://ex.org/name> ?name .
+          ?s <http://ex.org/age> ?age .
+        } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: three_way_join_same_subject
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+        }
+      - |
+        SELECT ?name ?age ?city WHERE {
+          ?s <http://ex.org/name> ?name .
+          ?s <http://ex.org/age> ?age .
+          ?s <http://ex.org/city> ?city .
+        }
+    expect:
+      rows:
+        - [Alix, 30, Amsterdam]
+
+  - name: join_across_subjects_via_knows
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/vincent> .
+        }
+      - |
+        SELECT ?personName ?friendName WHERE {
+          ?person <http://ex.org/name> ?personName .
+          ?person <http://ex.org/knows> ?friend .
+          ?friend <http://ex.org/name> ?friendName .
+        }
+    expect:
+      count: 2
+
+  - name: chain_three_subjects
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/jules> .
+        }
+      - |
+        SELECT ?a ?b ?c WHERE {
+          ?x <http://ex.org/name> ?a .
+          ?x <http://ex.org/knows> ?y .
+          ?y <http://ex.org/name> ?b .
+          ?y <http://ex.org/knows> ?z .
+          ?z <http://ex.org/name> ?c .
+        }
+    expect:
+      rows:
+        - [Alix, Gus, Jules]
+
+  - name: shared_object_variable
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+        }
+      - |
+        SELECT ?s1 ?s2 WHERE {
+          ?s1 <http://ex.org/city> "Amsterdam" .
+          ?s2 <http://ex.org/city> "Amsterdam" .
+          FILTER(?s1 != ?s2)
+        }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # rdf:type patterns
+  # ---------------------------------------------------------------------------
+
+  - name: a_shorthand_for_rdf_type
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/amsterdam> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/City> .
+          <http://ex.org/amsterdam> <http://ex.org/name> "Amsterdam" .
+        }
+      - |
+        SELECT ?name WHERE {
+          ?s a <http://ex.org/Person> .
+          ?s <http://ex.org/name> ?name .
+        }
+    expect:
+      rows:
+        - [Alix]
+
+  - name: full_rdf_type_iri
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/berlin> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/City> .
+          <http://ex.org/berlin> <http://ex.org/name> "Berlin" .
+        }
+      - |
+        SELECT ?name WHERE {
+          ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          ?s <http://ex.org/name> ?name .
+        }
+    expect:
+      rows:
+        - [Gus]
+
+  - name: type_and_property_together
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/amsterdam> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/City> .
+          <http://ex.org/amsterdam> <http://ex.org/name> "Amsterdam" .
+        }
+      - |
+        SELECT ?name ?age WHERE {
+          ?s a <http://ex.org/Person> .
+          ?s <http://ex.org/name> ?name .
+          ?s <http://ex.org/age> ?age .
+        } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: query_type_of_resource
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/jules> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Actor> .
+        }
+      - |
+        SELECT ?type WHERE {
+          <http://ex.org/jules> a ?type .
+        }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: distinct_removes_duplicates
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/likes> "jazz" .
+          <http://ex.org/gus> <http://ex.org/likes> "jazz" .
+          <http://ex.org/vincent> <http://ex.org/likes> "rock" .
+          <http://ex.org/jules> <http://ex.org/likes> "jazz" .
+        }
+      - |
+        SELECT DISTINCT ?genre WHERE {
+          ?s <http://ex.org/likes> ?genre .
+        }
+    expect:
+      count: 2
+
+  - name: distinct_with_multiple_variables
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/alix> <http://ex.org/lang> "Dutch" .
+          <http://ex.org/gus> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/lang> "Dutch" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+          <http://ex.org/vincent> <http://ex.org/lang> "French" .
+        }
+      - |
+        SELECT DISTINCT ?city ?lang WHERE {
+          ?s <http://ex.org/city> ?city .
+          ?s <http://ex.org/lang> ?lang .
+        }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # SELECT * wildcard
+  # ---------------------------------------------------------------------------
+
+  - name: select_star_single_pattern
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        SELECT * WHERE {
+          <http://ex.org/alix> <http://ex.org/name> ?name .
+        }
+    expect:
+      count: 1
+
+  - name: select_star_multi_pattern
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+        }
+      - |
+        SELECT * WHERE {
+          <http://ex.org/gus> <http://ex.org/name> ?name .
+          <http://ex.org/gus> <http://ex.org/city> ?city .
+        }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # PREFIX usage
+  # ---------------------------------------------------------------------------
+
+  - name: prefix_with_prefixed_names
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+        }
+      - |
+        PREFIX ex: <http://ex.org/>
+        SELECT ?name ?city WHERE {
+          ?s ex:name ?name .
+          ?s ex:city ?city .
+        } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Amsterdam]
+        - [Gus, Berlin]
+
+  - name: multiple_prefix_declarations
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+          <http://ex.org/jules> <http://schema.org/name> "Jules" .
+          <http://ex.org/jules> <http://ex.org/city> "Prague" .
+        }
+      - |
+        PREFIX ex: <http://ex.org/>
+        PREFIX schema: <http://schema.org/>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        SELECT ?name ?city WHERE {
+          ?s rdf:type schema:Person .
+          ?s schema:name ?name .
+          ?s ex:city ?city .
+        }
+    expect:
+      rows:
+        - [Jules, Prague]
+
+  # ---------------------------------------------------------------------------
+  # Literal and URI matching
+  # ---------------------------------------------------------------------------
+
+  - name: match_specific_string_literal
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+      - |
+        SELECT ?s WHERE {
+          ?s <http://ex.org/name> "Vincent" .
+        }
+    expect:
+      count: 1
+
+  - name: match_numeric_literal
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "100" .
+          <http://ex.org/gus> <http://ex.org/score> "85" .
+          <http://ex.org/vincent> <http://ex.org/score> "100" .
+        }
+      - |
+        SELECT ?s WHERE {
+          ?s <http://ex.org/score> "100" .
+        }
+    expect:
+      count: 2
+
+  - name: match_uri_as_object
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/livesIn> <http://ex.org/amsterdam> .
+          <http://ex.org/gus> <http://ex.org/livesIn> <http://ex.org/berlin> .
+          <http://ex.org/vincent> <http://ex.org/livesIn> <http://ex.org/amsterdam> .
+        }
+      - |
+        SELECT ?person WHERE {
+          ?person <http://ex.org/livesIn> <http://ex.org/amsterdam> .
+        }
+    expect:
+      count: 2
+
+  - name: match_grounded_subject_and_predicate
+    statements:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+      - |
+        SELECT ?val WHERE {
+          <http://ex.org/alix> <http://ex.org/city> ?val .
+        }
+    expect:
+      rows:
+        - [Amsterdam]

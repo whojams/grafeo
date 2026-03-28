@@ -1,0 +1,155 @@
+# Gremlin edge operations: g.E() label filters, edge drop, bothV(),
+#                         hasId(), edge creation patterns
+#
+# Covers edge-centric traversals and mutations not exercised elsewhere.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Edges: Alix-KNOWS{since:2020}->Gus, Gus-KNOWS{since:2021}->Vincent,
+#          Alix-WORKS_AT{role:'Engineer',since:2019}->Grafeo OSS
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "edge-operations"
+  title: Edge Operations
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # g.E() with hasLabel()
+  # ---------------------------------------------------------------------------
+
+  - name: g_e_has_label_knows
+    skip: "g.E().hasLabel() does not resolve edge labels correctly"
+    query: "g.E().hasLabel('KNOWS').count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: g_e_has_label_works_at
+    skip: "g.E().hasLabel() does not resolve edge labels correctly"
+    query: "g.E().hasLabel('WORKS_AT').count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: g_e_has_label_no_match
+    skip: "g.E().hasLabel() does not resolve edge labels correctly"
+    query: "g.E().hasLabel('FOLLOWS')"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # g.E() drop with label filter
+  # ---------------------------------------------------------------------------
+
+  - name: drop_edge_by_label
+    skip: "depends on g.E().hasLabel() fix"
+    statements:
+      - "g.addV('X').property('name', 'src')"
+      - "g.addV('X').property('name', 'dst')"
+      - "g.V().has('X', 'name', 'src').addE('TEMP').to(g.V().has('X', 'name', 'dst'))"
+      - "g.E().hasLabel('TEMP').drop()"
+      - "g.E().hasLabel('TEMP').count()"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # bothV() step
+  # ---------------------------------------------------------------------------
+
+  - name: both_v_out_edges
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').bothV().count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: both_v_in_edges
+    query: "g.V().has('Person', 'name', 'Gus').inE('KNOWS').bothV().count()"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # hasId() by vertex ID
+  # ---------------------------------------------------------------------------
+
+  - name: has_id_after_id_step
+    # Get Alix's ID via id(), then look it up. Since IDs are auto-generated,
+    # we test indirectly: id() should return exactly 1 value, and the vertex
+    # count is at least 1.
+    query: "g.V().has('Person', 'name', 'Alix').id()"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Mid-traversal V() step (addE pattern)
+  # ---------------------------------------------------------------------------
+
+  - name: mid_traversal_v_step
+    skip: "V() only recognized as source, not as step"
+    setup:
+      - "g.addV('Tmp').property('name', 'x')"
+      - "g.addV('Tmp').property('name', 'y')"
+    query: "g.V().has('Tmp', 'name', 'x').as('a').V().has('Tmp', 'name', 'y').addE('LINK').from('a')"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Source-level addE with sub-traversals
+  # ---------------------------------------------------------------------------
+
+  - name: source_add_e_sub_traversal
+    skip: "sub-traversal in from()/to() at source level not supported"
+    setup:
+      - "g.addV('Tmp').property('name', 'p')"
+      - "g.addV('Tmp').property('name', 'q')"
+      - "g.addE('LINK').from(V().has('Tmp', 'name', 'p')).to(V().has('Tmp', 'name', 'q'))"
+    query: "g.V().has('Tmp', 'name', 'p').out('LINK').values('name')"
+    expect:
+      rows:
+        - [q]
+
+  # ---------------------------------------------------------------------------
+  # Edge creation via step-level addE (working pattern)
+  # ---------------------------------------------------------------------------
+
+  - name: step_add_e_to_traversal
+    setup:
+      - "g.V().has('Person', 'name', 'Vincent').addE('KNOWS').to(g.V().has('Person', 'name', 'Alix')).property('since', 2024)"
+    query: "g.V().has('Person', 'name', 'Vincent').out('KNOWS').values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Edge property access and filtering via outE/inE
+  # ---------------------------------------------------------------------------
+
+  - name: edge_property_via_has
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').has('since', 2020).inV().values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: edge_values_step
+    query: "g.V().has('Person', 'name', 'Alix').outE('WORKS_AT').values('role')"
+    expect:
+      rows:
+        - [Engineer]
+
+  - name: outE_inV_chain
+    query: "g.V().has('Person', 'name', 'Alix').outE('KNOWS').inV().values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: inE_outV_chain
+    query: "g.V().has('Person', 'name', 'Gus').inE('KNOWS').outV().values('name')"
+    expect:
+      rows:
+        - [Alix]

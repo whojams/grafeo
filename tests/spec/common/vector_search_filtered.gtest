@@ -1,0 +1,194 @@
+# Common: Filtered vector search
+#
+# Covers: vector similarity with property filters, label filters,
+# combined MATCH patterns, and multi-condition WHERE clauses.
+
+meta:
+  language: gql
+  model: lpg
+  section: vector-filtered
+  title: Filtered vector search
+  dataset: empty
+  requires: [vector-index]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Property filter with cosine similarity
+  # ---------------------------------------------------------------------------
+
+  - name: cosine_similarity_with_property_filter
+    setup:
+      - "INSERT (:Doc {id: 'a', category: 'science', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', category: 'science', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', category: 'art', embedding: vector([0.8, 0.2, 0.0])})"
+      - "INSERT (:Doc {id: 'd', category: 'art', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WHERE n.category = 'science'
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      count: 2
+
+  - name: cosine_similarity_art_category_only
+    setup:
+      - "INSERT (:Doc {id: 'a', category: 'science', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', category: 'art', embedding: vector([0.8, 0.2, 0.0])})"
+      - "INSERT (:Doc {id: 'c', category: 'art', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WHERE n.category = 'art'
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Label filter: only nodes with specific label
+  # ---------------------------------------------------------------------------
+
+  - name: similarity_across_labels
+    setup:
+      - "INSERT (:Article {id: 'a1', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Article {id: 'a2', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Book {id: 'b1', embedding: vector([0.9, 0.1, 0.0])})"
+    query: |
+      MATCH (n:Article)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Combined property + similarity threshold
+  # ---------------------------------------------------------------------------
+
+  - name: filter_by_property_and_threshold
+    setup:
+      - "INSERT (:Doc {id: 'a', category: 'science', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', category: 'science', embedding: vector([0.5, 0.5, 0.0])})"
+      - "INSERT (:Doc {id: 'c', category: 'art', embedding: vector([0.95, 0.05, 0.0])})"
+      - "INSERT (:Doc {id: 'd', category: 'science', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WHERE n.category = 'science'
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      WHERE s > 0.5
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      count: 2
+
+  - name: no_results_when_filter_excludes_all
+    setup:
+      - "INSERT (:Doc {id: 'a', category: 'science', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', category: 'art', embedding: vector([0.9, 0.1, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WHERE n.category = 'history'
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Vector similarity with graph pattern (relationships)
+  # ---------------------------------------------------------------------------
+
+  - name: similarity_with_relationship_pattern
+    setup:
+      - "INSERT (:Author {name: 'Alix'})"
+      - "INSERT (:Doc {id: 'd1', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd2', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd3', embedding: vector([0.9, 0.1, 0.0])})"
+      - "MATCH (a:Author {name: 'Alix'}), (d:Doc {id: 'd1'}) INSERT (a)-[:WROTE]->(d)"
+      - "MATCH (a:Author {name: 'Alix'}), (d:Doc {id: 'd3'}) INSERT (a)-[:WROTE]->(d)"
+    query: |
+      MATCH (a:Author {name: 'Alix'})-[:WROTE]->(d:Doc)
+      WITH d, cosine_similarity(d.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN d.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      count: 2
+
+  - name: similarity_excludes_unlinked_docs
+    setup:
+      - "INSERT (:Author {name: 'Gus'})"
+      - "INSERT (:Doc {id: 'd1', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd2', embedding: vector([0.95, 0.05, 0.0])})"
+      - "MATCH (a:Author {name: 'Gus'}), (d:Doc {id: 'd1'}) INSERT (a)-[:WROTE]->(d)"
+    query: |
+      MATCH (a:Author {name: 'Gus'})-[:WROTE]->(d:Doc)
+      WITH d, cosine_similarity(d.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN d.id AS id
+    expect:
+      rows:
+        - [d1]
+
+  # ---------------------------------------------------------------------------
+  # Multiple distance metrics as filters
+  # ---------------------------------------------------------------------------
+
+  - name: euclidean_distance_with_property_filter
+    setup:
+      - "INSERT (:Doc {id: 'a', category: 'ml', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', category: 'ml', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'c', category: 'db', embedding: vector([0.9, 0.1, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WHERE n.category = 'ml'
+      WITH n, euclidean_distance(n.embedding, vector([1.0, 0.0, 0.0])) AS d
+      RETURN n.id AS id, d
+      ORDER BY d ASC
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # k-NN with LIMIT on filtered results
+  # ---------------------------------------------------------------------------
+
+  - name: knn_top_2_with_category_filter
+    setup:
+      - "INSERT (:Doc {id: 'a', category: 'science', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', category: 'science', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', category: 'science', embedding: vector([0.5, 0.5, 0.0])})"
+      - "INSERT (:Doc {id: 'd', category: 'art', embedding: vector([0.95, 0.05, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WHERE n.category = 'science'
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+      LIMIT 2
+    expect:
+      ordered: true
+      count: 2
+
+  - name: knn_top_1_with_relationship_filter
+    setup:
+      - "INSERT (:Author {name: 'Alix'})"
+      - "INSERT (:Doc {id: 'd1', embedding: vector([0.5, 0.5, 0.0])})"
+      - "INSERT (:Doc {id: 'd2', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd3', embedding: vector([0.0, 1.0, 0.0])})"
+      - "MATCH (a:Author {name: 'Alix'}), (d:Doc {id: 'd1'}) INSERT (a)-[:WROTE]->(d)"
+      - "MATCH (a:Author {name: 'Alix'}), (d:Doc {id: 'd2'}) INSERT (a)-[:WROTE]->(d)"
+      - "MATCH (a:Author {name: 'Alix'}), (d:Doc {id: 'd3'}) INSERT (a)-[:WROTE]->(d)"
+    query: |
+      MATCH (a:Author {name: 'Alix'})-[:WROTE]->(d:Doc)
+      WITH d, cosine_similarity(d.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN d.id AS id, s
+      ORDER BY s DESC
+      LIMIT 1
+    expect:
+      ordered: true
+      count: 1

@@ -1,0 +1,327 @@
+# Cypher expressions: arithmetic, comparison, string predicates, CASE, comprehensions
+#
+# Converted from Python spec tests (test_05_expressions.py).
+
+meta:
+  language: cypher
+  model: lpg
+  section: "5"
+  title: Expressions
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Arithmetic Operators
+  # ---------------------------------------------------------------------------
+
+  - name: addition
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v + 5 AS r
+    expect:
+      rows:
+        - [15]
+
+  - name: subtraction
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v - 3 AS r
+    expect:
+      rows:
+        - [7]
+
+  - name: multiplication
+    setup:
+      - "CREATE (:N {v: 6})"
+    query: MATCH (n:N) RETURN n.v * 7 AS r
+    expect:
+      rows:
+        - [42]
+
+  - name: division
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v / 2 AS r
+    expect:
+      rows:
+        - [5]
+
+  - name: modulo
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v % 3 AS r
+    expect:
+      rows:
+        - [1]
+
+  - name: power
+    setup:
+      - "CREATE (:N {v: 3})"
+    query: MATCH (n:N) RETURN n.v ^ 2 AS r
+    expect:
+      rows:
+        - [9]
+
+  - name: unary_minus
+    setup:
+      - "CREATE (:N {v: 5})"
+    query: MATCH (n:N) RETURN -n.v AS r
+    expect:
+      rows:
+        - [-5]
+
+  - name: string_concat
+    setup:
+      - "CREATE (:N {a: 'hello', b: 'world'})"
+    query: "MATCH (n:N) RETURN n.a + ' ' + n.b AS r"
+    expect:
+      rows:
+        - [hello world]
+
+  # ---------------------------------------------------------------------------
+  # Comparison Operators
+  # ---------------------------------------------------------------------------
+
+  - name: equals
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) WHERE n.v = 10 RETURN n.v
+    expect:
+      rows:
+        - [10]
+
+  - name: not_equals
+    setup:
+      - "CREATE (:N {v: 10})"
+      - "CREATE (:N {v: 20})"
+    query: MATCH (n:N) WHERE n.v <> 10 RETURN n.v
+    expect:
+      rows:
+        - [20]
+
+  - name: less_than
+    setup:
+      - "CREATE (:N {v: 5})"
+      - "CREATE (:N {v: 15})"
+    query: MATCH (n:N) WHERE n.v < 10 RETURN n.v
+    expect:
+      rows:
+        - [5]
+
+  - name: greater_equal
+    setup:
+      - "CREATE (:N {v: 10})"
+      - "CREATE (:N {v: 5})"
+    query: MATCH (n:N) WHERE n.v >= 10 RETURN n.v
+    expect:
+      rows:
+        - [10]
+
+  # ---------------------------------------------------------------------------
+  # String Predicates
+  # ---------------------------------------------------------------------------
+
+  - name: starts_with
+    setup:
+      - "CREATE (:N {v: 'Amsterdam'})"
+      - "CREATE (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v STARTS WITH 'Am' RETURN n.v"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: ends_with
+    setup:
+      - "CREATE (:N {v: 'Amsterdam'})"
+      - "CREATE (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v ENDS WITH 'in' RETURN n.v"
+    expect:
+      rows:
+        - [Berlin]
+
+  - name: contains
+    setup:
+      - "CREATE (:N {v: 'Amsterdam'})"
+      - "CREATE (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v CONTAINS 'ster' RETURN n.v"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: in_list
+    setup:
+      - "CREATE (:N {v: 'a'})"
+      - "CREATE (:N {v: 'b'})"
+      - "CREATE (:N {v: 'c'})"
+    query: "MATCH (n:N) WHERE n.v IN ['a', 'c'] RETURN n.v"
+    expect:
+      count: 2
+
+  - name: regex_match
+    setup:
+      - "CREATE (:N {v: 'Amsterdam'})"
+      - "CREATE (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v =~ 'Am.*' RETURN n.v"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: is_null
+    setup:
+      - "CREATE (:N {v: 1})"
+      - "CREATE (:N {w: 2})"
+    query: MATCH (n:N) WHERE n.v IS NULL RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  - name: is_not_null
+    setup:
+      - "CREATE (:N {v: 1})"
+      - "CREATE (:N {w: 2})"
+    query: MATCH (n:N) WHERE n.v IS NOT NULL RETURN n.v
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Expression Forms: CASE, list comprehension, list slice
+  # ---------------------------------------------------------------------------
+
+  - name: case_simple
+    setup:
+      - "CREATE (:N {v: 'Amsterdam'})"
+    query: "MATCH (n:N) RETURN CASE n.v WHEN 'Amsterdam' THEN 'NL' WHEN 'Berlin' THEN 'DE' END AS r"
+    expect:
+      rows:
+        - [NL]
+
+  - name: case_searched
+    setup:
+      - "CREATE (:N {v: 30})"
+    query: "MATCH (n:N) RETURN CASE WHEN n.v > 25 THEN 'high' ELSE 'low' END AS r"
+    expect:
+      rows:
+        - [high]
+
+  - name: list_literal
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [1, 2, 3] AS r"
+    expect:
+      rows:
+        - ["[1, 2, 3]"]
+
+  - name: list_comprehension
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [x IN [1,2,3,4,5] WHERE x > 2 | x * 10] AS r"
+    expect:
+      rows:
+        - ["[30, 40, 50]"]
+
+  - name: list_comprehension_filter_only
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [x IN [1,2,3,4] WHERE x > 2] AS r"
+    expect:
+      rows:
+        - ["[3, 4]"]
+
+  - name: list_slice
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [1,2,3,4,5][1..3] AS r"
+    expect:
+      rows:
+        - ["[2, 3]"]
+
+  - name: index_access
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [10, 20, 30][1] AS r"
+    expect:
+      rows:
+        - [20]
+
+  - name: coalesce
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: "MATCH (n:N) RETURN coalesce(n.missing, n.v, 99) AS r"
+    expect:
+      rows:
+        - [10]
+
+  - name: reduce
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN reduce(acc = 0, x IN [1,2,3,4] | acc + x) AS r"
+    expect:
+      rows:
+        - [10]
+
+  # ---------------------------------------------------------------------------
+  # List Predicates
+  # ---------------------------------------------------------------------------
+
+  - name: all_predicate
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN all(x IN [2, 4, 6] WHERE x % 2 = 0) AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: any_predicate
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN any(x IN [1, 2, 3] WHERE x > 2) AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: none_predicate
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN none(x IN [1, 2, 3] WHERE x > 5) AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: single_predicate
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: "MATCH (n:N) RETURN single(x IN [1, 2, 3] WHERE x > 2) AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: any_with_labels_in_where
+    setup:
+      - "CREATE (:Graph:MyNS {name: 'test'})"
+      - "CREATE (:Graph:Other {name: 'skip'})"
+    query: "MATCH (n) WHERE any(label IN labels(n) WHERE label STARTS WITH 'My') RETURN n.name"
+    expect:
+      rows:
+        - [test]
+
+  # ---------------------------------------------------------------------------
+  # Return Expressions
+  # ---------------------------------------------------------------------------
+
+  - name: comparison_in_return
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v > 5 AS r
+    expect:
+      rows:
+        - [true]
+
+  - name: aggregate_comparison_in_return
+    setup:
+      - "CREATE (:N {v: 1})"
+    query: MATCH (n:N) RETURN count(n) > 0 AS r
+    expect:
+      rows:
+        - [true]

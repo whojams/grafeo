@@ -1,0 +1,304 @@
+# Graph Algorithms: Extended procedures
+#
+# Tests CALL procedures for MST, network flow, and additional shortest path
+# algorithms. Complements the base algorithms.gtest file.
+
+meta:
+  language: gql
+  model: lpg
+  section: "25.1"
+  title: Graph Algorithms (Extended)
+  dataset: empty
+  requires: [algos]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Bellman-Ford Shortest Paths
+  # ---------------------------------------------------------------------------
+
+  - name: bellman_ford_unweighted
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.bellman_ford({source: 0})"
+    expect:
+      columns: [node_id, distance, has_negative_cycle]
+      count: 3
+
+  - name: bellman_ford_weighted
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 500}]->(b)"
+    query: "CALL grafeo.bellman_ford({source: 0, weight: 'km'})"
+    expect:
+      count: 3
+
+  - name: bellman_ford_yield_distance_only
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.bellman_ford({source: 0}) YIELD node_id, distance"
+    expect:
+      columns: [node_id, distance]
+      count: 2
+
+  - name: bellman_ford_single_node
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: "CALL grafeo.bellman_ford({source: 0})"
+    expect:
+      count: 1
+
+  - name: bellman_ford_empty_graph
+    query: "CALL grafeo.bellman_ford({source: 0})"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Floyd-Warshall All-Pairs Shortest Paths
+  # ---------------------------------------------------------------------------
+
+  - name: floyd_warshall_triangle
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Paris'}), (b:City {name: 'Amsterdam'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.floyd_warshall()"
+    expect:
+      columns: [source, target, distance]
+      count: 9
+
+  - name: floyd_warshall_weighted
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+    query: "CALL grafeo.floyd_warshall({weight: 'km'})"
+    expect:
+      columns: [source, target, distance]
+
+  - name: floyd_warshall_chain
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.floyd_warshall()"
+    expect:
+      count: 6
+
+  - name: floyd_warshall_single_node
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: "CALL grafeo.floyd_warshall()"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Kruskal MST
+  # ---------------------------------------------------------------------------
+
+  - name: kruskal_weighted_triangle
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 500}]->(b)"
+    query: "CALL grafeo.kruskal({weight: 'km'})"
+    expect:
+      columns: [source, target, weight]
+      count: 2
+
+  - name: kruskal_unweighted_chain
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.kruskal()"
+    expect:
+      count: 2
+
+  - name: kruskal_single_node
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: "CALL grafeo.kruskal()"
+    expect:
+      empty: true
+
+  - name: kruskal_empty_graph
+    query: "CALL grafeo.kruskal()"
+    expect:
+      empty: true
+
+  - name: kruskal_yield_weight_only
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+    query: "CALL grafeo.kruskal({weight: 'km'}) YIELD source, target, weight"
+    expect:
+      columns: [source, target, weight]
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Prim MST
+  # ---------------------------------------------------------------------------
+
+  - name: prim_weighted_triangle
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 500}]->(b)"
+    query: "CALL grafeo.prim({weight: 'km'})"
+    expect:
+      columns: [source, target, weight]
+      count: 2
+
+  - name: prim_with_start_node
+    # Prim starting from node 1 (Berlin) in a 3-node graph
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 500}]->(b)"
+    query: "CALL grafeo.prim({weight: 'km', start: 1})"
+    expect:
+      count: 1
+
+  - name: prim_single_node
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+    query: "CALL grafeo.prim()"
+    expect:
+      empty: true
+
+  - name: prim_empty_graph
+    query: "CALL grafeo.prim()"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Max Flow
+  # ---------------------------------------------------------------------------
+
+  - name: max_flow_simple_network
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "INSERT (:Station {name: 'Vincent'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE {capacity: 5}]->(b)"
+      - "MATCH (a:Station {name: 'Gus'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE {capacity: 3}]->(b)"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE {capacity: 2}]->(b)"
+    query: "CALL grafeo.max_flow({source: 0, sink: 2, capacity: 'capacity'})"
+    expect:
+      columns: [source, target, flow, max_flow]
+
+  - name: max_flow_linear_chain
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "INSERT (:Station {name: 'Vincent'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE {capacity: 10}]->(b)"
+      - "MATCH (a:Station {name: 'Gus'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE {capacity: 3}]->(b)"
+    query: "CALL grafeo.max_flow({source: 0, sink: 2, capacity: 'capacity'})"
+    expect:
+      count: 2
+
+  - name: max_flow_default_capacity
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "INSERT (:Station {name: 'Vincent'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE]->(b)"
+      - "MATCH (a:Station {name: 'Gus'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE]->(b)"
+    query: "CALL grafeo.max_flow({source: 0, sink: 2})"
+    expect:
+      count: 2
+
+  - name: max_flow_no_path
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+    query: "CALL grafeo.max_flow({source: 0, sink: 1})"
+    expect:
+      count: 1
+
+  - name: max_flow_yield_flow_only
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE {capacity: 7}]->(b)"
+    query: "CALL grafeo.max_flow({source: 0, sink: 1, capacity: 'capacity'}) YIELD source, target, flow"
+    expect:
+      columns: [source, target, flow]
+
+  # ---------------------------------------------------------------------------
+  # Min Cost Max Flow
+  # ---------------------------------------------------------------------------
+
+  - name: min_cost_max_flow_simple_network
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "INSERT (:Station {name: 'Vincent'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE {capacity: 3, cost: 1}]->(b)"
+      - "MATCH (a:Station {name: 'Gus'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE {capacity: 2, cost: 2}]->(b)"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE {capacity: 2, cost: 5}]->(b)"
+    query: "CALL grafeo.min_cost_max_flow({source: 0, sink: 2, capacity: 'capacity', cost: 'cost'})"
+    expect:
+      columns: [source, target, flow, cost, max_flow]
+
+  - name: min_cost_max_flow_chain
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "INSERT (:Station {name: 'Vincent'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE {capacity: 5, cost: 3}]->(b)"
+      - "MATCH (a:Station {name: 'Gus'}), (b:Station {name: 'Vincent'}) INSERT (a)-[:PIPE {capacity: 4, cost: 2}]->(b)"
+    query: "CALL grafeo.min_cost_max_flow({source: 0, sink: 2, capacity: 'capacity', cost: 'cost'})"
+    expect:
+      count: 2
+
+  - name: min_cost_max_flow_no_path
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+    query: "CALL grafeo.min_cost_max_flow({source: 0, sink: 1, capacity: 'capacity', cost: 'cost'})"
+    expect:
+      empty: true
+
+  - name: min_cost_max_flow_yield_subset
+    setup:
+      - "INSERT (:Station {name: 'Alix'})"
+      - "INSERT (:Station {name: 'Gus'})"
+      - "MATCH (a:Station {name: 'Alix'}), (b:Station {name: 'Gus'}) INSERT (a)-[:PIPE {capacity: 4, cost: 3}]->(b)"
+    query: "CALL grafeo.min_cost_max_flow({source: 0, sink: 1, capacity: 'capacity', cost: 'cost'}) YIELD flow, cost"
+    expect:
+      columns: [flow, cost]
+      count: 1

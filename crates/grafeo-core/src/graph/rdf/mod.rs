@@ -34,9 +34,11 @@
 //! }
 //! ```
 
+pub mod nquads;
 mod store;
 mod term;
 mod triple;
+pub mod turtle;
 
 pub use store::{BulkLoadResult, NTriplesError, RdfStore, RdfStoreConfig};
 pub use term::{BlankNode, Iri, Literal, Term};

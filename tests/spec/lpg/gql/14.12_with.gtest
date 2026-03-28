@@ -1,0 +1,112 @@
+# GQL WITH clause: ISO/IEC 39075:2024 sec 14.12
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.12"
+  title: WITH clause
+  dataset: empty
+
+tests:
+
+  - name: with_simple_projection
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: |
+      MATCH (n:Person)
+      WITH n.name AS name, n.age AS age
+      RETURN name, age
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: with_node_passthrough
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: "MATCH (n:Person {name: 'Alix'}) WITH n RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: with_arithmetic_expression
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: |
+      MATCH (n:Person)
+      WITH n.name AS name, n.age * 2 AS doubled
+      RETURN name, doubled
+    expect:
+      rows:
+        - [Alix, 60]
+
+  - name: with_distinct_deduplicates
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+    query: |
+      MATCH (n:Person)
+      WITH DISTINCT n.city AS city
+      RETURN city
+    expect:
+      rows:
+        - [Amsterdam]
+        - [Berlin]
+
+  - name: with_where_filters
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "INSERT (:Person {name: 'Gus', age: 25})"
+      - "INSERT (:Person {name: 'Vincent', age: 35})"
+    query: |
+      MATCH (n:Person)
+      WITH n WHERE n.age > 28
+      RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: with_where_eliminates_all
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "INSERT (:Person {name: 'Gus', age: 25})"
+    query: |
+      MATCH (n:Person)
+      WITH n WHERE n.age > 100
+      RETURN n.name
+    expect:
+      empty: true
+
+  - name: with_star_passes_all_variables
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: "MATCH (n:Person) WITH * RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: with_star_where_filter
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "INSERT (:Person {name: 'Gus', age: 25})"
+      - "INSERT (:Person {name: 'Vincent', age: 35})"
+    query: "MATCH (n:Person) WITH * WHERE n.age > 28 RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: with_then_aggregate_in_return
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+    query: |
+      MATCH (n:Person)
+      WITH n
+      RETURN n.city AS city, count(n) AS cnt
+    expect:
+      rows:
+        - [Amsterdam, 2]
+        - [Berlin, 1]

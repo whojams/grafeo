@@ -1,0 +1,152 @@
+# Cypher return and ordering: RETURN, ORDER BY, SKIP, LIMIT
+#
+# Converted from Python spec tests (test_02_return_ordering.py).
+
+meta:
+  language: cypher
+  model: lpg
+  section: "2"
+  title: Return and Ordering
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # RETURN
+  # ---------------------------------------------------------------------------
+
+  - name: return_expression
+    setup:
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+    query: MATCH (n:Person) RETURN n.name, n.age
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: return_alias
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: MATCH (n:Person) RETURN n.name AS person_name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: return_distinct
+    setup:
+      - "CREATE (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "CREATE (:Person {name: 'Gus', city: 'Amsterdam'})"
+    query: MATCH (n:Person) RETURN DISTINCT n.city
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: return_star
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+    query: MATCH (n:Person) RETURN *
+    expect:
+      count: 1
+
+  - name: return_count_star
+    setup:
+      - "CREATE (:Person {name: 'Alix'})"
+      - "CREATE (:Person {name: 'Gus'})"
+    query: MATCH (n:Person) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: return_arithmetic
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v + 5 AS r
+    expect:
+      rows:
+        - [15]
+
+  - name: return_boolean_expression
+    setup:
+      - "CREATE (:N {v: 10})"
+    query: MATCH (n:N) RETURN n.v > 5 AS r
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_asc
+    setup:
+      - "CREATE (:Person {name: 'Gus', age: 25})"
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+        - [Alix]
+
+  - name: order_by_desc
+    setup:
+      - "CREATE (:Person {name: 'Gus', age: 25})"
+      - "CREATE (:Person {name: 'Alix', age: 30})"
+    query: MATCH (n:Person) RETURN n.name ORDER BY n.age DESC
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+
+  - name: order_by_multiple_keys
+    setup:
+      - "CREATE (:Person {name: 'Alix', city: 'Amsterdam', age: 30})"
+      - "CREATE (:Person {name: 'Gus', city: 'Amsterdam', age: 25})"
+      - "CREATE (:Person {name: 'Vincent', city: 'Berlin', age: 35})"
+    query: "MATCH (n:Person) RETURN n.name ORDER BY n.city ASC, n.age DESC"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Gus]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # SKIP / LIMIT
+  # ---------------------------------------------------------------------------
+
+  - name: limit
+    setup:
+      - "CREATE (:Item {val: 0})"
+      - "CREATE (:Item {val: 1})"
+      - "CREATE (:Item {val: 2})"
+      - "CREATE (:Item {val: 3})"
+      - "CREATE (:Item {val: 4})"
+    query: MATCH (n:Item) RETURN n.val LIMIT 3
+    expect:
+      count: 3
+
+  - name: skip
+    setup:
+      - "CREATE (:Item {val: 0})"
+      - "CREATE (:Item {val: 1})"
+      - "CREATE (:Item {val: 2})"
+      - "CREATE (:Item {val: 3})"
+      - "CREATE (:Item {val: 4})"
+    query: MATCH (n:Item) RETURN n.val ORDER BY n.val SKIP 3
+    expect:
+      count: 2
+
+  - name: skip_and_limit
+    setup:
+      - "CREATE (:Item {val: 0})"
+      - "CREATE (:Item {val: 1})"
+      - "CREATE (:Item {val: 2})"
+      - "CREATE (:Item {val: 3})"
+      - "CREATE (:Item {val: 4})"
+    query: MATCH (n:Item) RETURN n.val ORDER BY n.val SKIP 1 LIMIT 2
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [2]

@@ -1,0 +1,174 @@
+# Gremlin extended predicates: multi-label, inside/outside edge cases,
+#                             regex, has(key) existence, compound predicates
+#
+# Covers predicate paths not exercised in other gremlin .gtest files.
+#
+# Social network topology (from dataset):
+#   Persons: Alix(30, Amsterdam), Gus(25, Berlin), Vincent(35, Paris)
+#   Company: Grafeo OSS (founded 2025)
+#   Edges: Alix-KNOWS->Gus, Gus-KNOWS->Vincent, Alix-WORKS_AT->Grafeo OSS
+
+meta:
+  language: gremlin
+  model: lpg
+  section: "predicates-extended"
+  title: Extended Predicates
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Multi-label hasLabel()
+  # ---------------------------------------------------------------------------
+
+  - name: has_label_multiple_all
+    query: "g.V().hasLabel('Person', 'Company').count()"
+    expect:
+      rows:
+        - [4]
+
+  - name: has_label_multiple_partial
+    query: "g.V().hasLabel('Person', 'NonExistent').count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: has_label_multiple_single_match
+    query: "g.V().hasLabel('Company', 'Animal').count()"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # has(key) existence check
+  # ---------------------------------------------------------------------------
+
+  - name: has_key_founded
+    query: "g.V().has('founded').count()"
+    expect:
+      rows:
+        - [1]
+
+  - name: has_key_city
+    query: "g.V().has('city').count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: has_key_nonexistent
+    query: "g.V().has('nonexistent').count()"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # inside() boundary edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: inside_excludes_both_boundaries
+    query: "g.V().has('age', inside(25, 35)).values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: inside_wide_range
+    query: "g.V().has('age', inside(24, 36)).count()"
+    expect:
+      rows:
+        - [3]
+
+  - name: inside_excludes_lower_boundary
+    query: "g.V().has('age', inside(30, 36)).values('name')"
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: inside_excludes_upper_boundary
+    query: "g.V().has('age', inside(24, 30)).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: inside_no_match
+    query: "g.V().has('age', inside(26, 29))"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # outside() boundary edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: outside_matches_both_tails
+    query: "g.V().hasLabel('Person').has('age', outside(26, 34)).count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: outside_excludes_boundaries
+    query: "g.V().hasLabel('Person').has('age', outside(25, 35))"
+    expect:
+      empty: true
+
+  - name: outside_equal_boundaries
+    query: "g.V().hasLabel('Person').has('age', outside(30, 30)).count()"
+    expect:
+      rows:
+        - [2]
+
+  - name: outside_narrow_range
+    query: "g.V().hasLabel('Person').has('age', outside(29, 31)).count()"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # regex() predicate
+  # ---------------------------------------------------------------------------
+
+  - name: regex_prefix
+    skip: "regex() not wired in parser (token exists but parse_predicate does not match it)"
+    query: "g.V().hasLabel('Person').has('name', regex('A.*')).values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: regex_suffix
+    skip: "regex() not wired in parser"
+    query: "g.V().hasLabel('Person').has('city', regex('.*in$')).values('name')"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: regex_substring
+    skip: "regex() not wired in parser"
+    query: "g.V().hasLabel('Person').has('city', regex('.*er.*')).count()"
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Compound predicates P.and(), P.or(), P.not()
+  # ---------------------------------------------------------------------------
+
+  - name: compound_and_via_inside
+    # Equivalent to has('age', gt(25).and(lt(35)))
+    query: "g.V().hasLabel('Person').has('age', inside(25, 35)).values('name')"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: compound_or_via_outside
+    # Equivalent to has('age', lt(26).or(gt(34)))
+    query: "g.V().hasLabel('Person').has('age', outside(26, 34)).values('name')"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]
+
+  - name: compound_not_via_without_single
+    # Equivalent to has('age', not(eq(30)))
+    query: "g.V().hasLabel('Person').has('age', without(30)).values('name')"
+    expect:
+      rows:
+        - [Gus]
+        - [Vincent]

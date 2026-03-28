@@ -48,23 +48,25 @@ The beta series focuses on correctness, completeness and real-world durability. 
 
 ### What's left in 0.5
 
-- Query language spec compliance (GQL ~95%, Cypher ~90%, SPARQL ~98%, SQL/PGQ ~75%)
-- C FFI parity with Python/Node.js surface (so C#, Go and Dart get full coverage)
-- API stability review before freezing for 1.0
+- Full test suite and missing language implementation gaps across all 6 query languages
+- Storage features: single-file `.grafeo` format, async storage backend, cost model calibration
+- Expanded test suite, crash recovery testing (failpoint injection), Jepsen testing for grafeo-server replication
+- Bug fixes, stability monitoring, performance regression gates
 
 ---
 
 ## Next: 0.6, Release Candidate
 
-*Stability and production hardening. No new major features.*
+*No new major features. Bug fixes, community integrations, and quality of life.*
 
 The scope is intentionally narrow:
 
-- **Bug fixes** from real-world 0.5 usage
+- **Bug fixes** from real-world 0.5/6 usage
 - **Performance tuning** informed by actual workloads, not synthetic benchmarks
 - **API ergonomics** and documentation polish
 - **Binary size and compile time** optimization
 - **C FFI parity refactor**: expand grafeo-c to match Python/Node.js API surface, update downstream bindings
+
 
 The goal is confidence: if something works in 0.6, it works in 1.0.
 

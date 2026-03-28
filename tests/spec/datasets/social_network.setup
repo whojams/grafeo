@@ -1,0 +1,10 @@
+# Social Network Dataset
+# 3 Person nodes, 1 Company, 2 KNOWS edges, 1 WORKS_AT edge
+
+INSERT (:Person {name: 'Alix', age: 30, city: 'Amsterdam'})
+INSERT (:Person {name: 'Gus', age: 25, city: 'Berlin'})
+INSERT (:Person {name: 'Vincent', age: 35, city: 'Paris'})
+INSERT (:Company {name: 'Grafeo OSS', founded: 2025})
+MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS {since: 2020}]->(g)
+MATCH (g:Person {name: 'Gus'}), (v:Person {name: 'Vincent'}) INSERT (g)-[:KNOWS {since: 2021}]->(v)
+MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'Grafeo OSS'}) INSERT (a)-[:WORKS_AT {role: 'Engineer', since: 2019}]->(c)

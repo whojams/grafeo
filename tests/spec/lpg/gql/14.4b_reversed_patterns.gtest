@@ -1,0 +1,137 @@
+# GQL reversed pattern testing: algebraic equivalence of direction reversal
+#
+# For each edge pattern, the reversed version (swapping endpoints and flipping
+# the arrow) must return the same results. Inspired by FalkorDB's algebraic
+# testing approach for catching optimizer and pattern matching bugs.
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.4"
+  title: Reversed pattern equivalence
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Single-hop direction reversal
+  # ---------------------------------------------------------------------------
+
+  - name: knows_forward
+    query: "MATCH (a:Person {name: 'Alix'})-[:KNOWS]->(b) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: knows_reversed
+    query: "MATCH (b)<-[:KNOWS]-(a:Person {name: 'Alix'}) RETURN b.name"
+    expect:
+      rows:
+        - [Gus]
+
+  - name: works_at_forward
+    query: "MATCH (a:Person {name: 'Alix'})-[:WORKS_AT]->(c) RETURN c.name"
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  - name: works_at_reversed
+    query: "MATCH (c)<-[:WORKS_AT]-(a:Person {name: 'Alix'}) RETURN c.name"
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # Two-hop direction reversal
+  # ---------------------------------------------------------------------------
+
+  - name: two_hop_forward
+    query: MATCH (a:Person)-[:KNOWS]->(b:Person)-[:KNOWS]->(c:Person) RETURN a.name, c.name
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: two_hop_reversed
+    query: MATCH (c:Person)<-[:KNOWS]-(b:Person)<-[:KNOWS]-(a:Person) RETURN a.name, c.name
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Undirected edge returns both directions
+  # ---------------------------------------------------------------------------
+
+  - name: undirected_knows
+    query: "MATCH (a:Person {name: 'Gus'})-[:KNOWS]-(b) RETURN b.name"
+    expect:
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  # ---------------------------------------------------------------------------
+  # Reversed pattern with WHERE filter
+  # ---------------------------------------------------------------------------
+
+  - name: where_filter_forward
+    query: "MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age > 28 RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: where_filter_reversed
+    query: "MATCH (b:Person)<-[:KNOWS]-(a:Person) WHERE a.age > 28 RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # Reversed pattern with edge property filter
+  # ---------------------------------------------------------------------------
+
+  - name: edge_property_forward
+    query: "MATCH (a)-[r:KNOWS {since: 2020}]->(b) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: edge_property_reversed
+    query: "MATCH (b)<-[r:KNOWS {since: 2020}]-(a) RETURN a.name, b.name"
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # Count equivalence: forward vs reversed
+  # ---------------------------------------------------------------------------
+
+  - name: count_forward
+    query: MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: count_reversed
+    query: MATCH (b:Person)<-[:KNOWS]-(a:Person) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Named path: direction does not affect path capture
+  # ---------------------------------------------------------------------------
+
+  - name: named_path_forward
+    query: |
+      MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->(b:Person)
+      RETURN length(p) AS len
+    expect:
+      rows:
+        - [1]
+
+  - name: named_path_reversed
+    query: |
+      MATCH p = (b:Person)<-[:KNOWS]-(a:Person {name: 'Alix'})
+      RETURN length(p) AS len
+    expect:
+      rows:
+        - [1]

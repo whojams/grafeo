@@ -1,0 +1,268 @@
+# SQL/PGQ GRAPH_TABLE queries: SQL:2023 sec 4.39
+#
+# Covers: basic node matching, SELECT *, WHERE, ORDER BY, LIMIT,
+# OFFSET, SELECT DISTINCT, aggregates (COUNT, GROUP BY, HAVING).
+
+meta:
+  language: sql-pgq
+  model: lpg
+  section: "4.39"
+  title: GRAPH_TABLE queries
+  dataset: social_network
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic GRAPH_TABLE node queries
+  # ---------------------------------------------------------------------------
+
+  - name: select_star_single_column
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      )
+    expect:
+      count: 3
+
+  - name: select_star_multiple_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      )
+    expect:
+      count: 3
+
+  - name: select_specific_column_with_alias
+    query: |
+      SELECT g.name FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Gus, 25]
+        - [Vincent, 35]
+
+  - name: node_label_filter_company
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (c:Company)
+        COLUMNS (c.name AS name)
+      )
+    expect:
+      rows:
+        - [Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # Edge patterns
+  # ---------------------------------------------------------------------------
+
+  - name: directed_edge_pattern
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        COLUMNS (a.name AS person, b.name AS friend)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+        - [Gus, Vincent]
+
+  - name: edge_with_property_in_columns
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[e:KNOWS]->(b:Person)
+        COLUMNS (a.name AS person, b.name AS friend, e.since AS since)
+      )
+    expect:
+      rows:
+        - [Alix, Gus, 2020]
+        - [Gus, Vincent, 2021]
+
+  - name: mixed_node_types_in_edge
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (p:Person)-[w:WORKS_AT]->(c:Company)
+        COLUMNS (p.name AS employee, c.name AS company)
+      )
+    expect:
+      rows:
+        - [Alix, Grafeo OSS]
+
+  # ---------------------------------------------------------------------------
+  # SQL WHERE clause (outer, on table alias)
+  # ---------------------------------------------------------------------------
+
+  - name: where_with_table_alias
+    query: |
+      SELECT g.name FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      WHERE g.age > 28
+    expect:
+      rows:
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: where_string_equality
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.city AS city)
+      ) AS g
+      WHERE g.city = 'Berlin'
+    expect:
+      rows:
+        - [Gus, Berlin]
+
+  # ---------------------------------------------------------------------------
+  # WHERE inside GRAPH_TABLE (graph-level filter)
+  # ---------------------------------------------------------------------------
+
+  - name: where_inside_graph_table
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WHERE a.age > 28
+        COLUMNS (a.name AS source, b.name AS target)
+      )
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY, LIMIT, OFFSET
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_ascending
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      ORDER BY g.age ASC
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  - name: order_by_descending
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      ORDER BY g.age DESC
+    expect:
+      ordered: true
+      rows:
+        - [Vincent, 35]
+        - [Alix, 30]
+        - [Gus, 25]
+
+  - name: limit_restricts_rows
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      ORDER BY g.age DESC
+      LIMIT 2
+    expect:
+      ordered: true
+      rows:
+        - [Vincent, 35]
+        - [Alix, 30]
+
+  - name: offset_skips_rows
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name, n.age AS age)
+      ) AS g
+      ORDER BY g.age ASC
+      LIMIT 10
+      OFFSET 1
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 30]
+        - [Vincent, 35]
+
+  # ---------------------------------------------------------------------------
+  # SELECT DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: select_distinct
+    query: |
+      SELECT DISTINCT source FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source)
+      )
+    expect:
+      rows:
+        - [Alix]
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # COUNT aggregate
+  # ---------------------------------------------------------------------------
+
+  - name: count_in_outer_select
+    query: |
+      SELECT COUNT(*) AS total FROM GRAPH_TABLE (
+        MATCH (n:Person)
+        COLUMNS (n.name AS name)
+      ) AS g
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # GROUP BY / HAVING
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_count
+    query: |
+      SELECT source, COUNT(*) AS friend_count FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source)
+      ) GROUP BY source
+    expect:
+      rows:
+        - [Alix, 1]
+        - [Gus, 1]
+
+  - name: group_by_having
+    query: |
+      SELECT source, COUNT(*) AS friend_count FROM GRAPH_TABLE (
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        COLUMNS (a.name AS source)
+      ) GROUP BY source HAVING friend_count >= 1
+    expect:
+      rows:
+        - [Alix, 1]
+        - [Gus, 1]
+
+  # ---------------------------------------------------------------------------
+  # Error cases
+  # ---------------------------------------------------------------------------
+
+  - name: syntax_error
+    query: SELECT FROM
+    expect:
+      error: "Expected expression"
+
+  - name: missing_columns_clause
+    query: |
+      SELECT * FROM GRAPH_TABLE (
+        MATCH (n:Person)
+      )
+    expect:
+      error: "Expected Columns"

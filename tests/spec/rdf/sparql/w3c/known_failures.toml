@@ -1,0 +1,33 @@
+# W3C SPARQL Test Suite: Known Failures
+#
+# Categories:
+#   "unimplemented" - Feature not yet supported in Grafeo
+#   "spec-disagreement" - Intentional deviation from W3C spec
+#   "known-bug" - Known issue, tracked in GitHub issues
+#
+# Format: "test-name" = { reason = "category", note = "explanation" }
+# Remove entries as features are implemented to track progress.
+
+[sparql11.service]
+# SPARQL federation (SERVICE keyword) not yet implemented
+"service01" = { reason = "unimplemented", note = "SPARQL 1.1 Federation not implemented" }
+"service02" = { reason = "unimplemented", note = "SPARQL 1.1 Federation not implemented" }
+"service03" = { reason = "unimplemented", note = "SPARQL 1.1 Federation not implemented" }
+"service04a" = { reason = "unimplemented", note = "SPARQL 1.1 Federation not implemented" }
+"service05" = { reason = "unimplemented", note = "SPARQL 1.1 Federation not implemented" }
+
+[sparql11.entailment]
+# RDFS/OWL entailment regimes not implemented
+"*" = { reason = "unimplemented", note = "Entailment regimes not supported" }
+
+[sparql11.http-rdf-update]
+# HTTP-based SPARQL Update protocol not applicable to embedded DB
+"*" = { reason = "unimplemented", note = "HTTP protocol tests not applicable" }
+
+[sparql11.protocol]
+# SPARQL Protocol (HTTP) not applicable to embedded DB
+"*" = { reason = "unimplemented", note = "HTTP protocol tests not applicable" }
+
+[sparql11.service-description]
+# Service description not applicable to embedded DB
+"*" = { reason = "unimplemented", note = "Service description not applicable" }

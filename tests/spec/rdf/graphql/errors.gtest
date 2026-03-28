@@ -1,0 +1,76 @@
+# GraphQL error handling on RDF-like data
+#
+# Covers: syntax errors, semantic errors, invalid mutations,
+# unsupported operations.
+
+meta:
+  language: graphql
+  model: rdf
+  section: errors
+  title: GraphQL error handling on RDF data
+  dataset: rdf_social
+  requires: [graphql]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Syntax errors
+  # ---------------------------------------------------------------------------
+
+  - name: empty_selection_set
+    query: "query { }"
+    expect:
+      error: "Empty selection set"
+
+  - name: missing_closing_brace
+    query: "query { person { name }"
+    expect:
+      error: "Expected"
+
+  - name: no_operation_found
+    query: "fragment F on Person { name }"
+    expect:
+      error: "No operation found"
+
+  # ---------------------------------------------------------------------------
+  # Invalid mutations
+  # ---------------------------------------------------------------------------
+
+  - name: unknown_mutation_prefix
+    query: "mutation { removePerson(name: \"Alix\") { name } }"
+    expect:
+      error: "Unknown mutation"
+
+  - name: update_missing_property
+    # Update with only one argument (filter only, no property to update)
+    query: "mutation { updatePerson(name: \"Alix\") { name } }"
+    expect:
+      error: "requires"
+
+  - name: delete_missing_filter
+    query: "mutation { deletePerson { name } }"
+    expect:
+      error: "requires"
+
+  # ---------------------------------------------------------------------------
+  # Unsupported operations
+  # ---------------------------------------------------------------------------
+
+  - name: subscription_not_supported
+    query: "subscription { personAdded { name } }"
+    expect:
+      error: "not supported"
+
+  # ---------------------------------------------------------------------------
+  # Additional syntax errors
+  # ---------------------------------------------------------------------------
+
+  - name: invalid_argument_syntax
+    query: "{ person(name = \"Alix\") { name } }"
+    expect:
+      error: "Expected"
+
+  - name: double_colon_in_argument
+    query: "{ person(name:: \"Alix\") { name } }"
+    expect:
+      error: "Expected"

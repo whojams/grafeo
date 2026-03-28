@@ -1,0 +1,463 @@
+# SPARQL 1.1 Property Paths (Section 9)
+#
+# Covers: inverse (^), sequence (/), alternative (|), zero-or-more (*),
+# one-or-more (+), zero-or-one (?), negated property set (!), and the
+# `a` shorthand for rdf:type.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "9"
+  title: Property Paths
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # 9.1  Inverse Path (^)
+  # ---------------------------------------------------------------------------
+
+  - name: inverse_path_basic
+    # ^<p> traverses the edge in the reverse direction
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/vincent> .
+        }
+    query: |
+      SELECT ?who WHERE {
+        <http://ex.org/gus> ^<http://ex.org/knows> ?who
+      }
+    expect:
+      rows:
+        - [http://ex.org/alix]
+
+  - name: inverse_path_no_match
+    # Inverse traversal when no inbound edge exists
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?who WHERE {
+        <http://ex.org/alix> ^<http://ex.org/knows> ?who
+      }
+    expect:
+      empty: true
+
+  - name: inverse_path_multiple_sources
+    # Multiple subjects point to the same object
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/amsterdam> .
+          <http://ex.org/gus> <http://ex.org/likes> <http://ex.org/amsterdam> .
+          <http://ex.org/vincent> <http://ex.org/likes> <http://ex.org/berlin> .
+        }
+    query: |
+      SELECT ?person WHERE {
+        <http://ex.org/amsterdam> ^<http://ex.org/likes> ?person
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # 9.2  Sequence Path (/)
+  # ---------------------------------------------------------------------------
+
+  - name: sequence_path_two_steps
+    # <p1>/<p2> follows two predicates in sequence
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/livesIn> <http://ex.org/amsterdam> .
+        }
+    query: |
+      SELECT ?city WHERE {
+        <http://ex.org/alix> <http://ex.org/knows>/<http://ex.org/livesIn> ?city
+      }
+    expect:
+      rows:
+        - [http://ex.org/amsterdam]
+
+  - name: sequence_path_three_steps
+    # Three-step sequence: knows/knows/name
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/vincent> .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        <http://ex.org/alix> <http://ex.org/knows>/<http://ex.org/knows>/<http://ex.org/name> ?name
+      }
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: sequence_path_broken_chain
+    # Missing intermediate link produces no results
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/vincent> <http://ex.org/livesIn> <http://ex.org/paris> .
+        }
+    query: |
+      SELECT ?city WHERE {
+        <http://ex.org/alix> <http://ex.org/knows>/<http://ex.org/livesIn> ?city
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 9.3  Alternative Path (|)
+  # ---------------------------------------------------------------------------
+
+  - name: alternative_path_basic
+    # <p1>|<p2> matches either predicate
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/vincent> .
+        }
+    query: |
+      SELECT ?person WHERE {
+        <http://ex.org/alix> (<http://ex.org/knows>|<http://ex.org/likes>) ?person
+      }
+    expect:
+      count: 2
+
+  - name: alternative_path_one_branch_empty
+    # Only one branch of the alternative has data
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?person WHERE {
+        <http://ex.org/alix> (<http://ex.org/knows>|<http://ex.org/likes>) ?person
+      }
+    expect:
+      rows:
+        - [http://ex.org/gus]
+
+  - name: alternative_path_both_match_same_object
+    # Both predicates point to the same object, should appear twice (or once with DISTINCT)
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/likes> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT DISTINCT ?person WHERE {
+        <http://ex.org/alix> (<http://ex.org/knows>|<http://ex.org/likes>) ?person
+      }
+    expect:
+      rows:
+        - [http://ex.org/gus]
+
+  # ---------------------------------------------------------------------------
+  # 9.4  Zero-or-More Path (*)
+  # ---------------------------------------------------------------------------
+
+  - name: zero_or_more_path_chain
+    # <p>* follows transitive closure including the start node itself
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/next> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/next> <http://ex.org/vincent> .
+        }
+    query: |
+      SELECT ?node WHERE {
+        <http://ex.org/alix> <http://ex.org/next>* ?node
+      }
+    expect:
+      count: 3
+
+  - name: zero_or_more_path_no_outgoing_edges
+    skip: "zero-or-more path reflexive case not yet implemented"
+    # Node has no outgoing edges for predicate, but * still returns the node itself
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/next> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?node WHERE {
+        <http://ex.org/gus> <http://ex.org/next>* ?node
+      }
+    expect:
+      count: 1
+
+  - name: zero_or_more_path_single_hop
+    # Chain of length 1: returns start node (0-hop) and end node (1-hop)
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/parent> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?ancestor WHERE {
+        <http://ex.org/alix> <http://ex.org/parent>* ?ancestor
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # 9.5  One-or-More Path (+)
+  # ---------------------------------------------------------------------------
+
+  - name: one_or_more_path_chain
+    # <p>+ follows transitive closure, excluding the start node
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/next> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/next> <http://ex.org/vincent> .
+          <http://ex.org/vincent> <http://ex.org/next> <http://ex.org/jules> .
+        }
+    query: |
+      SELECT ?node WHERE {
+        <http://ex.org/alix> <http://ex.org/next>+ ?node
+      }
+    expect:
+      count: 3
+
+  - name: one_or_more_path_single_hop
+    # Exactly one hop in the data
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?person WHERE {
+        <http://ex.org/alix> <http://ex.org/knows>+ ?person
+      }
+    expect:
+      rows:
+        - [http://ex.org/gus]
+
+  - name: one_or_more_path_no_edge
+    # No outgoing edges means zero results (unlike * which returns self)
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?person WHERE {
+        <http://ex.org/gus> <http://ex.org/knows>+ ?person
+      }
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # 9.6  Zero-or-One Path (?)
+  # ---------------------------------------------------------------------------
+
+  - name: zero_or_one_path_with_edge
+    # <p>? returns both the start node (0-hop) and the direct neighbor (1-hop)
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?who WHERE {
+        <http://ex.org/alix> <http://ex.org/knows>? ?who
+      }
+    expect:
+      count: 2
+
+  - name: zero_or_one_path_no_edge
+    skip: "zero-or-one path reflexive case not yet implemented"
+    # No matching edge, still returns the start node (0-hop reflexive)
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+        }
+    query: |
+      SELECT ?who WHERE {
+        <http://ex.org/gus> <http://ex.org/knows>? ?who
+      }
+    expect:
+      count: 1
+
+  - name: zero_or_one_path_does_not_follow_two_hops
+    # ? should NOT follow a chain of length 2
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/next> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/next> <http://ex.org/vincent> .
+        }
+    query: |
+      SELECT ?who WHERE {
+        <http://ex.org/alix> <http://ex.org/next>? ?who
+      }
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # 9.7  Negated Property Set (!)
+  # ---------------------------------------------------------------------------
+
+  - name: negated_property_set_single
+    skip: "negated property set execution not yet integration-tested"
+    # !<p> matches any predicate except p
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> !<http://ex.org/name> ?val
+      }
+    expect:
+      count: 2
+
+  - name: negated_property_set_multiple
+    skip: "negated property set execution not yet integration-tested"
+    # !(p1|p2) excludes multiple predicates
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> !(<http://ex.org/name>|<http://ex.org/age>) ?val
+      }
+    expect:
+      rows:
+        - [Amsterdam]
+
+  # ---------------------------------------------------------------------------
+  # 9.8  `a` Shorthand for rdf:type
+  # ---------------------------------------------------------------------------
+
+  - name: a_shorthand_basic
+    # `a` is shorthand for rdf:type in triple patterns
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/amsterdam> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/City> .
+        }
+    query: |
+      SELECT ?s WHERE {
+        ?s a <http://ex.org/Person>
+      }
+    expect:
+      rows:
+        - [http://ex.org/alix]
+
+  - name: a_shorthand_multiple_types
+    # Query all typed resources using `a`
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/gus> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/Person> .
+          <http://ex.org/amsterdam> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex.org/City> .
+        }
+    query: |
+      SELECT ?type WHERE {
+        <http://ex.org/alix> a ?type
+      }
+    expect:
+      rows:
+        - [http://ex.org/Person]
+
+  # ---------------------------------------------------------------------------
+  # 9.9  Combined / Composed Paths
+  # ---------------------------------------------------------------------------
+
+  - name: inverse_in_sequence
+    # ^<p1>/<p2>: inverse first step, then forward second step
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/alix> <http://ex.org/livesIn> <http://ex.org/amsterdam> .
+        }
+    query: |
+      SELECT ?city WHERE {
+        <http://ex.org/gus> ^<http://ex.org/knows>/<http://ex.org/livesIn> ?city
+      }
+    expect:
+      rows:
+        - [http://ex.org/amsterdam]
+
+  - name: sequence_with_one_or_more
+    # Combine sequence and + for transitive chain then final step
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/knows> <http://ex.org/gus> .
+          <http://ex.org/gus> <http://ex.org/knows> <http://ex.org/vincent> .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        <http://ex.org/alix> <http://ex.org/knows>+/<http://ex.org/name> ?name
+      }
+    expect:
+      count: 2
+
+  - name: zero_or_more_rdf_collection_traversal
+    skip: "complex path composition with rdf:rest/rdf:first not yet supported"
+    # Traverse an RDF collection using rdf:rest*/rdf:first
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/list> <http://ex.org/items> <http://ex.org/node1> .
+          <http://ex.org/node1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> "Alix" .
+          <http://ex.org/node1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://ex.org/node2> .
+          <http://ex.org/node2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> "Gus" .
+          <http://ex.org/node2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+        }
+    query: |
+      SELECT ?item WHERE {
+        <http://ex.org/list> <http://ex.org/items> ?head .
+        ?head <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest>*/<http://www.w3.org/1999/02/22-rdf-syntax-ns#first> ?item
+      }
+    expect:
+      count: 2
+
+  - name: alternative_with_filter
+    # Alternative path combined with FILTER
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/alias> "Al" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?label WHERE {
+        <http://ex.org/alix> (<http://ex.org/name>|<http://ex.org/alias>) ?label
+        FILTER(STRLEN(?label) > 2)
+      }
+    expect:
+      rows:
+        - [Alix]

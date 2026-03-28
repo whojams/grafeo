@@ -1,0 +1,360 @@
+# SPARQL RDF Literal Syntax (Sections 2.3, 4.1)
+#
+# Covers: simple string literals, language-tagged literals, typed literals
+# (xsd:integer, xsd:decimal, xsd:boolean), bare numeric literals, numeric
+# comparisons, and RDF set semantics for typed vs untyped values.
+# Based on W3C SPARQL 1.1 Query Language specification, Sections 2.3 and 4.1.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "4.1"
+  title: RDF Literals and Types
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # String Literals
+  # ---------------------------------------------------------------------------
+
+  - name: simple_string_literal
+    # A plain "hello" string can be inserted and retrieved.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/greeting> "hello" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> <http://ex.org/greeting> ?val .
+      }
+    expect:
+      rows:
+        - [hello]
+
+  - name: string_with_special_characters
+    # String containing an escaped quote character.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/quote> "she said \"hello\"" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> <http://ex.org/quote> ?val .
+      }
+    expect:
+      rows:
+        - ["she said \"hello\""]
+
+  - name: empty_string_literal
+    # An empty string "" is a valid RDF literal.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/note> "" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> <http://ex.org/note> ?val .
+      }
+    expect:
+      rows:
+        - [""]
+
+  # ---------------------------------------------------------------------------
+  # Language-Tagged Literals
+  # ---------------------------------------------------------------------------
+
+  - name: language_tagged_literal_insert_query
+    skip: "language tags lost during Value round-trip in translator"
+    # Insert "chat"@fr and query it back. Per W3C, language-tagged literals
+    # have datatype rdf:langString and the tag should be preserved.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/word> "chat"@fr .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> <http://ex.org/word> ?val .
+      }
+    expect:
+      rows:
+        - [chat]
+
+  - name: multiple_language_tags
+    skip: "language tags lost during Value round-trip in translator"
+    # Same predicate with different language tags should produce distinct triples.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/greeting> "hello"@en .
+          <http://ex.org/gus> <http://ex.org/greeting> "bonjour"@fr .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/gus> <http://ex.org/greeting> ?val .
+      }
+    expect:
+      count: 2
+
+  - name: filter_by_language_tag
+    skip: "LANG() function not yet evaluated by RDF executor"
+    # Use LANG() to filter for a specific language tag.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/label> "Pulp Fiction"@en .
+          <http://ex.org/vincent> <http://ex.org/label> "Pulp Fiction"@fr .
+          <http://ex.org/vincent> <http://ex.org/label> "Pulp Fiction"@de .
+        }
+    query: |
+      SELECT ?label WHERE {
+        <http://ex.org/vincent> <http://ex.org/label> ?label .
+        FILTER(LANG(?label) = "fr")
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Typed Literals
+  # ---------------------------------------------------------------------------
+
+  - name: integer_typed_literal
+    # Insert "30"^^xsd:integer and retrieve its lexical value.
+    # Grafeo stores RDF literal values as strings internally.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+    query: |
+      SELECT ?age WHERE {
+        <http://ex.org/alix> <http://ex.org/age> ?age .
+      }
+    expect:
+      rows:
+        - [30]
+
+  - name: bare_integer_literal
+    # A bare integer 30 in SPARQL is shorthand for "30"^^xsd:integer.
+    # Both forms should store equivalently and return the lexical value.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/age> 25 .
+        }
+    query: |
+      SELECT ?age WHERE {
+        <http://ex.org/gus> <http://ex.org/age> ?age .
+      }
+    expect:
+      rows:
+        - [25]
+
+  - name: decimal_literal
+    # A bare decimal 19.99 is shorthand for "19.99"^^xsd:decimal.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/price> 19.99 .
+        }
+    query: |
+      SELECT ?price WHERE {
+        <http://ex.org/jules> <http://ex.org/price> ?price .
+      }
+    expect:
+      rows:
+        - [19.99]
+
+  # ---------------------------------------------------------------------------
+  # Boolean Literals
+  # ---------------------------------------------------------------------------
+
+  - name: boolean_true_literal
+    # The keyword true is shorthand for "true"^^xsd:boolean.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/active> true .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/alix> <http://ex.org/active> ?val .
+      }
+    expect:
+      rows:
+        - [true]
+
+  - name: boolean_false_literal
+    # The keyword false is shorthand for "false"^^xsd:boolean.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/active> false .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/gus> <http://ex.org/active> ?val .
+      }
+    expect:
+      rows:
+        - [false]
+
+  # ---------------------------------------------------------------------------
+  # Numeric Comparisons
+  # ---------------------------------------------------------------------------
+
+  - name: integer_comparison_filter
+    # FILTER with numeric comparison on values stored as typed integers.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/age> 30 .
+          <http://ex.org/gus> <http://ex.org/age> 25 .
+          <http://ex.org/vincent> <http://ex.org/age> 40 .
+          <http://ex.org/jules> <http://ex.org/age> 35 .
+        }
+    query: |
+      SELECT ?age WHERE {
+        ?person <http://ex.org/age> ?age .
+        FILTER(?age > "30")
+      }
+    expect:
+      count: 2
+
+  - name: string_vs_numeric_type_distinction
+    # A plain string "30" and a typed integer 30 are stored as different
+    # RDF terms: "30"^^xsd:string vs "30"^^xsd:integer. Querying with
+    # one form should not match the other, demonstrating type matters.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "30" .
+          <http://ex.org/gus> <http://ex.org/score> 30 .
+        }
+    query: |
+      SELECT ?val WHERE {
+        ?s <http://ex.org/score> ?val .
+      }
+    expect:
+      count: 2
+
+  - name: mixed_numeric_types
+    # Integers and decimals stored on the same predicate are distinct triples
+    # with different types but comparable lexical values.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/measurement> 10 .
+          <http://ex.org/gus> <http://ex.org/measurement> 10.5 .
+          <http://ex.org/vincent> <http://ex.org/measurement> 20 .
+        }
+    query: |
+      SELECT ?val WHERE {
+        ?s <http://ex.org/measurement> ?val .
+      }
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # RDF Set Semantics with Typed Literals
+  # ---------------------------------------------------------------------------
+
+  - name: duplicate_typed_triple_produces_single_result
+    # Inserting the same typed triple twice should store only one copy
+    # due to RDF set semantics.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/age> 30 .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/age> 30 .
+        }
+    query: |
+      SELECT ?age WHERE {
+        <http://ex.org/alix> <http://ex.org/age> ?age .
+      }
+    expect:
+      count: 1
+
+  - name: same_subject_different_typed_objects
+    # Same subject and predicate with different typed integer objects
+    # should produce one row per distinct value.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/score> 85 .
+          <http://ex.org/mia> <http://ex.org/score> 92 .
+          <http://ex.org/mia> <http://ex.org/score> 78 .
+        }
+    query: |
+      SELECT ?score WHERE {
+        <http://ex.org/mia> <http://ex.org/score> ?score .
+      }
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Additional Typed Literal Round-Trips
+  # ---------------------------------------------------------------------------
+
+  - name: explicit_xsd_integer_matches_bare_integer
+    # "30"^^xsd:integer and bare 30 should produce the same stored triple,
+    # so inserting both should result in only one row (RDF set semantics).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/age> 30 .
+        }
+    query: |
+      SELECT ?age WHERE {
+        <http://ex.org/butch> <http://ex.org/age> ?age .
+      }
+    expect:
+      count: 1
+
+  - name: explicit_xsd_boolean_matches_bare_boolean
+    # "true"^^xsd:boolean and bare true should produce the same stored triple.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/active> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/active> true .
+        }
+    query: |
+      SELECT ?val WHERE {
+        <http://ex.org/jules> <http://ex.org/active> ?val .
+      }
+    expect:
+      count: 1
+
+  - name: integer_filter_less_than_or_equal
+    # FILTER with <= on typed integer values.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> 70 .
+          <http://ex.org/gus> <http://ex.org/score> 85 .
+          <http://ex.org/vincent> <http://ex.org/score> 90 .
+          <http://ex.org/jules> <http://ex.org/score> 85 .
+        }
+    query: |
+      SELECT ?score WHERE {
+        ?s <http://ex.org/score> ?score .
+        FILTER(?score <= "85")
+      }
+    expect:
+      count: 3

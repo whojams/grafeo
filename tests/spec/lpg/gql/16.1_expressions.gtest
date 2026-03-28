@@ -1,0 +1,244 @@
+# GQL Expressions: ISO/IEC 39075:2024 sec 16.1
+
+meta:
+  language: gql
+  model: lpg
+  section: "16.1"
+  title: Expressions
+  dataset: empty
+
+tests:
+
+  - name: addition
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN n.v + 5 AS r"
+    expect:
+      rows:
+        - [15]
+
+  - name: subtraction
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN n.v - 3 AS r"
+    expect:
+      rows:
+        - [7]
+
+  - name: multiplication
+    setup:
+      - "INSERT (:N {v: 6})"
+    query: "MATCH (n:N) RETURN n.v * 7 AS r"
+    expect:
+      rows:
+        - [42]
+
+  - name: division
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN n.v / 2 AS r"
+    expect:
+      rows:
+        - [5]
+
+  - name: modulo
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN n.v % 3 AS r"
+    expect:
+      rows:
+        - [1]
+
+  - name: unary_minus
+    setup:
+      - "INSERT (:N {v: 5})"
+    query: "MATCH (n:N) RETURN -n.v AS r"
+    expect:
+      rows:
+        - [-5]
+
+  - name: string_concat_plus
+    setup:
+      - "INSERT (:N {a: 'hello', b: 'world'})"
+    query: "MATCH (n:N) RETURN n.a + ' ' + n.b AS r"
+    expect:
+      rows:
+        - [hello world]
+
+  - name: equals
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) WHERE n.v = 10 RETURN n.v"
+    expect:
+      rows:
+        - [10]
+
+  - name: not_equals
+    setup:
+      - "INSERT (:N {v: 10})"
+      - "INSERT (:N {v: 20})"
+    query: "MATCH (n:N) WHERE n.v <> 10 RETURN n.v"
+    expect:
+      rows:
+        - [20]
+
+  - name: less_than
+    setup:
+      - "INSERT (:N {v: 5})"
+      - "INSERT (:N {v: 15})"
+    query: "MATCH (n:N) WHERE n.v < 10 RETURN n.v"
+    expect:
+      rows:
+        - [5]
+
+  - name: greater_than
+    setup:
+      - "INSERT (:N {v: 5})"
+      - "INSERT (:N {v: 15})"
+    query: "MATCH (n:N) WHERE n.v > 10 RETURN n.v"
+    expect:
+      rows:
+        - [15]
+
+  - name: logical_and
+    setup:
+      - "INSERT (:N {a: true, b: true})"
+      - "INSERT (:N {a: true, b: false})"
+    query: "MATCH (n:N) WHERE n.a AND n.b RETURN n"
+    expect:
+      count: 1
+
+  - name: logical_or
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 3})"
+    query: "MATCH (n:N) WHERE n.v = 1 OR n.v = 3 RETURN n.v"
+    expect:
+      count: 2
+
+  - name: logical_not
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+    query: "MATCH (n:N) WHERE NOT n.v = 1 RETURN n.v"
+    expect:
+      rows:
+        - [2]
+
+  - name: case_searched
+    setup:
+      - "INSERT (:N {v: 30})"
+    query: "MATCH (n:N) RETURN CASE WHEN n.v > 25 THEN 'high' ELSE 'low' END AS r"
+    expect:
+      rows:
+        - [high]
+
+  - name: coalesce_returns_first_non_null
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN COALESCE(n.missing, n.v, 99) AS r"
+    expect:
+      rows:
+        - [10]
+
+  - name: nullif_equal_returns_null
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN NULLIF(n.v, 10) AS r"
+    expect:
+      rows:
+        - [null]
+
+  - name: nullif_different_returns_value
+    setup:
+      - "INSERT (:N {v: 10})"
+    query: "MATCH (n:N) RETURN NULLIF(n.v, 20) AS r"
+    expect:
+      rows:
+        - [10]
+
+  - name: null_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN null AS r"
+    expect:
+      rows:
+        - [null]
+
+  - name: boolean_true_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN TRUE AS r"
+    expect:
+      rows:
+        - [true]
+
+  - name: integer_literal
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN 42 AS r"
+    expect:
+      rows:
+        - [42]
+
+  - name: in_predicate
+    setup:
+      - "INSERT (:N {v: 'a'})"
+      - "INSERT (:N {v: 'b'})"
+      - "INSERT (:N {v: 'c'})"
+    query: "MATCH (n:N) WHERE n.v IN ['a', 'c'] RETURN n.v"
+    expect:
+      count: 2
+
+  - name: starts_with
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+      - "INSERT (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v STARTS WITH 'Am' RETURN n.v"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: ends_with
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+      - "INSERT (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v ENDS WITH 'in' RETURN n.v"
+    expect:
+      rows:
+        - [Berlin]
+
+  - name: contains
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+      - "INSERT (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v CONTAINS 'ster' RETURN n.v"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: like_percent_wildcard
+    setup:
+      - "INSERT (:N {v: 'Amsterdam'})"
+      - "INSERT (:N {v: 'Berlin'})"
+    query: "MATCH (n:N) WHERE n.v LIKE 'Am%' RETURN n.v"
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: property_access
+    setup:
+      - "INSERT (:N {name: 'Alix'})"
+    query: "MATCH (n:N) RETURN n.name"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: list_index_access
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN [10, 20, 30][1] AS r"
+    expect:
+      rows:
+        - [20]

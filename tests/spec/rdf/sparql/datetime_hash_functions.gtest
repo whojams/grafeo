@@ -1,0 +1,304 @@
+# SPARQL Date/Time Functions and Hash Functions
+#
+# Covers: NOW, YEAR, MONTH, DAY, HOURS, MINUTES, SECONDS, TIMEZONE, TZ,
+# MD5, SHA1, SHA256, SHA384, SHA512.
+# Based on W3C SPARQL 1.1 Query specification sections 17.4.5 and 17.4.6.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "17.4.5"
+  title: Date/Time and Hash Functions
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # NOW (17.4.5.1)
+  # ---------------------------------------------------------------------------
+
+  - name: now_returns_current_datetime
+    skip: "NOW() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (NOW() AS ?ts) WHERE { }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # YEAR (17.4.5.2)
+  # ---------------------------------------------------------------------------
+
+  - name: year_extracts_year
+    skip: "YEAR() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (YEAR(?d) AS ?y) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - [2024]
+
+  # ---------------------------------------------------------------------------
+  # MONTH (17.4.5.3)
+  # ---------------------------------------------------------------------------
+
+  - name: month_extracts_month
+    skip: "MONTH() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (MONTH(?d) AS ?m) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - [6]
+
+  # ---------------------------------------------------------------------------
+  # DAY (17.4.5.4)
+  # ---------------------------------------------------------------------------
+
+  - name: day_extracts_day
+    skip: "DAY() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (DAY(?d) AS ?day) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - [15]
+
+  # ---------------------------------------------------------------------------
+  # HOURS (17.4.5.5)
+  # ---------------------------------------------------------------------------
+
+  - name: hours_extracts_hours
+    skip: "HOURS() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (HOURS(?d) AS ?h) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - [10]
+
+  # ---------------------------------------------------------------------------
+  # MINUTES (17.4.5.6)
+  # ---------------------------------------------------------------------------
+
+  - name: minutes_extracts_minutes
+    skip: "MINUTES() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (MINUTES(?d) AS ?min) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - [30]
+
+  # ---------------------------------------------------------------------------
+  # SECONDS (17.4.5.7)
+  # ---------------------------------------------------------------------------
+
+  - name: seconds_extracts_seconds
+    skip: "SECONDS() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (SECONDS(?d) AS ?sec) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - [45]
+
+  # ---------------------------------------------------------------------------
+  # TIMEZONE (17.4.5.8)
+  # ---------------------------------------------------------------------------
+
+  - name: timezone_returns_offset
+    skip: "TIMEZONE() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (TIMEZONE(?d) AS ?tz) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - ["PT2H"]
+
+  # ---------------------------------------------------------------------------
+  # TZ (17.4.5.9)
+  # ---------------------------------------------------------------------------
+
+  - name: tz_returns_string_offset
+    skip: "TZ() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/event1> <http://ex.org/date> "2024-06-15T10:30:45+02:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (TZ(?d) AS ?tz) WHERE {
+        <http://ex.org/event1> <http://ex.org/date> ?d
+      }
+    expect:
+      rows:
+        - ["+02:00"]
+
+  # ---------------------------------------------------------------------------
+  # Combined: multiple date/time extractions from one value
+  # ---------------------------------------------------------------------------
+
+  - name: year_month_day_from_single_datetime
+    skip: "Date/time component functions not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/birthdate> "1990-03-22T08:15:00+01:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (YEAR(?d) AS ?y) (MONTH(?d) AS ?m) (DAY(?d) AS ?day) WHERE {
+        <http://ex.org/alix> <http://ex.org/birthdate> ?d
+      }
+    expect:
+      rows:
+        - [1990, 3, 22]
+
+  - name: hours_minutes_seconds_from_single_datetime
+    skip: "Date/time component functions not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/arrival> "2024-12-01T14:45:30+01:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        }
+    query: |
+      SELECT (HOURS(?d) AS ?h) (MINUTES(?d) AS ?min) (SECONDS(?d) AS ?sec) WHERE {
+        <http://ex.org/gus> <http://ex.org/arrival> ?d
+      }
+    expect:
+      rows:
+        - [14, 45, 30]
+
+  # ---------------------------------------------------------------------------
+  # MD5 (17.4.6.1)
+  # ---------------------------------------------------------------------------
+
+  - name: md5_hash
+    skip: "MD5() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (MD5("hello") AS ?hash) WHERE { }
+    expect:
+      rows:
+        - ["5d41402abc4b2a76b9719d911017c592"]
+
+  # ---------------------------------------------------------------------------
+  # SHA1 (17.4.6.2)
+  # ---------------------------------------------------------------------------
+
+  - name: sha1_hash
+    skip: "SHA1() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (SHA1("hello") AS ?hash) WHERE { }
+    expect:
+      rows:
+        - ["aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"]
+
+  # ---------------------------------------------------------------------------
+  # SHA256 (17.4.6.3)
+  # ---------------------------------------------------------------------------
+
+  - name: sha256_hash
+    skip: "SHA256() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (SHA256("hello") AS ?hash) WHERE { }
+    expect:
+      rows:
+        - ["2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"]
+
+  # ---------------------------------------------------------------------------
+  # SHA384 (17.4.6.4)
+  # ---------------------------------------------------------------------------
+
+  - name: sha384_hash
+    skip: "SHA384() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (SHA384("hello") AS ?hash) WHERE { }
+    expect:
+      rows:
+        - ["59e1748777448c69de6b800d7a33bbfb9ff1b463e44354c3553bcdb9c666fa90125a3c79f90397bdf5f6a13de828684f"]
+
+  # ---------------------------------------------------------------------------
+  # SHA512 (17.4.6.5)
+  # ---------------------------------------------------------------------------
+
+  - name: sha512_hash
+    skip: "SHA512() not yet evaluated in SELECT projection"
+    query: |
+      SELECT (SHA512("hello") AS ?hash) WHERE { }
+    expect:
+      rows:
+        - ["9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca72323c3d99ba5c11d7c7acc6e14b8c5da0c4663475c2e5c3adef46f73bcdec043"]
+
+  # ---------------------------------------------------------------------------
+  # Hash of bound variable from data
+  # ---------------------------------------------------------------------------
+
+  - name: md5_hash_of_bound_variable
+    skip: "MD5() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT (MD5(?name) AS ?hash) WHERE {
+        <http://ex.org/vincent> <http://ex.org/name> ?name
+      }
+    expect:
+      count: 1
+
+  - name: sha256_hash_of_bound_variable
+    skip: "SHA256() not yet evaluated in SELECT projection"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT (SHA256(?name) AS ?hash) WHERE {
+        <http://ex.org/jules> <http://ex.org/name> ?name
+      }
+    expect:
+      count: 1

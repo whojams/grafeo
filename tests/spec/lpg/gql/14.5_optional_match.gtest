@@ -1,0 +1,103 @@
+# GQL OPTIONAL MATCH clause: ISO/IEC 39075:2024 sec 14.5
+#
+# Covers: basic optional match with results, null when no match found,
+# multiple optional matches, optional match with WHERE filtering.
+
+meta:
+  language: gql
+  model: lpg
+  section: "14.5"
+  title: OPTIONAL MATCH clause
+  dataset: empty
+
+tests:
+
+  - name: optional_match_returns_row_when_exists
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+    query: |
+      MATCH (a:Person {name: 'Alix'})
+      OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)
+      RETURN b.name
+    expect:
+      rows:
+        - [Gus]
+
+  - name: optional_match_null_when_no_match
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: |
+      MATCH (a:Person {name: 'Alix'})
+      OPTIONAL MATCH (a)-[:MANAGES]->(b)
+      RETURN a.name, b
+    expect:
+      rows:
+        - [Alix, null]
+
+  - name: optional_match_null_property_access
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: |
+      MATCH (a:Person {name: 'Alix'})
+      OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)
+      RETURN a.name, b.name
+    expect:
+      rows:
+        - [Alix, null]
+
+  - name: optional_match_one_null_one_found
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Company {name: 'Acme'})"
+      - "MATCH (a:Person {name: 'Alix'}), (c:Company {name: 'Acme'}) INSERT (a)-[:WORKS_AT]->(c)"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      OPTIONAL MATCH (p)-[:KNOWS]->(friend:Person)
+      OPTIONAL MATCH (p)-[:WORKS_AT]->(co:Company)
+      RETURN p.name, friend.name, co.name
+    expect:
+      rows:
+        - [Alix, null, Acme]
+
+  - name: optional_match_both_null
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      OPTIONAL MATCH (p)-[:KNOWS]->(friend:Person)
+      OPTIONAL MATCH (p)-[:WORKS_AT]->(co:Company)
+      RETURN p.name, friend, co
+    expect:
+      rows:
+        - [Alix, null, null]
+
+  - name: optional_match_where_filters_match
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+      - "INSERT (:Person {name: 'Gus', age: 25})"
+      - "INSERT (:Person {name: 'Vincent', age: 35})"
+      - "MATCH (a:Person {name: 'Alix'}), (g:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(g)"
+      - "MATCH (a:Person {name: 'Alix'}), (v:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(v)"
+    query: |
+      MATCH (a:Person {name: 'Alix'})
+      OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)
+      WHERE b.age > 30
+      RETURN a.name, b.name
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  - name: optional_match_count_null_is_zero
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    query: |
+      MATCH (p:Person)
+      OPTIONAL MATCH (p)-[:KNOWS]->(friend)
+      RETURN p.name, count(friend) AS friend_count
+    expect:
+      rows:
+        - [Alix, 0]
+        - [Gus, 0]

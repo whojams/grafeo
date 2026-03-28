@@ -735,6 +735,34 @@ impl RdfStore {
         Ok(self.bulk_load(triples))
     }
 
+    /// Parses and loads a Turtle document, replacing all existing data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TurtleError` on parse failure.
+    pub fn load_turtle(&self, input: &str) -> Result<BulkLoadResult, super::turtle::TurtleError> {
+        let triples = super::turtle::TurtleParser::new().parse(input)?;
+        Ok(self.bulk_load(triples))
+    }
+
+    /// Serializes this store's triples to Turtle format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if serialization fails.
+    pub fn to_turtle(&self) -> std::io::Result<String> {
+        super::turtle::TurtleSerializer::new().to_string(&self.triples())
+    }
+
+    /// Serializes this store (default + named graphs) to N-Quads format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if serialization fails.
+    pub fn to_nquads(&self) -> std::io::Result<String> {
+        super::nquads::to_nquads_string(self)
+    }
+
     // =========================================================================
     // Named graph support
     // =========================================================================
@@ -1844,6 +1872,73 @@ mod tests {
             object: Some(Term::literal("Gus")),
         };
         assert_eq!(store.find(&pattern).len(), 1);
+    }
+
+    #[test]
+    fn test_load_turtle_roundtrip() {
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+            ex:alix a foaf:Person ;
+                foaf:name "Alix" ;
+                foaf:knows ex:gus .
+
+            ex:gus foaf:name "Gus" .
+        "#;
+
+        let store = RdfStore::new();
+        let result = store.load_turtle(turtle).unwrap();
+        assert_eq!(result.triple_count, 4);
+        assert_eq!(store.len(), 4);
+
+        // Verify subject/predicate indexes are populated.
+        let alix = Term::iri("http://example.org/alix");
+        assert_eq!(store.triples_with_subject(&alix).len(), 3);
+    }
+
+    #[test]
+    fn test_to_turtle_roundtrip() {
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+            ex:alix foaf:name "Alix" ;
+                foaf:knows ex:gus .
+
+            ex:gus foaf:name "Gus" .
+        "#;
+
+        let store = RdfStore::new();
+        store.load_turtle(turtle).unwrap();
+        assert_eq!(store.len(), 3);
+
+        // Serialize to Turtle and re-parse.
+        let output = store.to_turtle().unwrap();
+        assert!(!output.is_empty());
+
+        let store2 = RdfStore::new();
+        let result2 = store2.load_turtle(&output).unwrap();
+        assert_eq!(result2.triple_count, 3);
+
+        // Verify structural equivalence: same subject/predicate/object triples exist.
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: None,
+        };
+        let results = store2.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object(), &Term::literal("Alix"));
+
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/gus")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: None,
+        };
+        let results = store2.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object(), &Term::literal("Gus"));
     }
 
     #[test]

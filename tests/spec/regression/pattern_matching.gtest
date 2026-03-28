@@ -1,0 +1,114 @@
+# Regression tests: pattern matching edge cases
+#
+# Bugs found in other graph databases (Neo4j, Memgraph, FalkorDB)
+# and in Grafeo itself, related to pattern matching correctness.
+
+meta:
+  language: gql
+  model: lpg
+  section: regression
+  title: Pattern matching regressions
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Relationship isomorphism
+  # The same edge must not be matched twice in a single pattern.
+  # ---------------------------------------------------------------------------
+
+  - name: two_hop_no_edge_reuse
+    # In a triangle A->B->C->A, a two-hop pattern (a)-[r1]->(b)-[r2]->(c)
+    # should never bind r1 and r2 to the same edge.
+    setup:
+      - "INSERT (:N {name: 'Alix'})-[:R]->(:N {name: 'Gus'})"
+      - "MATCH (a:N {name: 'Gus'}), (b:N {name: 'Alix'}) CREATE (a)-[:R]->(n:N {name: 'Vincent'})-[:R]->(b)"
+    query: MATCH (a:N)-[r1:R]->(b:N)-[r2:R]->(c:N) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  - name: single_edge_not_matched_as_two_hop
+    # Only one edge exists: a two-hop pattern must find 0 paths.
+    setup:
+      - "INSERT (:N {name: 'Alix'})-[:R]->(:N {name: 'Gus'})"
+    query: MATCH (a:N)-[r1:R]->(b:N)-[r2:R]->(c:N) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL MATCH order independence
+  # Swapping OPTIONAL MATCH clauses must not change results.
+  # ---------------------------------------------------------------------------
+
+  - name: optional_match_order_independence
+    # Two independent OPTIONAL MATCHHes produce cross-product rows
+    # where unmatched arms are NULL.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Alix'})-[:WORKS_AT]->(:Company {name: 'Acme'})"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      OPTIONAL MATCH (p)-[:KNOWS]->(friend:Person)
+      OPTIONAL MATCH (p)-[:WORKS_AT]->(co:Company)
+      RETURN p.name, friend.name, co.name
+    expect:
+      count: 2
+
+  - name: optional_match_swapped_same_result
+    # Same as above but OPTIONAL MATCH clauses in reverse order.
+    # Row count must be identical regardless of order.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Alix'})-[:WORKS_AT]->(:Company {name: 'Acme'})"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      OPTIONAL MATCH (p)-[:WORKS_AT]->(co:Company)
+      OPTIONAL MATCH (p)-[:KNOWS]->(friend:Person)
+      RETURN p.name, friend.name, co.name
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # WHERE filter must not corrupt projected values
+  # ---------------------------------------------------------------------------
+
+  - name: where_is_not_null_preserves_return_value
+    # The returned value must be the actual reading, not boolean true.
+    setup:
+      - "INSERT (:Sensor {name: 'Temp', reading: 42.5})"
+      - "INSERT (:Sensor {name: 'Humidity'})"
+    query: MATCH (s:Sensor) WHERE s.reading IS NOT NULL RETURN s.name, s.reading
+    expect:
+      rows:
+        - [Temp, 42.5]
+
+  # ---------------------------------------------------------------------------
+  # GROUP BY expression order independence
+  # ---------------------------------------------------------------------------
+
+  - name: return_column_order_does_not_affect_group_by
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+    query: MATCH (p:Person) RETURN p.city AS city, count(p) AS cnt ORDER BY city
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam, 2]
+        - [Berlin, 1]
+
+  - name: group_by_reversed_column_order
+    # Same query with columns swapped: should produce identical grouping.
+    setup:
+      - "INSERT (:Person {name: 'Alix', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Gus', city: 'Amsterdam'})"
+      - "INSERT (:Person {name: 'Vincent', city: 'Berlin'})"
+    query: MATCH (p:Person) RETURN count(p) AS cnt, p.city AS city ORDER BY city
+    expect:
+      ordered: true
+      rows:
+        - [2, Amsterdam]
+        - [1, Berlin]

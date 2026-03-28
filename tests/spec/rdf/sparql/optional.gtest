@@ -1,0 +1,81 @@
+# SPARQL OPTIONAL clause
+#
+# Covers: basic OPTIONAL, multiple OPTIONALLs, NULL binding,
+# OPTIONAL with FILTER. Inspired by bugs in Oxigraph and RDF4J.
+
+meta:
+  language: sparql
+  model: rdf
+  section: optional
+  title: OPTIONAL clause
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Basic OPTIONAL behavior
+  # ---------------------------------------------------------------------------
+
+  - name: optional_unmatched_produces_null_binding
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name ?age WHERE {
+        <http://ex.org/vincent> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/vincent> <http://ex.org/age> ?age }
+      }
+    expect:
+      rows:
+        - [Vincent, null]
+
+  - name: multiple_optionals_preserve_results
+    # Both OPTIONALLs present, plus one absent: must not drop the base row.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/x> <http://ex.org/name> "X" .
+          <http://ex.org/x> <http://ex.org/age> "10" .
+        }
+    query: |
+      SELECT ?name ?age ?extra WHERE {
+        <http://ex.org/x> <http://ex.org/name> ?name .
+        OPTIONAL { <http://ex.org/x> <http://ex.org/age> ?age }
+        OPTIONAL { <http://ex.org/x> <http://ex.org/extra> ?extra }
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # COUNT on empty result set
+  # ---------------------------------------------------------------------------
+
+  - name: count_on_empty_returns_zero
+    query: "SELECT (COUNT(?s) AS ?cnt) WHERE { ?s <http://ex.org/nonexistent> ?o }"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # UNION semantics
+  # ---------------------------------------------------------------------------
+
+  - name: union_returns_both_branches
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/a> <http://ex.org/city> "Amsterdam" .
+        }
+    query: |
+      SELECT ?val WHERE {
+        { <http://ex.org/a> <http://ex.org/name> ?val }
+        UNION
+        { <http://ex.org/a> <http://ex.org/city> ?val }
+      }
+    expect:
+      rows:
+        - [Alix]
+        - [Amsterdam]

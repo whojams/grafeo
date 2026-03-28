@@ -1,0 +1,1336 @@
+# Regression tests: edge cases in pattern matching, mutations, and semantics
+#
+# Covers self-loops, delete/reinsert, direction correctness, MERGE edges,
+# multi-label handling, NULL/empty string distinction, list comparison,
+# missing properties, OR/AND precedence, negative numbers, and count variants.
+
+meta:
+  language: gql
+  model: lpg
+  section: regression
+  title: Edge cases
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # Self-loop pattern matching
+  # ---------------------------------------------------------------------------
+
+  - name: create_and_match_self_loop
+    # A self-loop edge from a node to itself must be matchable.
+    setup:
+      - "INSERT (a:Node {name: 'Alix'})-[:SELF]->(a)"
+    query: MATCH (a:Node)-[r:SELF]->(a) RETURN a.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: self_loop_not_counted_as_two_edges
+    # A self-loop should be counted exactly once, not doubled.
+    setup:
+      - "INSERT (a:Node {name: 'Alix'})-[:SELF]->(a)"
+    query: MATCH (:Node)-[r:SELF]->() RETURN count(r) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Self-loop with variable-length expansion
+  # Must terminate and not expand infinitely (inspired by Kuzu #5989).
+  # ---------------------------------------------------------------------------
+
+  - name: self_loop_varlength_terminates
+    # Variable-length expansion on a graph with a self-loop must terminate.
+    setup:
+      - "INSERT (a:N {name: 'Alix'})-[:LOOP]->(a)"
+      - "MATCH (a:N {name: 'Alix'}) INSERT (a)-[:R]->(b:N {name: 'Gus'})-[:R]->(c:N {name: 'Vincent'})"
+    query: MATCH (a:N {name: 'Alix'})-[:R*1..3]->(b) RETURN count(*) AS cnt
+    expect:
+      count: 1
+
+  - name: optional_match_varlength_with_self_loop_returns_null
+    # OPTIONAL MATCH for paths of type :R on a self-loop-only node returns NULL.
+    setup:
+      - "INSERT (a:N {name: 'solo'})-[:LOOP]->(a)"
+    query: |
+      MATCH (a:N {name: 'solo'})
+      OPTIONAL MATCH (a)-[:R*3..5]->(b)
+      RETURN b.name
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Deleted node access in same session
+  # ---------------------------------------------------------------------------
+
+  - name: delete_then_match_returns_empty
+    # Deleted node should not be visible in subsequent MATCH.
+    setup:
+      - "INSERT (:Temp {name: 'ephemeral'})"
+      - "MATCH (n:Temp) DELETE n"
+    query: MATCH (n:Temp) RETURN n.name
+    expect:
+      empty: true
+
+  - name: detach_delete_clears_edges
+    # DETACH DELETE should remove the node and all connected edges.
+    setup:
+      - "INSERT (:A {name: 'a'})-[:R]->(:B {name: 'b'})"
+      - "MATCH (a:A) DETACH DELETE a"
+    query: MATCH ()-[r:R]->() RETURN count(r) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # Constant folding in WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: where_constant_false_returns_empty
+    # WHERE with a constant-false condition should return no rows.
+    setup:
+      - "INSERT (:N {val: 1})"
+    query: MATCH (n:N) WHERE 1 = 2 RETURN n
+    expect:
+      empty: true
+
+  - name: where_constant_true_returns_all
+    # WHERE with a constant-true condition should return all rows.
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 2})"
+    query: MATCH (n:N) WHERE 1 = 1 RETURN n.val
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Cyclic graph traversal (VLE termination)
+  # ---------------------------------------------------------------------------
+
+  - name: variable_length_path_in_triangle_terminates
+    # Walk mode on a 3-node directed triangle: one path per hop 1..=5.
+    setup:
+      - "INSERT (a:N {name: 'Alix'})-[:R]->(b:N {name: 'Gus'})-[:R]->(c:N {name: 'Vincent'})-[:R]->(a)"
+    query: MATCH (a:N {name: 'Alix'})-[:R*1..5]->(b:N) RETURN b.name
+    expect:
+      count: 5
+
+  # ---------------------------------------------------------------------------
+  # MERGE with NULL node reference
+  # ---------------------------------------------------------------------------
+
+  - name: merge_relationship_with_null_source_errors
+    # MERGE with a NULL source (from unmatched OPTIONAL MATCH) must error.
+    query: |
+      OPTIONAL MATCH (n:NonExistent)
+      MERGE (n)-[:R]->(m:Target {name: 'Alix'})
+    expect:
+      error: "null"
+
+  - name: merge_relationship_with_null_target_errors
+    # MERGE with a NULL target must error.
+    setup:
+      - "INSERT (:Source {name: 'Gus'})"
+    query: |
+      MATCH (a:Source {name: 'Gus'})
+      OPTIONAL MATCH (b:NonExistent)
+      MERGE (a)-[:R]->(b)
+    expect:
+      error: "null"
+
+  - name: merge_with_valid_optional_match_succeeds
+    # MERGE with a non-null node should succeed normally.
+    setup:
+      - "INSERT (:Person {name: 'Vincent'})"
+    statements:
+      - "MATCH (n:Person {name: 'Vincent'}) MERGE (n)-[:KNOWS]->(m:Person {name: 'Jules'})"
+      - "MATCH (v:Person {name: 'Vincent'})-[:KNOWS]->(j:Person {name: 'Jules'}) RETURN j.name"
+    expect:
+      rows:
+        - [Jules]
+
+  - name: standalone_merge_unaffected
+    # Basic MERGE without any NULL context should work.
+    query: MERGE (:Person {name: 'Mia'}) RETURN 1 AS ok
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # DISTINCT on edges
+  # ---------------------------------------------------------------------------
+
+  - name: distinct_on_edges_deduplicates_correctly
+    # Cartesian product may produce duplicate edge references;
+    # DISTINCT should collapse them.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: |
+      MATCH (a:Person), (b:Person)
+      MATCH (a)-[e:KNOWS]->(b)
+      RETURN DISTINCT e
+    expect:
+      count: 1
+
+  - name: distinct_on_edges_multiple_edge_types
+    # DISTINCT on multiple distinct edges should return all of them.
+    setup:
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "INSERT (:Person {name: 'Jules'})"
+      - "INSERT (:Person {name: 'Mia'})"
+      - "MATCH (a:Person {name: 'Vincent'}), (b:Person {name: 'Jules'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Jules'}), (b:Person {name: 'Mia'}) INSERT (a)-[:KNOWS]->(b)"
+    query: MATCH ()-[e:KNOWS]->() RETURN DISTINCT e
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Relationship direction correctness
+  # ---------------------------------------------------------------------------
+
+  - name: backward_arrow_matches_correct_direction
+    # B<-[:FOLLOWS]-A should match the edge A->B.
+    setup:
+      - "INSERT (:A {name: 'Alix'})-[:FOLLOWS]->(:B {name: 'Gus'})"
+    query: MATCH (b:B)<-[:FOLLOWS]-(a:A) RETURN a.name, b.name
+    expect:
+      rows:
+        - [Alix, Gus]
+
+  - name: backward_arrow_wrong_direction_no_match
+    # A<-[:FOLLOWS]-B should NOT match when edge is A->B.
+    setup:
+      - "INSERT (:A {name: 'Alix'})-[:FOLLOWS]->(:B {name: 'Gus'})"
+    query: MATCH (a:A)<-[:FOLLOWS]-(b:B) RETURN a.name
+    expect:
+      empty: true
+
+  - name: undirected_match_finds_both_directions
+    # Undirected pattern should match edge in both directions.
+    setup:
+      - "INSERT (:N {name: 'Alix'})-[:KNOWS]->(:N {name: 'Gus'})"
+    query: MATCH (a:N)-[:KNOWS]-(b:N) RETURN a.name, b.name ORDER BY a.name
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # MERGE relationship patterns
+  # ---------------------------------------------------------------------------
+
+  - name: merge_relationship_creates_when_missing
+    # MERGE should create an edge when none exists.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) MERGE (a)-[:KNOWS]->(b)"
+      - "MATCH (:Person)-[k:KNOWS]->(:Person) RETURN count(k) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: merge_relationship_does_not_duplicate
+    # MERGE same edge pattern twice should not create a second edge.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})"
+    statements:
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) MERGE (a)-[:KNOWS]->(b)"
+      - "MATCH (:Person)-[k:KNOWS]->(:Person) RETURN count(k) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Delete + re-insert consistency
+  # ---------------------------------------------------------------------------
+
+  - name: delete_all_then_reinsert_same_label
+    # After deleting all nodes of a label, re-inserted ones must be visible.
+    setup:
+      - "INSERT (:Item {val: 1})"
+      - "INSERT (:Item {val: 2})"
+      - "MATCH (n:Item) DELETE n"
+      - "INSERT (:Item {val: 10})"
+      - "INSERT (:Item {val: 20})"
+    query: MATCH (n:Item) RETURN n.val ORDER BY n.val
+    expect:
+      ordered: true
+      rows:
+        - [10]
+        - [20]
+
+  - name: detach_delete_then_reinsert_with_edges
+    # After DETACH DELETE all, re-inserted nodes and edges must be visible.
+    setup:
+      - "INSERT (:A {name: 'a'})-[:R]->(:B {name: 'b'})"
+      - "MATCH (n) DETACH DELETE n"
+      - "INSERT (:A {name: 'x'})-[:R]->(:B {name: 'y'})"
+    query: MATCH ()-[r]->() RETURN count(r) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Multi-label node operations
+  # ---------------------------------------------------------------------------
+
+  - name: node_with_multiple_labels_matched_by_first
+    # A node with two labels should be matchable by either label.
+    setup:
+      - "INSERT (:Person:Employee {name: 'Alix'})"
+    query: MATCH (n:Person) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: node_with_multiple_labels_matched_by_second
+    setup:
+      - "INSERT (:Person:Employee {name: 'Alix'})"
+    query: MATCH (n:Employee) RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: labels_function_returns_all_labels
+    # labels() should return all labels of a multi-label node.
+    setup:
+      - "INSERT (:Person:Employee:Manager {name: 'Alix'})"
+    query: MATCH (n:Person) RETURN labels(n) AS lbls
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Empty string vs NULL distinction
+  # ---------------------------------------------------------------------------
+
+  - name: empty_string_is_not_null
+    # An empty string property is a valid value, not NULL.
+    setup:
+      - "INSERT (:N {name: ''})"
+    query: MATCH (n:N) WHERE n.name IS NOT NULL RETURN n.name
+    expect:
+      rows:
+        - [""]
+
+  - name: zero_is_not_null
+    setup:
+      - "INSERT (:N {val: 0})"
+    query: MATCH (n:N) WHERE n.val IS NOT NULL RETURN n.val
+    expect:
+      rows:
+        - [0]
+
+  - name: boolean_false_is_not_null
+    setup:
+      - "INSERT (:N {flag: false})"
+    query: MATCH (n:N) WHERE n.flag IS NOT NULL RETURN n.flag
+    expect:
+      rows:
+        - [false]
+
+  # ---------------------------------------------------------------------------
+  # List comparison edge cases (inspired by ArangoDB #2477)
+  # ---------------------------------------------------------------------------
+
+  - name: empty_list_equals_empty_list
+    query: RETURN [] = [] AS eq
+    expect:
+      rows:
+        - [true]
+
+  - name: list_equality_same_elements
+    query: RETURN [1, 2, 3] = [1, 2, 3] AS eq
+    expect:
+      rows:
+        - [true]
+
+  - name: list_equality_different_elements
+    query: RETURN [1, 2] = [1, 3] AS eq
+    expect:
+      rows:
+        - [false]
+
+  # ---------------------------------------------------------------------------
+  # Missing property is NULL
+  # ---------------------------------------------------------------------------
+
+  - name: missing_property_is_null
+    # Accessing a non-existent property should return NULL.
+    setup:
+      - "INSERT (:N {name: 'Alix'})"
+    query: MATCH (n:N) RETURN n.nonexistent AS val
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Integer/float comparison
+  # ---------------------------------------------------------------------------
+
+  - name: integer_float_comparison
+    # Integer 42 should equal float 42.0 in comparison.
+    setup:
+      - "INSERT (:N {ival: 42, fval: 42.0})"
+    query: MATCH (n:N) WHERE n.ival = n.fval RETURN n.ival
+    expect:
+      rows:
+        - [42]
+
+  # ---------------------------------------------------------------------------
+  # OR/AND precedence (inspired by JanusGraph #4786)
+  # ---------------------------------------------------------------------------
+
+  - name: or_in_where_matches_either_branch
+    setup:
+      - "INSERT (:Item {prop: 'A'})"
+      - "INSERT (:Item {prop: 'B'})"
+      - "INSERT (:Item {prop: 'C'})"
+    query: MATCH (n:Item) WHERE n.prop = 'A' OR n.prop = 'B' RETURN n.prop ORDER BY n.prop
+    expect:
+      ordered: true
+      rows:
+        - [A]
+        - [B]
+
+  - name: or_with_and_precedence
+    # (a = 1 AND b = 2) OR (a = 5 AND b = 6) should match items 1 and 3.
+    setup:
+      - "INSERT (:Item {a: 1, b: 2})"
+      - "INSERT (:Item {a: 3, b: 4})"
+      - "INSERT (:Item {a: 5, b: 6})"
+    query: |
+      MATCH (n:Item)
+      WHERE (n.a = 1 AND n.b = 2) OR (n.a = 5 AND n.b = 6)
+      RETURN n.a ORDER BY n.a
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [5]
+
+  - name: not_condition_inverts_filter
+    setup:
+      - "INSERT (:Item {val: 1})"
+      - "INSERT (:Item {val: 2})"
+      - "INSERT (:Item {val: 3})"
+    query: MATCH (n:Item) WHERE NOT n.val = 2 RETURN n.val ORDER BY n.val
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # Negative numeric literals (from user janit)
+  # ---------------------------------------------------------------------------
+
+  - name: insert_negative_integer
+    setup:
+      - "INSERT (:Location {lat: -33, lon: 151})"
+    query: MATCH (l:Location) RETURN l.lat, l.lon
+    expect:
+      rows:
+        - [-33, 151]
+
+  - name: insert_negative_float
+    setup:
+      - "INSERT (:Location {lat: -33.8688, lon: 151.2093})"
+    query: MATCH (l:Location) RETURN l.lat, l.lon
+    expect:
+      count: 1
+
+  - name: filter_on_negative_value
+    setup:
+      - "INSERT (:Loc {lat: -33.0})"
+      - "INSERT (:Loc {lat: 48.8})"
+    query: MATCH (l:Loc) WHERE l.lat < 0 RETURN l.lat
+    expect:
+      count: 1
+
+  - name: merge_with_negative_property
+    # MERGE with negative value should deduplicate.
+    statements:
+      - "MERGE (:Temp {val: -42})"
+      - "MERGE (:Temp {val: -42})"
+      - "MATCH (n:Temp) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # count(*) vs count(variable) equivalence (from user josema-xyz)
+  # ---------------------------------------------------------------------------
+
+  - name: count_star_after_insert
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 2})"
+    query: MATCH (n:N) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: count_variable_after_insert
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 2})"
+    query: MATCH (n:N) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: count_star_equals_count_variable
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 2})"
+      - "INSERT (:N {val: 3})"
+    query: MATCH (n:N) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # MERGE does not match deleted node (inspired by Memgraph #2093)
+  # ---------------------------------------------------------------------------
+
+  - name: merge_does_not_match_deleted_node
+    # Create, delete, then MERGE: MERGE should create a new node.
+    setup:
+      - "INSERT (:Singleton {key: 'only'})"
+      - "MATCH (n:Singleton) DELETE n"
+    statements:
+      - "MERGE (:Singleton {key: 'only'})"
+      - "MATCH (n:Singleton) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Double-delete idempotency (inspired by FalkorDB #1018)
+  # ---------------------------------------------------------------------------
+
+  - name: delete_same_node_twice_no_phantom
+    # Deleting twice should not leave phantom nodes.
+    setup:
+      - "INSERT (:Temp {name: 'Alix'})"
+      - "MATCH (n:Temp) DELETE n"
+      - "MATCH (n:Temp) DELETE n"
+    query: MATCH (n) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  - name: detach_delete_chain_all_clean
+    # Deleting a chain of nodes one by one leaves nothing behind.
+    setup:
+      - "INSERT (:A {name: 'a'})-[:R]->(:B {name: 'b'})-[:S]->(:C {name: 'c'})"
+      - "MATCH (n:A) DETACH DELETE n"
+      - "MATCH (n:B) DETACH DELETE n"
+      - "MATCH (n:C) DETACH DELETE n"
+    query: MATCH (n) RETURN count(n) AS cnt
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # DETACH DELETE preserves unrelated edges (inspired by Kuzu #5954)
+  # ---------------------------------------------------------------------------
+
+  - name: detach_delete_preserves_unrelated_edges
+    setup:
+      - "INSERT (:A {id: 1})-[:R]->(:B {id: 1})"
+      - "INSERT (:A {id: 2})-[:R]->(:B {id: 2})"
+      - "MATCH (a:A {id: 1}) DETACH DELETE a"
+    query: MATCH ()-[r:R]->() RETURN count(r) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Label intersection across MATCH clauses (inspired by Memgraph #2875)
+  # ---------------------------------------------------------------------------
+
+  - name: same_variable_multiple_labels_across_match
+    # n must satisfy both :Worker and :Senior.
+    setup:
+      - "INSERT (:Worker:Senior {name: 'Vincent'})"
+      - "INSERT (:Worker:Junior {name: 'Jules'})"
+      - "MATCH (a:Worker {name: 'Vincent'}), (b:Worker {name: 'Jules'}) INSERT (a)-[:MANAGES]->(b)"
+    query: |
+      MATCH (n:Worker)-[:MANAGES]->()
+      MATCH (n:Senior)
+      RETURN n.name
+    expect:
+      rows:
+        - [Vincent]
+
+  - name: label_intersection_filters_non_matching
+    skip: "dual MATCH on same variable with different labels not yet intersected correctly"
+    setup:
+      - "INSERT (:A:B {name: 'both'})"
+      - "INSERT (:A {name: 'only_a'})"
+      - "INSERT (:B {name: 'only_b'})"
+    query: MATCH (n:A) MATCH (n:B) RETURN n.name
+    expect:
+      rows:
+        - [both]
+
+  # ---------------------------------------------------------------------------
+  # NULL predicate semantics (inspired by Neo4j #13727)
+  # ---------------------------------------------------------------------------
+
+  - name: where_equality_with_null_returns_empty
+    # 1 = NULL is UNKNOWN, should filter all rows.
+    setup:
+      - "INSERT (:N {val: 1})"
+    query: MATCH (n:N) WHERE 1 = NULL RETURN n
+    expect:
+      empty: true
+
+  - name: where_in_empty_list_returns_empty
+    setup:
+      - "INSERT (:N {val: 1})"
+    query: MATCH (n:N) WHERE 1 IN [] RETURN n
+    expect:
+      empty: true
+
+  - name: null_not_equal_to_null
+    # NULL = NULL is UNKNOWN (not TRUE).
+    setup:
+      - "INSERT (:N {val: 1})"
+    query: MATCH (n:N) WHERE NULL = NULL RETURN n
+    expect:
+      empty: true
+
+  - name: null_is_null_returns_true
+    setup:
+      - "INSERT (:N {val: 1})"
+    query: MATCH (n:N) WHERE NULL IS NULL RETURN n.val
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # Predicate rewriting: NOT((a = b) IS NULL)
+  # Inspired by Neo4j #13642.
+  # ---------------------------------------------------------------------------
+
+  - name: not_is_null_on_comparison_result
+    # (100 = 34) is false, (false IS NULL) is false, NOT(false) is true.
+    setup:
+      - "INSERT (:X {k1: 100})-[:R]->(:Y {k2: 34})"
+    query: |
+      MATCH (x:X)-[:R]->(y:Y)
+      WHERE NOT ((x.k1 = y.k2) IS NULL)
+      RETURN x.k1, y.k2
+    expect:
+      rows:
+        - [100, 34]
+
+  - name: not_is_null_with_null_property
+    # (100 = NULL) is NULL, (NULL IS NULL) is true, NOT(true) is false.
+    setup:
+      - "INSERT (:X {k1: 100})-[:R]->(:Y {name: 'test'})"
+    query: |
+      MATCH (x:X)-[:R]->(y:Y)
+      WHERE NOT ((x.k1 = y.k2) IS NULL)
+      RETURN x.k1
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # IS NOT NULL precedence (inspired by Memgraph #2457)
+  # ---------------------------------------------------------------------------
+
+  - name: boolean_expression_is_not_null
+    # (1 = 1) is true, true IS NOT NULL is true.
+    setup:
+      - "INSERT (:N {val: 1})"
+    query: MATCH (n:N) WHERE (1 = 1) IS NOT NULL RETURN n.val
+    expect:
+      rows:
+        - [1]
+
+  - name: property_comparison_is_not_null
+    setup:
+      - "INSERT (:N {a: 10, b: 20})"
+    query: MATCH (n:N) WHERE (n.a < n.b) IS NOT NULL RETURN n.a
+    expect:
+      rows:
+        - [10]
+
+  # ---------------------------------------------------------------------------
+  # OPTIONAL MATCH Cartesian product (inspired by FalkorDB #1281)
+  # ---------------------------------------------------------------------------
+
+  - name: optional_match_no_match_produces_nulls
+    # Unmatched OPTIONAL MATCH variables should be NULL.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: |
+      MATCH (p:Person {name: 'Alix'})
+      OPTIONAL MATCH (p)-[:WORKS_AT]->(c:Company)
+      RETURN p.name, c.name
+    expect:
+      rows:
+        - [Alix, null]
+
+  # ---------------------------------------------------------------------------
+  # WHERE filter on traversal endpoints (inspired by LadybugDB #273)
+  # ---------------------------------------------------------------------------
+
+  - name: filter_on_destination_property
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:LIVES_IN]->(:City {name: 'Amsterdam', pop: 900000})"
+      - "INSERT (:Person {name: 'Gus'})-[:LIVES_IN]->(:City {name: 'Berlin', pop: 3700000})"
+    query: |
+      MATCH (p:Person)-[:LIVES_IN]->(c:City)
+      WHERE c.pop > 1000000
+      RETURN p.name, c.name
+    expect:
+      rows:
+        - [Gus, Berlin]
+
+  - name: filter_on_edge_property
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})-[:KNOWS {since: 2024}]->(:Person {name: 'Jules'})"
+    query: |
+      MATCH (a:Person)-[k:KNOWS]->(b:Person)
+      WHERE k.since >= 2023
+      RETURN a.name, b.name
+    expect:
+      rows:
+        - [Vincent, Jules]
+
+  - name: filter_on_both_endpoints
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})-[:KNOWS]->(:Person {name: 'Gus', age: 25})"
+      - "INSERT (:Person {name: 'Vincent', age: 40})-[:KNOWS]->(:Person {name: 'Jules', age: 35})"
+    query: |
+      MATCH (a:Person)-[:KNOWS]->(b:Person)
+      WHERE a.age > 35 AND b.age > 30
+      RETURN a.name, b.name
+    expect:
+      rows:
+        - [Vincent, Jules]
+
+  # ---------------------------------------------------------------------------
+  # UNWIND NULL produces zero rows (inspired by FalkorDB #1031)
+  # ---------------------------------------------------------------------------
+
+  - name: unwind_null_produces_zero_rows
+    query: UNWIND NULL AS x RETURN x
+    expect:
+      empty: true
+
+  - name: unwind_empty_list_produces_zero_rows
+    query: UNWIND [] AS x RETURN x
+    expect:
+      empty: true
+
+  - name: unwind_null_does_not_execute_writes
+    # UNWIND NULL should produce 0 rows, so INSERT should not execute.
+    statements:
+      - "UNWIND NULL AS x INSERT (:Ghost {val: x})"
+      - "MATCH (n:Ghost) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [0]
+
+  # ---------------------------------------------------------------------------
+  # IN operator correctness (inspired by Kuzu #6010)
+  # ---------------------------------------------------------------------------
+
+  - name: in_basic_membership
+    query: RETURN 2 IN [1, 2, 3] AS found
+    expect:
+      rows:
+        - [true]
+
+  - name: in_not_found
+    query: RETURN 4 IN [1, 2, 3] AS found
+    expect:
+      rows:
+        - [false]
+
+  - name: in_empty_list
+    query: RETURN 1 IN [] AS found
+    expect:
+      rows:
+        - [false]
+
+  - name: in_with_null_element_found
+    # 1 IN [1, null] is true because 1 is found.
+    query: RETURN 1 IN [1, NULL] AS found
+    expect:
+      rows:
+        - [true]
+
+  - name: in_with_null_not_found
+    # 2 IN [1, null] is NULL (unknown) per SQL semantics.
+    query: RETURN 2 IN [1, NULL] AS found
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Type coercion: string 'false' vs boolean false (JanusGraph #4220)
+  # ---------------------------------------------------------------------------
+
+  - name: string_false_not_equal_to_boolean_false
+    setup:
+      - "INSERT (:N {val: false})"
+      - "INSERT (:N {val: 'false'})"
+    query: MATCH (n:N) WHERE n.val <> 'false' RETURN n.val
+    expect:
+      rows:
+        - [false]
+
+  - name: string_true_not_equal_to_boolean_true
+    setup:
+      - "INSERT (:N {val: true})"
+      - "INSERT (:N {val: 'true'})"
+    query: MATCH (n:N) WHERE n.val <> 'true' RETURN n.val
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # Inequality on missing property (JanusGraph #2205)
+  # ---------------------------------------------------------------------------
+
+  - name: neq_does_not_match_missing_property
+    # NULL <> 'Alix' is UNKNOWN, should not pass filter.
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {age: 30})"
+    query: MATCH (n:Person) WHERE n.name <> 'Alix' RETURN n.name ORDER BY n.name
+    expect:
+      ordered: true
+      rows:
+        - [Gus]
+
+  # ---------------------------------------------------------------------------
+  # NULL join semantics (inspired by Kuzu #5893)
+  # ---------------------------------------------------------------------------
+
+  - name: null_equality_in_cross_match_where
+    # Only 'Alix'='Alix' should match; NULL=NULL must not.
+    setup:
+      - "INSERT (:Account {svc: 'A', name: 'Alix'})"
+      - "INSERT (:Account {svc: 'B', name: 'Alix'})"
+      - "INSERT (:Account {svc: 'A'})"
+      - "INSERT (:Account {svc: 'B'})"
+    query: |
+      MATCH (a:Account {svc: 'A'})
+      MATCH (b:Account {svc: 'B'})
+      WHERE a.name = b.name
+      RETURN a.name
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Functions with NULL arguments return NULL (inspired by Kuzu #5959)
+  # ---------------------------------------------------------------------------
+
+  - name: type_of_null_relationship_returns_null
+    setup:
+      - "INSERT (:N {name: 'Alix'})"
+    query: |
+      MATCH (n:N)
+      OPTIONAL MATCH (n)-[r:NONEXISTENT]->()
+      RETURN type(r) AS t
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Delete + re-create edge in sequence (inspired by Dgraph #9422)
+  # ---------------------------------------------------------------------------
+
+  - name: replace_edge_in_sequence
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:LIKES]->(:Fruit {name: 'apple'})"
+      - "INSERT (:Fruit {name: 'banana'})"
+      - "MATCH (p:Person {name: 'Alix'})-[r:LIKES]->() DELETE r"
+      - "MATCH (p:Person {name: 'Alix'}), (f:Fruit {name: 'banana'}) INSERT (p)-[:LIKES]->(f)"
+    query: |
+      MATCH (p:Person {name: 'Alix'})-[:LIKES]->(f:Fruit)
+      RETURN f.name
+    expect:
+      rows:
+        - [banana]
+
+  # ---------------------------------------------------------------------------
+  # LIMIT with ORDER BY (inspired by Dgraph #9239)
+  # ---------------------------------------------------------------------------
+
+  - name: limit_respected_with_order_by
+    setup:
+      - "INSERT (:Item {seq: 0})"
+      - "INSERT (:Item {seq: 1})"
+      - "INSERT (:Item {seq: 2})"
+      - "INSERT (:Item {seq: 3})"
+      - "INSERT (:Item {seq: 4})"
+      - "INSERT (:Item {seq: 5})"
+      - "INSERT (:Item {seq: 6})"
+      - "INSERT (:Item {seq: 7})"
+      - "INSERT (:Item {seq: 8})"
+      - "INSERT (:Item {seq: 9})"
+    query: MATCH (n:Item) RETURN n.seq ORDER BY n.seq LIMIT 5
+    expect:
+      ordered: true
+      rows:
+        - [0]
+        - [1]
+        - [2]
+        - [3]
+        - [4]
+
+  - name: limit_larger_than_result_set
+    setup:
+      - "INSERT (:Item {seq: 1})"
+      - "INSERT (:Item {seq: 2})"
+    query: MATCH (n:Item) RETURN n.seq ORDER BY n.seq LIMIT 100
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Variable-length path enumeration (inspired by FalkorDB #1450)
+  # ---------------------------------------------------------------------------
+
+  - name: diamond_two_hop_enumerates_all_paths
+    # Diamond: A->B1->C, A->B2->C yields 2 distinct 2-hop paths.
+    setup:
+      - "INSERT (a:N {name: 'Alix'})-[:R]->(b1:N {name: 'Gus'}), (a)-[:R]->(b2:N {name: 'Vincent'}), (b1)-[:R]->(c:N {name: 'Jules'}), (b2)-[:R]->(c)"
+    query: MATCH (a:N {name: 'Alix'})-[:R*2]->(c:N {name: 'Jules'}) RETURN c.name
+    expect:
+      count: 2
+
+  - name: single_hop_variable_length_matches_direct_edges
+    setup:
+      - "INSERT (a:N {name: 'Alix'})-[:R]->(b:N {name: 'Gus'})-[:R]->(c:N {name: 'Vincent'})"
+    query: MATCH (a:N {name: 'Alix'})-[:R*1..1]->(b) RETURN b.name
+    expect:
+      rows:
+        - [Gus]
+
+  - name: variable_length_path_respects_max_hops
+    setup:
+      - "INSERT (:N {name: 'a'})-[:R]->(:N {name: 'b'})-[:R]->(:N {name: 'c'})-[:R]->(:N {name: 'd'})-[:R]->(:N {name: 'e'})"
+    query: MATCH (a:N {name: 'a'})-[:R*1..2]->(b) RETURN b.name ORDER BY b.name
+    expect:
+      ordered: true
+      count: 2
+
+  - name: two_hop_varlength_equals_explicit
+    # Variable-length *2 must match explicit two-hop count.
+    setup:
+      - "INSERT (:N {id: 1})-[:R]->(:N {id: 2})-[:R]->(:N {id: 3})"
+    query: MATCH (a:N {id: 1})-[:R*2]->(c) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # EXISTS subquery correctness (inspired by FalkorDB #1248)
+  # ---------------------------------------------------------------------------
+
+  - name: exists_returns_false_for_missing_pattern
+    skip: "EXISTS subquery in RETURN not yet supported"
+    setup:
+      - "INSERT (:User {name: 'Alix'})"
+    query: |
+      MATCH (u:User)
+      RETURN EXISTS { MATCH (u)<-[:AUTH]-(:Identity) } AS has_id
+    expect:
+      rows:
+        - [false]
+
+  - name: exists_returns_true_for_present_pattern
+    skip: "EXISTS subquery in RETURN not yet supported"
+    setup:
+      - "INSERT (:User {name: 'Alix'})<-[:AUTH]-(:Identity {provider: 'github'})"
+    query: |
+      MATCH (u:User)
+      RETURN EXISTS { MATCH (u)<-[:AUTH]-(:Identity) } AS has_id
+    expect:
+      rows:
+        - [true]
+
+  - name: exists_with_label_filter_no_false_positive
+    skip: "EXISTS subquery in RETURN not yet supported"
+    # Wrong edge label: EXISTS should return false.
+    setup:
+      - "INSERT (:User {name: 'Gus'})<-[:FOLLOWS]-(:Bot {name: 'bot1'})"
+    query: |
+      MATCH (u:User)
+      RETURN EXISTS { MATCH (u)<-[:AUTH]-(:Identity) } AS has_id
+    expect:
+      rows:
+        - [false]
+
+  # ---------------------------------------------------------------------------
+  # UNION correctness (inspired by Memgraph #3909)
+  # ---------------------------------------------------------------------------
+
+  - name: basic_union_deduplicates
+    query: RETURN 1 AS x UNION RETURN 1 AS x
+    expect:
+      rows:
+        - [1]
+
+  - name: union_all_preserves_duplicates
+    query: RETURN 1 AS x UNION ALL RETURN 1 AS x
+    expect:
+      count: 2
+
+  - name: union_different_values
+    query: RETURN 1 AS x UNION RETURN 2 AS x
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Integer overflow detection (inspired by Neo4j #13674)
+  # ---------------------------------------------------------------------------
+
+  - name: i64_max_plus_one_overflows
+    skip: "integer overflow wraps instead of returning null"
+    # i64::MAX + 1 overflows: should return NULL.
+    query: RETURN 9223372036854775807 + 1 AS r
+    expect:
+      rows:
+        - [null]
+
+  - name: multiplication_intermediate_overflow
+    skip: "integer overflow wraps instead of returning null"
+    # 100 * 1e9 * 1e8 = 1e19 overflows i64.
+    query: RETURN 100 * 1000000000 * 100000000 AS r
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Property key prefix overlap (inspired by JanusGraph #4401)
+  # ---------------------------------------------------------------------------
+
+  - name: property_keys_with_shared_prefix
+    setup:
+      - "INSERT (:N {hello: 'world', hel: 'wor'})"
+    query: MATCH (n:N) RETURN n.hel, n.hello
+    expect:
+      rows:
+        - [wor, world]
+
+  - name: filter_on_prefix_property
+    setup:
+      - "INSERT (:N {abc: 1, abcdef: 2, ab: 3})"
+    query: MATCH (n:N) WHERE n.abc = 1 RETURN n.abcdef, n.ab
+    expect:
+      rows:
+        - [2, 3]
+
+  # ---------------------------------------------------------------------------
+  # Property type overwrite (inspired by JanusGraph #4141)
+  # ---------------------------------------------------------------------------
+
+  - name: overwrite_bool_with_string
+    setup:
+      - "INSERT (:Item {flag: true})"
+      - "MATCH (n:Item) SET n.flag = 'yes'"
+    query: MATCH (n:Item) RETURN n.flag
+    expect:
+      rows:
+        - [yes]
+
+  - name: overwrite_int_with_string
+    setup:
+      - "INSERT (:Item {val: 42})"
+      - "MATCH (n:Item) SET n.val = 'forty-two'"
+    query: MATCH (n:Item) RETURN n.val
+    expect:
+      rows:
+        - [forty-two]
+
+  - name: overwrite_string_with_int
+    setup:
+      - "INSERT (:Item {val: 'hello'})"
+      - "MATCH (n:Item) SET n.val = 99"
+    query: MATCH (n:Item) RETURN n.val
+    expect:
+      rows:
+        - [99]
+
+  # ---------------------------------------------------------------------------
+  # Chained OR correctness (inspired by JanusGraph #2231)
+  # ---------------------------------------------------------------------------
+
+  - name: chained_or_not_flattened
+    # (A OR B) AND (C OR D) must not flatten to (A OR B OR C OR D).
+    setup:
+      - "INSERT (:T {a: true,  b: true,  c: true,  d: true})"
+      - "INSERT (:T {a: true,  b: false, c: true,  d: false})"
+      - "INSERT (:T {a: false, b: true,  c: false, d: true})"
+      - "INSERT (:T {a: false, b: false, c: true,  d: false})"
+    query: |
+      MATCH (n:T)
+      WHERE (n.a = true OR n.b = true) AND (n.c = false OR n.d = true)
+      RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  # ---------------------------------------------------------------------------
+  # Quantifier functions on empty collections (inspired by Memgraph #2481)
+  # ---------------------------------------------------------------------------
+
+  - name: any_on_empty_list_is_false
+    query: RETURN any(x IN [] WHERE x > 0) AS result
+    expect:
+      rows:
+        - [false]
+
+  - name: all_on_empty_list_is_true
+    # Vacuous truth: all() on empty list is TRUE.
+    query: RETURN all(x IN [] WHERE x > 0) AS result
+    expect:
+      rows:
+        - [true]
+
+  - name: none_on_empty_list_is_true
+    query: RETURN none(x IN [] WHERE x > 0) AS result
+    expect:
+      rows:
+        - [true]
+
+  # ---------------------------------------------------------------------------
+  # RETURN DISTINCT
+  # ---------------------------------------------------------------------------
+
+  - name: distinct_removes_exact_duplicates
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 2})"
+    query: MATCH (n:N) RETURN DISTINCT n.val ORDER BY n.val
+    expect:
+      ordered: true
+      rows:
+        - [1]
+        - [2]
+
+  - name: distinct_on_null_values
+    # DISTINCT should collapse duplicate NULLs into one.
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N)"
+      - "INSERT (:N)"
+    query: MATCH (n:N) RETURN DISTINCT n.val
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # WITH clause projection
+  # ---------------------------------------------------------------------------
+
+  - name: with_renames_variable
+    setup:
+      - "INSERT (:Person {name: 'Alix', age: 30})"
+    query: |
+      MATCH (p:Person)
+      WITH p.name AS person_name, p.age AS person_age
+      RETURN person_name, person_age
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: with_filters_rows
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 2})"
+      - "INSERT (:N {val: 3})"
+    query: |
+      MATCH (n:N)
+      WITH n WHERE n.val > 1
+      RETURN n.val ORDER BY n.val
+    expect:
+      ordered: true
+      rows:
+        - [2]
+        - [3]
+
+  # ---------------------------------------------------------------------------
+  # SKIP and SKIP + LIMIT
+  # ---------------------------------------------------------------------------
+
+  - name: skip_skips_first_n_rows
+    setup:
+      - "INSERT (:Item {seq: 0})"
+      - "INSERT (:Item {seq: 1})"
+      - "INSERT (:Item {seq: 2})"
+      - "INSERT (:Item {seq: 3})"
+      - "INSERT (:Item {seq: 4})"
+    query: MATCH (n:Item) RETURN n.seq ORDER BY n.seq SKIP 2
+    expect:
+      ordered: true
+      rows:
+        - [2]
+        - [3]
+        - [4]
+
+  - name: skip_plus_limit
+    setup:
+      - "INSERT (:Item {seq: 0})"
+      - "INSERT (:Item {seq: 1})"
+      - "INSERT (:Item {seq: 2})"
+      - "INSERT (:Item {seq: 3})"
+      - "INSERT (:Item {seq: 4})"
+      - "INSERT (:Item {seq: 5})"
+      - "INSERT (:Item {seq: 6})"
+      - "INSERT (:Item {seq: 7})"
+      - "INSERT (:Item {seq: 8})"
+      - "INSERT (:Item {seq: 9})"
+    query: MATCH (n:Item) RETURN n.seq ORDER BY n.seq SKIP 3 LIMIT 2
+    expect:
+      ordered: true
+      rows:
+        - [3]
+        - [4]
+
+  - name: skip_beyond_result_set
+    setup:
+      - "INSERT (:Item {seq: 1})"
+      - "INSERT (:Item {seq: 2})"
+    query: MATCH (n:Item) RETURN n.seq SKIP 100
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # Edge properties preserved in traversal (inspired by ArangoDB #21265)
+  # ---------------------------------------------------------------------------
+
+  - name: edge_properties_preserved_in_traversal
+    setup:
+      - "INSERT (:Place {name: 'France'})-[:IS_IN {category: 'continent'}]->(:Place {name: 'Europe'})"
+      - "INSERT (:Place {name: 'Europe'})-[:IS_IN {category: 'planet'}]->(:Place {name: 'World'})"
+    query: |
+      MATCH (:Place {name: 'France'})-[r:IS_IN]->(:Place {name: 'Europe'})
+      RETURN r.category
+    expect:
+      rows:
+        - [continent]
+
+  - name: multiple_edge_properties_in_chain
+    setup:
+      - "INSERT (:A {name: 'a'})-[:R {weight: 10}]->(:B {name: 'b'})-[:R {weight: 20}]->(:C {name: 'c'})"
+    query: MATCH (:A)-[r1:R]->(:B)-[r2:R]->(:C) RETURN r1.weight, r2.weight
+    expect:
+      rows:
+        - [10, 20]
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY with mixed types (inspired by Memgraph #3888)
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_heterogeneous_property_does_not_crash
+    setup:
+      - "INSERT (:N {val: 1})"
+      - "INSERT (:N {val: 'hello'})"
+      - "INSERT (:N {val: true})"
+    query: MATCH (n:N) RETURN n.val ORDER BY n.val
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY on aliased property (inspired by Memgraph #3976)
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_original_expression_after_alias
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:WORKS_FOR]->(:Company {name: 'Acme'})"
+      - "INSERT (:Person {name: 'Gus'})-[:WORKS_FOR]->(:Company {name: 'Beta'})"
+    query: |
+      MATCH (e:Person)-[:WORKS_FOR]->(c:Company)
+      RETURN e.name AS employee, c.name AS company
+      ORDER BY employee
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Acme]
+        - [Gus, Beta]
+
+  - name: order_by_alias_with_optional_match
+    setup:
+      - "INSERT (:Person {name: 'Alix'})-[:WORKS_FOR]->(:Company {name: 'Acme'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    query: |
+      MATCH (e:Person)
+      OPTIONAL MATCH (e)-[:WORKS_FOR]->(c:Company)
+      RETURN e.name AS employee, c.name AS company
+      ORDER BY employee
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Acme]
+        - [Gus, null]
+
+  # ---------------------------------------------------------------------------
+  # String escapes (inspired by Kuzu #5814)
+  # ---------------------------------------------------------------------------
+
+  - name: newline_escape_in_property
+    setup:
+      - "INSERT (:Entry {text: \"line1\\nline2\"})"
+    query: MATCH (e:Entry) RETURN e.text
+    expect:
+      count: 1
+
+  - name: tab_escape_in_property
+    setup:
+      - "INSERT (:Entry {text: \"col1\\tcol2\"})"
+    query: MATCH (e:Entry) RETURN e.text
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Escaped quotes in property values (inspired by Dgraph #9405)
+  # ---------------------------------------------------------------------------
+
+  - name: double_quotes_in_single_quoted_string
+    setup:
+      - "INSERT (:Book {title: 'The \"Problem\" of Knowledge'})"
+    query: MATCH (b:Book) RETURN b.title
+    expect:
+      count: 1
+
+  - name: single_quotes_in_double_quoted_string
+    setup:
+      - "INSERT (:Book {title: \"It's a Test\"})"
+    query: MATCH (b:Book) RETURN b.title
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Persistence across sessions
+  # ---------------------------------------------------------------------------
+
+  - name: in_memory_data_survives_session
+    # This is tested via the statements pattern: setup inserts, query reads.
+    setup:
+      - "INSERT (:Persist {key: 'test', val: 42})"
+    query: MATCH (n:Persist {key: 'test'}) RETURN n.val
+    expect:
+      rows:
+        - [42]

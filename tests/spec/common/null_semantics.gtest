@@ -1,0 +1,378 @@
+# Common: NULL semantics
+#
+# Covers: NULL comparisons, NULL propagation in expressions,
+# NULL in aggregation, IS NULL / IS NOT NULL predicates.
+# These are data-model-agnostic and apply to all LPG languages.
+
+meta:
+  language: gql
+  model: lpg
+  section: null
+  title: NULL semantics
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # NULL comparisons (three-valued logic)
+  # ---------------------------------------------------------------------------
+
+  - name: null_equals_null_is_null
+    query: RETURN null = null AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: null_not_equals_null_is_null
+    query: RETURN null <> null AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: null_greater_than_value_is_null
+    query: RETURN null > 5 AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: null_and_true_is_null
+    query: RETURN null AND true AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: null_and_false_is_false
+    query: RETURN null AND false AS result
+    expect:
+      rows:
+        - [false]
+
+  - name: null_or_true_is_true
+    query: RETURN null OR true AS result
+    expect:
+      rows:
+        - [true]
+
+  - name: null_or_false_is_null
+    query: RETURN null OR false AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: not_null_is_null
+    query: RETURN NOT null AS result
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # IS NULL / IS NOT NULL
+  # ---------------------------------------------------------------------------
+
+  - name: is_null_on_missing_property
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: MATCH (n:Person) WHERE n.email IS NULL RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  - name: is_not_null_on_existing_property
+    setup:
+      - "INSERT (:Person {name: 'Alix', email: 'alix@example.com'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    query: MATCH (n:Person) WHERE n.email IS NOT NULL RETURN n.name
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # NULL propagation in expressions
+  # ---------------------------------------------------------------------------
+
+  - name: null_plus_number_is_null
+    query: RETURN null + 5 AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: null_in_string_concat_is_null
+    query: "RETURN 'hello' + null AS result"
+    expect:
+      rows:
+        - [null]
+
+  - name: coalesce_returns_first_non_null
+    query: RETURN coalesce(null, null, 42) AS result
+    expect:
+      rows:
+        - [42]
+
+  - name: coalesce_all_null_returns_null
+    query: RETURN coalesce(null, null) AS result
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # NULL in aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: count_excludes_null
+    setup:
+      - "INSERT (:Item {val: 1})"
+      - "INSERT (:Item {val: 2})"
+      - "INSERT (:Item {})"
+    query: MATCH (i:Item) RETURN count(i.val) AS cnt
+    expect:
+      rows:
+        - [2]
+
+  - name: count_star_includes_null_rows
+    setup:
+      - "INSERT (:Item {val: 1})"
+      - "INSERT (:Item {val: 2})"
+      - "INSERT (:Item {})"
+    query: MATCH (i:Item) RETURN count(*) AS cnt
+    expect:
+      rows:
+        - [3]
+
+  - name: sum_ignores_null
+    setup:
+      - "INSERT (:Item {val: 10})"
+      - "INSERT (:Item {val: 20})"
+      - "INSERT (:Item {})"
+    query: MATCH (i:Item) RETURN sum(i.val) AS total
+    expect:
+      rows:
+        - [30]
+
+  - name: optional_match_null_in_aggregation
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+    query: |
+      MATCH (p:Person)
+      OPTIONAL MATCH (p)-[:KNOWS]->(friend)
+      RETURN p.name, count(friend) AS friend_count
+    expect:
+      rows:
+        - [Alix, 0]
+        - [Gus, 0]
+
+  # ---------------------------------------------------------------------------
+  # NULL equality in WHERE (three-valued logic filters)
+  # ---------------------------------------------------------------------------
+
+  - name: null_equality_in_where_filters_out
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: "MATCH (i:Item) WHERE i.val = NULL RETURN i.name AS name ORDER BY name"
+    expect:
+      empty: true
+
+  - name: null_ne_null_in_where_filters_out
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: "MATCH (i:Item) WHERE i.val <> NULL RETURN i.name AS name ORDER BY name"
+    expect:
+      empty: true
+
+  - name: null_gt_in_where_filters_out
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: MATCH (i:Item) WHERE i.val > NULL RETURN i.name
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # NULL in CASE expressions
+  # ---------------------------------------------------------------------------
+
+  - name: case_when_null_eq_null_is_unknown
+    setup:
+      - "INSERT (:Item {name: 'beta'})"
+    query: "MATCH (i:Item) WHERE i.name = 'beta' RETURN CASE WHEN i.val = NULL THEN 'hit' ELSE 'miss' END AS result"
+    expect:
+      rows:
+        - [miss]
+
+  - name: simple_case_null_when_null
+    setup:
+      - "INSERT (:Item {name: 'beta'})"
+    query: "MATCH (i:Item) WHERE i.name = 'beta' RETURN CASE i.val WHEN NULL THEN 'hit' ELSE 'miss' END AS result"
+    expect:
+      rows:
+        - [miss]
+
+  - name: case_when_is_not_null_goes_to_else
+    setup:
+      - "INSERT (:Item {name: 'beta'})"
+    query: "MATCH (i:Item) WHERE i.name = 'beta' RETURN CASE WHEN i.val IS NOT NULL THEN 'has_val' ELSE 'no_val' END AS status"
+    expect:
+      rows:
+        - [no_val]
+
+  - name: simple_case_matching_value
+    setup:
+      - "INSERT (:X {v: 1})"
+    query: "MATCH (x:X) RETURN CASE x.v WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END AS label"
+    expect:
+      rows:
+        - [one]
+
+  # ---------------------------------------------------------------------------
+  # Boolean logic with UNKNOWN (NULL in WHERE)
+  # ---------------------------------------------------------------------------
+
+  - name: or_with_unknown_true_passes
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: "MATCH (i:Item) WHERE i.val = NULL OR i.name = 'alpha' RETURN i.name AS name ORDER BY name"
+    expect:
+      rows:
+        - [alpha]
+
+  - name: and_with_unknown_filters_out
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: "MATCH (i:Item) WHERE i.val = NULL AND i.name = 'beta' RETURN i.name AS name"
+    expect:
+      empty: true
+
+  # ---------------------------------------------------------------------------
+  # NULLIF edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: nullif_both_null
+    query: RETURN NULLIF(NULL, NULL) AS result
+    expect:
+      rows:
+        - [null]
+
+  - name: nullif_value_with_null
+    query: RETURN NULLIF(42, NULL) AS result
+    expect:
+      rows:
+        - [42]
+
+  # ---------------------------------------------------------------------------
+  # Missing property access
+  # ---------------------------------------------------------------------------
+
+  - name: missing_property_returns_null
+    setup:
+      - "INSERT (:Thing {name: 'only_name'})"
+    query: MATCH (t:Thing) RETURN t.nonexistent AS val
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # Aggregation with NULLs (sum, avg, min, max, count)
+  # ---------------------------------------------------------------------------
+
+  - name: sum_skips_nulls
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: MATCH (i:Item) RETURN sum(i.val) AS total
+    expect:
+      rows:
+        - [40]
+
+  - name: avg_skips_nulls
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: MATCH (i:Item) RETURN avg(i.val) AS average
+    expect:
+      rows:
+        - [20]
+
+  - name: min_max_skip_nulls
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: MATCH (i:Item) RETURN min(i.val) AS lo, max(i.val) AS hi
+    expect:
+      rows:
+        - [10, 30]
+
+  - name: count_expr_vs_count_node
+    setup:
+      - "INSERT (:Item {name: 'alpha', val: 10})"
+      - "INSERT (:Item {name: 'beta'})"
+      - "INSERT (:Item {name: 'gamma', val: 30})"
+    query: MATCH (i:Item) RETURN count(i.val) AS cnt, count(i) AS total
+    expect:
+      rows:
+        - [2, 3]
+
+  # ---------------------------------------------------------------------------
+  # IN operator with NULL in list
+  # ---------------------------------------------------------------------------
+
+  - name: in_list_with_null
+    setup:
+      - "INSERT (:N {v: 1})"
+      - "INSERT (:N {v: 2})"
+      - "INSERT (:N {v: 5})"
+    query: "MATCH (n:N) WHERE n.v IN [1, NULL, 5] RETURN n.v AS v ORDER BY v"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # NULL arithmetic propagation
+  # ---------------------------------------------------------------------------
+
+  - name: null_property_plus_one_is_null
+    setup:
+      - "INSERT (:Item {name: 'beta'})"
+    query: "MATCH (i:Item) WHERE i.name = 'beta' RETURN i.val + 1 AS incremented"
+    expect:
+      rows:
+        - [null]
+
+  # ---------------------------------------------------------------------------
+  # DISTINCT with NULLs
+  # ---------------------------------------------------------------------------
+
+  - name: distinct_deduplicates_nulls
+    setup:
+      - "INSERT (:D {v: 1})"
+      - "INSERT (:D {v: 1})"
+      - "INSERT (:D {})"
+      - "INSERT (:D {})"
+      - "INSERT (:D {v: 2})"
+    query: MATCH (d:D) RETURN DISTINCT d.v AS v ORDER BY v
+    expect:
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # GROUP BY with NULL keys
+  # ---------------------------------------------------------------------------
+
+  - name: group_by_null_key
+    setup:
+      - "INSERT (:Sale {region: 'North', amount: 100})"
+      - "INSERT (:Sale {amount: 50})"
+      - "INSERT (:Sale {region: 'North', amount: 200})"
+      - "INSERT (:Sale {amount: 75})"
+    query: "MATCH (s:Sale) RETURN s.region AS region, sum(s.amount) AS total ORDER BY region"
+    expect:
+      count: 2

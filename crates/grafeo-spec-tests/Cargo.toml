@@ -1,0 +1,29 @@
+[package]
+name = "grafeo-spec-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Declarative .gtest spec tests for Grafeo"
+publish = false
+
+[features]
+default = ["gql", "cypher", "gremlin", "graphql", "sparql", "sql-pgq", "vector-index", "text-index", "algos"]
+gql = []
+cypher = []
+gremlin = []
+graphql = []
+sparql = []
+sql-pgq = []
+rdf = []
+vector-index = []
+text-index = []
+algos = []
+
+[dependencies]
+grafeo-engine = { workspace = true, features = ["embedded", "languages", "rdf"] }
+grafeo-common = { workspace = true }
+md-5 = "0.11"
+
+[build-dependencies]
+# No serde_yaml: hand-written parser for the simple YAML subset

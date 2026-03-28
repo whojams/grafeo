@@ -56,27 +56,64 @@ type TestCase struct {
 
 // Expect holds the expected result assertions for a test case.
 type Expect struct {
-	Rows      [][]yamlValue `yaml:"rows"`
-	Ordered   bool          `yaml:"ordered"`
-	Count     *int          `yaml:"count"`
-	Empty     bool          `yaml:"empty"`
-	Error     *string       `yaml:"error"`
-	Hash      *string       `yaml:"hash"`
-	Precision *int          `yaml:"precision"`
-	Columns   []string      `yaml:"columns"`
+	Rows      [][]string `yaml:"-"` // Populated by custom UnmarshalYAML
+	Ordered   bool       `yaml:"ordered"`
+	Count     *int       `yaml:"count"`
+	Empty     bool       `yaml:"empty"`
+	Error     *string    `yaml:"error"`
+	Hash      *string    `yaml:"hash"`
+	Precision *int       `yaml:"precision"`
+	Columns   []string   `yaml:"columns"`
 }
 
-// yamlValue wraps the raw YAML node so that we can apply canonical string
-// conversion (matching the Rust runner) after parsing, rather than relying
-// on Go's default YAML-to-interface{} mapping.
-type yamlValue struct {
-	raw string
-}
-
-// UnmarshalYAML converts any scalar, sequence, or mapping into its canonical
-// string representation during YAML decoding.
-func (v *yamlValue) UnmarshalYAML(node *yaml.Node) error {
-	v.raw = nodeToCanonical(node)
+// UnmarshalYAML handles the Expect block, manually parsing `rows` to preserve
+// null values that Go's default YAML decoder would skip in slices.
+func (e *Expect) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		val := node.Content[i+1]
+		switch key {
+		case "rows":
+			if val.Kind == yaml.SequenceNode {
+				for _, rowNode := range val.Content {
+					if rowNode.Kind == yaml.SequenceNode {
+						cells := make([]string, len(rowNode.Content))
+						for j, cell := range rowNode.Content {
+							cells[j] = nodeToCanonical(cell)
+						}
+						e.Rows = append(e.Rows, cells)
+					}
+				}
+			}
+		case "ordered":
+			e.Ordered = val.Value == "true"
+		case "count":
+			if v, err := strconv.Atoi(val.Value); err == nil {
+				e.Count = &v
+			}
+		case "empty":
+			e.Empty = val.Value == "true"
+		case "error":
+			s := val.Value
+			e.Error = &s
+		case "hash":
+			s := val.Value
+			e.Hash = &s
+		case "precision":
+			if v, err := strconv.Atoi(val.Value); err == nil {
+				e.Precision = &v
+			}
+		case "columns":
+			if val.Kind == yaml.SequenceNode {
+				for _, c := range val.Content {
+					e.Columns = append(e.Columns, c.Value)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -266,13 +303,13 @@ func resultToRows(result *grafeo.QueryResult, cols []string) [][]string {
 	return rows
 }
 
-// expectedRows extracts the canonical strings from parsed yamlValue rows.
-func expectedRows(rows [][]yamlValue) [][]string {
+// expectedRows returns the already-canonical rows (identity since Rows is [][]string).
+func expectedRows(rows [][]string) [][]string {
 	out := make([][]string, len(rows))
 	for i, row := range rows {
 		cells := make([]string, len(row))
 		for j, cell := range row {
-			cells[j] = cell.raw
+			cells[j] = cell
 		}
 		out[i] = cells
 	}

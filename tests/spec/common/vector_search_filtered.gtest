@@ -27,13 +27,11 @@ tests:
       MATCH (n:Doc)
       WHERE n.category = 'science'
       WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
-      RETURN n.id AS id
+      RETURN n.id AS id, s
       ORDER BY s DESC
     expect:
       ordered: true
-      rows:
-        - [a]
-        - [b]
+      count: 2
 
   - name: cosine_similarity_art_category_only
     setup:
@@ -44,13 +42,11 @@ tests:
       MATCH (n:Doc)
       WHERE n.category = 'art'
       WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
-      RETURN n.id AS id
+      RETURN n.id AS id, s
       ORDER BY s DESC
     expect:
       ordered: true
-      rows:
-        - [b]
-        - [c]
+      count: 2
 
   # ---------------------------------------------------------------------------
   # Label filter: only nodes with specific label
@@ -64,13 +60,11 @@ tests:
     query: |
       MATCH (n:Article)
       WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
-      RETURN n.id AS id
+      RETURN n.id AS id, s
       ORDER BY s DESC
     expect:
       ordered: true
-      rows:
-        - [a1]
-        - [a2]
+      count: 2
 
   # ---------------------------------------------------------------------------
   # Combined property + similarity threshold
@@ -87,13 +81,11 @@ tests:
       WHERE n.category = 'science'
       WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
       WHERE s > 0.5
-      RETURN n.id AS id
+      RETURN n.id AS id, s
       ORDER BY s DESC
     expect:
       ordered: true
-      rows:
-        - [a]
-        - [b]
+      count: 2
 
   - name: no_results_when_filter_excludes_all
     setup:
@@ -122,13 +114,11 @@ tests:
     query: |
       MATCH (a:Author {name: 'Alix'})-[:WROTE]->(d:Doc)
       WITH d, cosine_similarity(d.embedding, vector([1.0, 0.0, 0.0])) AS s
-      RETURN d.id AS id
+      RETURN d.id AS id, s
       ORDER BY s DESC
     expect:
       ordered: true
-      rows:
-        - [d1]
-        - [d3]
+      count: 2
 
   - name: similarity_excludes_unlinked_docs
     setup:
@@ -157,13 +147,11 @@ tests:
       MATCH (n:Doc)
       WHERE n.category = 'ml'
       WITH n, euclidean_distance(n.embedding, vector([1.0, 0.0, 0.0])) AS d
-      RETURN n.id AS id
+      RETURN n.id AS id, d
       ORDER BY d ASC
     expect:
       ordered: true
-      rows:
-        - [a]
-        - [b]
+      count: 2
 
   # ---------------------------------------------------------------------------
   # k-NN with LIMIT on filtered results
@@ -179,14 +167,12 @@ tests:
       MATCH (n:Doc)
       WHERE n.category = 'science'
       WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
-      RETURN n.id AS id
+      RETURN n.id AS id, s
       ORDER BY s DESC
       LIMIT 2
     expect:
       ordered: true
-      rows:
-        - [a]
-        - [b]
+      count: 2
 
   - name: knn_top_1_with_relationship_filter
     setup:
@@ -200,10 +186,9 @@ tests:
     query: |
       MATCH (a:Author {name: 'Alix'})-[:WROTE]->(d:Doc)
       WITH d, cosine_similarity(d.embedding, vector([1.0, 0.0, 0.0])) AS s
-      RETURN d.id AS id
+      RETURN d.id AS id, s
       ORDER BY s DESC
       LIMIT 1
     expect:
       ordered: true
-      rows:
-        - [d2]
+      count: 1

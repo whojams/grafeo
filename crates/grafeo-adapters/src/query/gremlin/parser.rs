@@ -97,6 +97,13 @@ impl<'a> Parser<'a> {
     fn parse_step(&mut self) -> Result<Step> {
         let token = self.advance_token()?;
         match &token.kind {
+            // Mid-traversal V() restarts from all vertices
+            TokenKind::V => {
+                self.expect(TokenKind::LParen)?;
+                let ids = self.parse_optional_value_list()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::MidV(if ids.is_empty() { None } else { Some(ids) }))
+            }
             // Navigation steps
             TokenKind::Out => {
                 self.expect(TokenKind::LParen)?;
@@ -532,6 +539,7 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Containing) => Some(TokenKind::Containing),
             Some(TokenKind::StartingWith) => Some(TokenKind::StartingWith),
             Some(TokenKind::EndingWith) => Some(TokenKind::EndingWith),
+            Some(TokenKind::Regex) => Some(TokenKind::Regex),
             _ => None,
         };
 
@@ -604,6 +612,10 @@ impl<'a> Parser<'a> {
             TokenKind::EndingWith => {
                 let s = self.parse_string()?;
                 Predicate::EndingWith(s)
+            }
+            TokenKind::Regex => {
+                let s = self.parse_string()?;
+                Predicate::Regex(s)
             }
             _ => return Err(self.error("Unknown predicate")),
         };
@@ -1005,6 +1017,7 @@ impl<'a> Parser<'a> {
             TokenKind::String(s) => Ok(Value::String(s.into())),
             TokenKind::True => Ok(Value::Bool(true)),
             TokenKind::False => Ok(Value::Bool(false)),
+            TokenKind::Parameter(name) => Ok(Value::String(format!("${name}").into())),
             _ => Err(self.error("Expected value")),
         }
     }

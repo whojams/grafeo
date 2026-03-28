@@ -51,6 +51,9 @@ pub enum Step {
     /// .otherV() - traverse to the other vertex
     OtherV,
 
+    /// .V() - mid-traversal vertex scan (restarts from all vertices)
+    MidV(Option<Vec<Value>>),
+
     // === Filter Steps ===
     /// .has(key, value) or .has(label, key, value)
     Has(HasStep),

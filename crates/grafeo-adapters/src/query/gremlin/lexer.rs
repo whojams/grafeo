@@ -230,6 +230,9 @@ pub enum TokenKind {
     /// Underscore (`_`) token.
     Underscore,
 
+    /// A `$name` parameter reference.
+    Parameter(String),
+
     // End of input
     /// End of input.
     Eof,
@@ -285,6 +288,15 @@ impl<'a> Lexer<'a> {
 
             Some(c) if c.is_ascii_digit() || (c == '-' && self.peek_is(|c| c.is_ascii_digit())) => {
                 self.read_number(c)
+            }
+
+            Some('$') => {
+                // Parameter: $name
+                let mut name = String::new();
+                while self.peek_is(|c| c.is_alphanumeric() || c == '_') {
+                    name.push(self.advance().unwrap());
+                }
+                TokenKind::Parameter(name)
             }
 
             Some(c) if c.is_alphabetic() || c == '_' => self.read_identifier(c),

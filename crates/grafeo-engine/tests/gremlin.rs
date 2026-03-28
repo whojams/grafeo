@@ -224,7 +224,7 @@ fn test_has_property_without() {
     let result = db
         .execute_gremlin("g.V().hasLabel('Person').has('age', without(25, 35))")
         .unwrap();
-    assert_eq!(result.row_count(), 1, "Only Alix (30) is not in {25, 35}");
+    assert_eq!(result.row_count(), 1, "Only Alix (30) is not in the set");
 }
 
 #[test]
@@ -1009,4 +1009,818 @@ fn test_parameterized_query() {
         .execute_gremlin_with_params("g.V().has('name', $name)", params)
         .unwrap();
     assert_eq!(result.row_count(), 1);
+}
+
+// ============================================================================
+// Step-Level and() Filter
+// ============================================================================
+
+#[test]
+fn test_step_and_two_property_filters() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().and(has('age', gt(25)), has('city', 'Amsterdam'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Alix has age > 25 AND city = Amsterdam"
+    );
+}
+
+#[test]
+fn test_step_and_label_with_property() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().and(hasLabel('Person'), has('age', lt(35)))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Alix (30) and Gus (25) are Person with age < 35"
+    );
+}
+
+// ============================================================================
+// Step-Level or() Filter
+// ============================================================================
+
+#[test]
+fn test_step_or_same_property_different_values() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').or(has('age', 25), has('age', 35))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Gus (25) and Vincent (35) match age = 25 OR age = 35"
+    );
+}
+
+#[test]
+fn test_step_or_different_labels_and_properties() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().or(hasLabel('Company'), has('city', 'Paris'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Acme (Company) and Vincent (Paris) match the OR filter"
+    );
+}
+
+// ============================================================================
+// Step-Level not() Filter
+// ============================================================================
+
+#[test]
+fn test_step_not_excludes_matching() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').not(has('city', 'Berlin'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Excluding Gus (Berlin) leaves Alix and Vincent"
+    );
+}
+
+// ============================================================================
+// Compound Predicates via Equivalent Built-in Predicates
+//
+// The AST supports Predicate::And/Or/Not, but the parser does not yet
+// support chained syntax (gt(25).and(lt(35))) or P.and(gt(25), lt(35)).
+// Use semantically equivalent predicates instead:
+//   inside(lo, hi) = gt(lo) AND lt(hi)    (exclusive both ends)
+//   outside(lo, hi) = lt(lo) OR gt(hi)     (exclusive both ends)
+//   between(lo, hi) = gte(lo) AND lt(hi)   (inclusive start, exclusive end)
+// ============================================================================
+
+#[test]
+fn test_inside_as_compound_and_range() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', inside(25, 35))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Alix (30) satisfies 25 < age < 35"
+    );
+}
+
+#[test]
+fn test_outside_as_compound_or_range() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', outside(26, 34))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Gus (25 < 26) and Vincent (35 > 34) satisfy age outside (26, 34)"
+    );
+}
+
+#[test]
+fn test_without_as_negated_equality() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', without(30))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Gus (25) and Vincent (35) have age != 30"
+    );
+}
+
+// ============================================================================
+// Property Existence: has(key)
+// ============================================================================
+
+#[test]
+fn test_has_key_existence_revenue() {
+    let db = create_social_network();
+    let result = db.execute_gremlin("g.V().has('revenue')").unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Acme has the 'revenue' property"
+    );
+}
+
+#[test]
+fn test_has_key_existence_city() {
+    let db = create_social_network();
+    let result = db.execute_gremlin("g.V().has('city')").unwrap();
+    assert_eq!(
+        result.row_count(),
+        3,
+        "All 3 Person vertices have the 'city' property"
+    );
+}
+
+// ============================================================================
+// Three-Argument has(label, key, value)
+// ============================================================================
+
+#[test]
+fn test_has_label_key_value_person_alix() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().has('Person', 'name', 'Alix')")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Should find exactly 1 Person named Alix"
+    );
+}
+
+#[test]
+fn test_has_label_key_value_company_acme() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().has('Company', 'name', 'Acme')")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Should find exactly 1 Company named Acme"
+    );
+}
+
+#[test]
+fn test_has_label_key_value_wrong_label() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().has('Person', 'name', 'Acme')")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        0,
+        "Acme is a Company, not a Person, so no match"
+    );
+}
+
+// ============================================================================
+// Multi-Label hasLabel()
+// ============================================================================
+
+#[test]
+fn test_has_label_multiple_all_match() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person', 'Company')")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        4,
+        "All 4 vertices are either Person or Company"
+    );
+}
+
+#[test]
+fn test_has_label_multiple_partial_match() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person', 'NonExistent')")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        3,
+        "Only the 3 Person vertices match, NonExistent matches nothing"
+    );
+}
+
+// ============================================================================
+// Where Clause: where(traversal)
+// ============================================================================
+
+#[test]
+fn test_where_out_knows() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').where(out('KNOWS'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Alix and Gus have outgoing KNOWS edges, Vincent does not"
+    );
+}
+
+#[test]
+fn test_where_out_works_at() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').where(out('WORKS_AT'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Alix has an outgoing WORKS_AT edge"
+    );
+}
+
+// ============================================================================
+// hasId()
+// ============================================================================
+
+#[test]
+fn test_has_id_single() {
+    let db = create_social_network();
+
+    // Get Alix's ID
+    let id_result = db
+        .execute_gremlin("g.V().has('name', 'Alix').id()")
+        .unwrap();
+    assert_eq!(
+        id_result.row_count(),
+        1,
+        "Should find exactly 1 ID for Alix"
+    );
+    let alix_id = &id_result.rows[0][0];
+
+    // Look up the vertex via hasId()
+    let query = format!("g.V().hasId({alix_id})");
+    let result = db.execute_gremlin(&query).unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "hasId should find exactly 1 vertex matching Alix's ID"
+    );
+
+    // Verify it is actually Alix
+    let name_query = format!("g.V().hasId({alix_id}).values('name')");
+    let name_result = db.execute_gremlin(&name_query).unwrap();
+    assert_eq!(name_result.row_count(), 1);
+    assert_eq!(
+        name_result.rows[0][0],
+        Value::String("Alix".into()),
+        "hasId should retrieve the correct vertex"
+    );
+}
+
+// ============================================================================
+// Range Predicates: inside(), outside()
+// ============================================================================
+
+#[test]
+fn test_has_property_inside_both_boundaries_excluded() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', inside(24, 31))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Gus (25) and Alix (30) are strictly inside (24, 31)"
+    );
+}
+
+#[test]
+fn test_has_property_inside_excludes_boundary_values() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', inside(25, 35))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Alix (30) is strictly inside (25, 35), boundaries 25 and 35 excluded"
+    );
+}
+
+#[test]
+fn test_has_property_inside_excludes_lower_boundary() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', inside(30, 36))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Vincent (35) is strictly inside (30, 36), lower boundary 30 excluded"
+    );
+}
+
+#[test]
+fn test_has_property_outside_matches_both_tails() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', outside(26, 34))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Gus (25 < 26) and Vincent (35 > 34) are outside (26, 34)"
+    );
+}
+
+#[test]
+fn test_has_property_outside_excludes_boundary_values() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', outside(25, 35))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        0,
+        "No person has age < 25 or age > 35, boundaries are not included"
+    );
+}
+
+#[test]
+fn test_has_property_outside_equal_boundaries() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('age', outside(30, 30))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Gus (25 < 30) and Vincent (35 > 30) are outside (30, 30)"
+    );
+}
+
+// ============================================================================
+// Text Predicates: regex()
+// ============================================================================
+
+#[test]
+fn test_has_property_regex_prefix_match() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('name', regex('A.*'))")
+        .unwrap();
+    assert_eq!(result.row_count(), 1, "Only Alix matches regex 'A.*'");
+}
+
+#[test]
+fn test_has_property_regex_suffix_match() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('city', regex('.*in$'))")
+        .unwrap();
+    assert_eq!(result.row_count(), 1, "Only Berlin matches regex '.*in$'");
+}
+
+#[test]
+fn test_has_property_regex_substring_match() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').has('city', regex('.*er.*'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Amsterdam and Berlin both match regex '.*er.*'"
+    );
+}
+
+// ============================================================================
+// Dedup with Keys
+// ============================================================================
+
+#[test]
+fn test_dedup_with_key_all_unique() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').dedup('city')")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        3,
+        "All 3 cities are unique, dedup('city') should keep all 3 Persons"
+    );
+}
+
+#[test]
+fn test_dedup_removes_duplicate_traversers() {
+    let db = create_social_network();
+    // Without dedup: Alix->Gus, Alix->Vincent, Gus->Vincent yields [Gus, Vincent, Vincent].
+    // With dedup: removes the duplicate Vincent, yielding [Gus, Vincent].
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').out('KNOWS').dedup()")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Dedup should collapse duplicate Vincent into one, yielding Gus and Vincent"
+    );
+}
+
+// ============================================================================
+// Order by Token (T.id, T.label)
+// ============================================================================
+
+#[test]
+fn test_order_by_t_label() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').order().by(T.label)")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        3,
+        "Ordering by T.label should return all 3 Person vertices"
+    );
+}
+
+#[test]
+fn test_order_by_t_id() {
+    let db = create_social_network();
+    let result = db.execute_gremlin("g.V().order().by(T.id)").unwrap();
+    assert_eq!(
+        result.row_count(),
+        4,
+        "Ordering by T.id should return all 4 vertices"
+    );
+}
+
+// ============================================================================
+// bothV() Step
+// ============================================================================
+
+#[test]
+fn test_both_v_on_out_edges() {
+    let db = create_social_network();
+    // Alix has 2 outgoing KNOWS edges. bothV() emits both endpoints per edge = 4 results.
+    let result = db
+        .execute_gremlin("g.V().has('name', 'Alix').outE('KNOWS').bothV()")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        4,
+        "bothV() on 2 edges should yield 4 vertices (source + target per edge)"
+    );
+}
+
+// ============================================================================
+// sideEffect() Step (Pass-Through)
+// ============================================================================
+
+#[test]
+fn test_side_effect_pass_through_count() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').sideEffect(has('age')).count()")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        Value::Int64(3),
+        "sideEffect should not filter: all 3 Persons should pass through"
+    );
+}
+
+#[test]
+fn test_side_effect_preserves_traversal() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').sideEffect(out('KNOWS'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        3,
+        "sideEffect(out('KNOWS')) should pass through all 3 Persons unchanged"
+    );
+}
+
+// ============================================================================
+// Order with Default and Identity by()
+// ============================================================================
+
+#[test]
+fn test_order_values_ascending_default() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').values('age').order()")
+        .unwrap();
+    assert_eq!(result.row_count(), 3);
+    assert_eq!(
+        result.rows[0][0],
+        Value::Int64(25),
+        "First age should be 25"
+    );
+    assert_eq!(
+        result.rows[1][0],
+        Value::Int64(30),
+        "Second age should be 30"
+    );
+    assert_eq!(
+        result.rows[2][0],
+        Value::Int64(35),
+        "Third age should be 35"
+    );
+}
+
+#[test]
+fn test_order_values_strings_ascending() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').values('name').order()")
+        .unwrap();
+    assert_eq!(result.row_count(), 3);
+    let names: Vec<&str> = result.rows.iter().filter_map(|r| r[0].as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Alix", "Gus", "Vincent"],
+        "Names should be in alphabetical ascending order"
+    );
+}
+
+#[test]
+fn test_order_by_identity_modifier() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').values('age').order().by()")
+        .unwrap();
+    assert_eq!(result.row_count(), 3);
+    assert_eq!(result.rows[0][0], Value::Int64(25));
+    assert_eq!(result.rows[1][0], Value::Int64(30));
+    assert_eq!(result.rows[2][0], Value::Int64(35));
+}
+
+// ============================================================================
+// Choose: Traversal Condition (existence check)
+// ============================================================================
+
+#[test]
+fn test_choose_traversal_condition_out_knows() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().choose(out('KNOWS'), values('name'), constant('loner'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        4,
+        "All 4 vertices should produce a result"
+    );
+    let loner_count = result
+        .rows
+        .iter()
+        .filter(|r| r[0] == Value::String("loner".into()))
+        .count();
+    assert_eq!(
+        loner_count, 2,
+        "Vincent and Acme have no outgoing KNOWS, should get 'loner'"
+    );
+}
+
+#[test]
+fn test_choose_traversal_condition_has_revenue() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().choose(has('revenue'), constant('company'), constant('person'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        4,
+        "All 4 vertices should produce a result"
+    );
+    let company_count = result
+        .rows
+        .iter()
+        .filter(|r| r[0] == Value::String("company".into()))
+        .count();
+    let person_count = result
+        .rows
+        .iter()
+        .filter(|r| r[0] == Value::String("person".into()))
+        .count();
+    assert_eq!(
+        company_count, 1,
+        "Only Acme should be classified as 'company'"
+    );
+    assert_eq!(
+        person_count, 3,
+        "3 vertices should be classified as 'person'"
+    );
+}
+
+// ============================================================================
+// Choose: HasKey Condition (property existence)
+// ============================================================================
+
+#[test]
+fn test_choose_has_key_city() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().choose(has('city'), values('city'), constant('no city'))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        4,
+        "All 4 vertices should produce a result"
+    );
+    let no_city_count = result
+        .rows
+        .iter()
+        .filter(|r| r[0] == Value::String("no city".into()))
+        .count();
+    assert_eq!(no_city_count, 1, "Only Acme should return 'no city'");
+}
+
+// ============================================================================
+// Property: Set on Existing Nodes
+// ============================================================================
+
+#[test]
+fn test_property_set_on_existing_node() {
+    let db = create_social_network();
+    db.execute_gremlin("g.V().has('name', 'Alix').property('nickname', 'Al')")
+        .unwrap();
+    let result = db
+        .execute_gremlin("g.V().has('nickname', 'Al').count()")
+        .unwrap();
+    assert_eq!(
+        result.rows[0][0],
+        Value::Int64(1),
+        "Exactly 1 vertex should have nickname 'Al'"
+    );
+}
+
+#[test]
+fn test_property_set_and_read_back_value() {
+    let db = create_social_network();
+    db.execute_gremlin("g.V().has('name', 'Gus').property('nickname', 'G')")
+        .unwrap();
+    let result = db
+        .execute_gremlin("g.V().has('name', 'Gus').values('nickname')")
+        .unwrap();
+    assert_eq!(result.row_count(), 1, "Gus should have a nickname");
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("G".into()),
+        "Gus's nickname should be 'G'"
+    );
+}
+
+// ============================================================================
+// ValueMap with Specific Keys
+// ============================================================================
+
+#[test]
+fn test_value_map_specific_keys_name_and_age() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().has('name', 'Alix').valueMap('name', 'age')")
+        .unwrap();
+    assert_eq!(result.row_count(), 1, "Should return 1 row for Alix");
+    assert!(
+        result.columns.len() >= 2,
+        "Should have at least 2 columns for name and age"
+    );
+}
+
+#[test]
+fn test_value_map_single_key() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().has('name', 'Alix').valueMap('name')")
+        .unwrap();
+    assert_eq!(result.row_count(), 1, "Should return 1 row for Alix");
+    assert!(
+        !result.columns.is_empty(),
+        "Should have at least 1 column for name"
+    );
+}
+
+#[test]
+fn test_value_map_specific_keys_excludes_other_properties() {
+    let db = create_social_network();
+    let with_keys = db
+        .execute_gremlin("g.V().has('name', 'Alix').valueMap('name')")
+        .unwrap();
+    let all_keys = db
+        .execute_gremlin("g.V().has('name', 'Alix').valueMap()")
+        .unwrap();
+    assert!(
+        with_keys.columns.len() <= all_keys.columns.len(),
+        "valueMap('name') should have at most as many columns as valueMap()"
+    );
+}
+
+// ============================================================================
+// ElementMap with Specific Keys
+// ============================================================================
+
+#[test]
+fn test_element_map_specific_keys() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().has('name', 'Alix').elementMap('name', 'age')")
+        .unwrap();
+    assert_eq!(result.row_count(), 1, "Should return 1 row for Alix");
+    assert!(
+        result.columns.len() >= 2,
+        "Should have columns for at least name and age"
+    );
+}
+
+#[test]
+fn test_element_map_specific_keys_vs_full() {
+    let db = create_social_network();
+    let with_keys = db
+        .execute_gremlin("g.V().has('name', 'Alix').elementMap('name')")
+        .unwrap();
+    let all_keys = db
+        .execute_gremlin("g.V().has('name', 'Alix').elementMap()")
+        .unwrap();
+    assert_eq!(with_keys.row_count(), 1);
+    assert_eq!(all_keys.row_count(), 1);
+    assert!(
+        with_keys.columns.len() <= all_keys.columns.len(),
+        "elementMap('name') should have at most as many columns as elementMap()"
+    );
+}
+
+// ============================================================================
+// Filter Step (inline predicate)
+// ============================================================================
+
+#[test]
+fn test_filter_has_age_gt() {
+    let db = create_social_network();
+    let result = db
+        .execute_gremlin("g.V().hasLabel('Person').filter(has('age', gt(28)))")
+        .unwrap();
+    assert_eq!(
+        result.row_count(),
+        2,
+        "Alix (30) and Vincent (35) have age > 28"
+    );
+}
+
+#[test]
+fn test_filter_equivalent_to_where() {
+    let db = create_social_network();
+    let filter_result = db
+        .execute_gremlin("g.V().hasLabel('Person').filter(has('age', gt(28)))")
+        .unwrap();
+    let where_result = db
+        .execute_gremlin("g.V().hasLabel('Person').where(has('age', gt(28)))")
+        .unwrap();
+    assert_eq!(
+        filter_result.row_count(),
+        where_result.row_count(),
+        "filter() and where() should produce the same results"
+    );
+}
+
+#[test]
+fn test_filter_has_key_existence() {
+    let db = create_social_network();
+    let result = db.execute_gremlin("g.V().filter(has('revenue'))").unwrap();
+    assert_eq!(
+        result.row_count(),
+        1,
+        "Only Acme has the 'revenue' property"
+    );
 }

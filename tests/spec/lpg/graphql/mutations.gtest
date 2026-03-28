@@ -1,7 +1,8 @@
 # GraphQL mutation support for Grafeo LPG
 #
-# Covers: createNode, updateNode, deleteNode mutations.
-# Uses dataset for baseline, then mutates via GraphQL.
+# Covers: createNode, updateNode, deleteNode mutations, and end-to-end
+# workflows combining mutations with verification queries.
+# Uses the social_network dataset as baseline, then mutates via GraphQL.
 
 meta:
   language: graphql
@@ -15,12 +16,20 @@ tests:
   # Create mutations
   # ---------------------------------------------------------------------------
 
-  - name: create_person_node
+  - name: create_person_with_name_and_age
     statements:
       - "mutation { createPerson(name: \"Django\", age: 28) { name } }"
       - "{ person { name } }"
     expect:
       count: 4
+
+  - name: create_person_with_multiple_properties
+    statements:
+      - "mutation { createPerson(name: \"Jules\", age: 32, city: \"Barcelona\") { name } }"
+      - "{ person(name: \"Jules\") { name age city } }"
+    expect:
+      rows:
+        - [Jules, 32, Barcelona]
 
   - name: create_company_node
     statements:
@@ -29,11 +38,44 @@ tests:
     expect:
       count: 2
 
+  - name: create_movie_node
+    # createMovie should produce a node with label "Movie"
+    statements:
+      - "mutation { createMovie(title: \"Pulp Fiction\", year: 1994) { title } }"
+      - "{ movie { title year } }"
+    expect:
+      rows:
+        - [Pulp Fiction, 1994]
+
+  - name: create_label_capitalization
+    # The mutation name determines the label: createMovie -> label "Movie"
+    statements:
+      - "mutation { createMovie(title: \"Kill Bill\", year: 2003) { title } }"
+      - "{ movie(title: \"Kill Bill\") { title } }"
+    expect:
+      rows:
+        - [Kill Bill]
+
+  - name: create_then_verify_with_query
+    statements:
+      - "mutation { createPerson(name: \"Mia\", age: 29, city: \"Prague\") { name } }"
+      - "{ person(name: \"Mia\") { name age city } }"
+    expect:
+      rows:
+        - [Mia, 29, Prague]
+
+  - name: create_person_increases_count
+    statements:
+      - "mutation { createPerson(name: \"Butch\", age: 40) { name } }"
+      - "{ person { name } }"
+    expect:
+      count: 4
+
   # ---------------------------------------------------------------------------
   # Update mutations
   # ---------------------------------------------------------------------------
 
-  - name: update_person_age
+  - name: update_person_age_by_name
     statements:
       - "mutation { updatePerson(name: \"Alix\", age: 31) { name age } }"
       - "{ person(name: \"Alix\") { name age } }"
@@ -41,13 +83,122 @@ tests:
       rows:
         - [Alix, 31]
 
+  - name: update_person_city
+    statements:
+      - "mutation { updatePerson(name: \"Gus\", city: \"Prague\") { name } }"
+      - "{ person(name: \"Gus\") { name city } }"
+    expect:
+      rows:
+        - [Gus, Prague]
+
+  - name: update_preserves_other_properties
+    # Updating age should not erase city
+    statements:
+      - "mutation { updatePerson(name: \"Vincent\", age: 36) { name } }"
+      - "{ person(name: \"Vincent\") { name age city } }"
+    expect:
+      rows:
+        - [Vincent, 36, Paris]
+
+  - name: update_without_selection_set
+    # Mutation with no selection set should still succeed
+    statements:
+      - "mutation { updatePerson(name: \"Alix\", age: 33) }"
+      - "{ person(name: \"Alix\") { name age } }"
+    expect:
+      rows:
+        - [Alix, 33]
+
+  - name: update_by_non_id_property
+    # Filter by city instead of name
+    statements:
+      - "mutation { updatePerson(city: \"Berlin\", age: 26) { name } }"
+      - "{ person(name: \"Gus\") { name age } }"
+    expect:
+      rows:
+        - [Gus, 26]
+
   # ---------------------------------------------------------------------------
   # Delete mutations
   # ---------------------------------------------------------------------------
 
-  - name: delete_person_node
+  - name: delete_person_by_name
     statements:
       - "mutation { deletePerson(name: \"Vincent\") { success } }"
       - "{ person { name } }"
     expect:
       count: 2
+
+  - name: delete_company_by_name
+    statements:
+      - "mutation { deleteCompany(name: \"Grafeo OSS\") { success } }"
+      - "{ company { name } }"
+    expect:
+      empty: true
+
+  - name: delete_person_preserves_others
+    # Deleting one person should leave the rest intact
+    statements:
+      - "mutation { deletePerson(name: \"Gus\") { success } }"
+      - "{ person(name: \"Alix\") { name age } }"
+    expect:
+      rows:
+        - [Alix, 30]
+
+  - name: delete_then_count_remaining
+    statements:
+      - "mutation { deletePerson(name: \"Alix\") { success } }"
+      - "{ person { name } }"
+    expect:
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # End-to-end workflows
+  # ---------------------------------------------------------------------------
+
+  - name: e2e_create_then_filter
+    statements:
+      - "mutation { createPerson(name: \"Shosanna\", age: 27, city: \"Paris\") { name } }"
+      - "{ person(city: \"Paris\") { name } }"
+    expect:
+      rows:
+        - [Vincent]
+        - [Shosanna]
+
+  - name: e2e_create_update_verify
+    statements:
+      - "mutation { createPerson(name: \"Hans\", age: 50, city: \"Berlin\") { name } }"
+      - "mutation { updatePerson(name: \"Hans\", age: 51) { name } }"
+      - "{ person(name: \"Hans\") { name age city } }"
+    expect:
+      rows:
+        - [Hans, 51, Berlin]
+
+  - name: e2e_create_two_delete_one_verify
+    statements:
+      - "mutation { createPerson(name: \"Beatrix\", age: 33, city: \"Amsterdam\") { name } }"
+      - "mutation { createPerson(name: \"Django\", age: 28, city: \"Barcelona\") { name } }"
+      - "mutation { deletePerson(name: \"Django\") { success } }"
+      - "{ person(name: \"Beatrix\") { name age city } }"
+    expect:
+      rows:
+        - [Beatrix, 33, Amsterdam]
+
+  - name: e2e_create_then_count
+    statements:
+      - "mutation { createPerson(name: \"Jules\", age: 32) { name } }"
+      - "mutation { createPerson(name: \"Mia\", age: 29) { name } }"
+      - "{ person { name } }"
+    expect:
+      count: 5
+
+  - name: e2e_create_then_query_with_ordering
+    statements:
+      - "mutation { createPerson(name: \"Butch\", age: 40, city: \"Prague\") { name } }"
+      - "{ person(orderBy: { name: ASC }) { name } }"
+    expect:
+      rows:
+        - [Alix]
+        - [Butch]
+        - [Gus]
+        - [Vincent]

@@ -49,9 +49,8 @@ pub fn execute_query_result(db: &GrafeoDB, language: &str, query: &str) -> Resul
         "gql" | "" => db.execute(query),
         #[cfg(feature = "cypher")]
         "cypher" => db.execute_cypher(query),
-        // SPARQL needs rdf feature on grafeo-engine (not enabled by default)
-        // #[cfg(feature = "sparql")]
-        // "sparql" => db.execute_sparql(query),
+        #[cfg(all(feature = "sparql", feature = "rdf"))]
+        "sparql" => db.execute_sparql(query),
         #[cfg(feature = "gremlin")]
         "gremlin" => db.execute_gremlin(query),
         #[cfg(feature = "graphql")]

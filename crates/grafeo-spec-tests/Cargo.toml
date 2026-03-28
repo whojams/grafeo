@@ -20,7 +20,7 @@ vector-index = []
 text-index = []
 
 [dependencies]
-grafeo-engine = { workspace = true, features = ["embedded", "languages"] }
+grafeo-engine = { workspace = true, features = ["embedded", "languages", "rdf"] }
 grafeo-common = { workspace = true }
 md-5 = "0.10"
 

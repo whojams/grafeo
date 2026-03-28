@@ -1,0 +1,344 @@
+# SPARQL BIND and VALUES (Section 10: Assignment)
+#
+# Covers: BIND with expressions (CONCAT, arithmetic, constants, STRLEN),
+# BIND after OPTIONAL, multiple BINDs, VALUES with single/multiple variables,
+# VALUES with UNDEF, VALUES restricting joins, VALUES with no matches.
+# Based on W3C SPARQL 1.1 Query Language specification, Section 10.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "10"
+  title: BIND and VALUES
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # BIND (Section 10.1)
+  # ---------------------------------------------------------------------------
+
+  - name: bind_string_concatenation
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/first> "Alix" .
+          <http://ex.org/alix> <http://ex.org/last> "Vega" .
+          <http://ex.org/gus> <http://ex.org/first> "Gus" .
+          <http://ex.org/gus> <http://ex.org/last> "Fring" .
+        }
+    query: |
+      SELECT ?full WHERE {
+        ?s <http://ex.org/first> ?first .
+        ?s <http://ex.org/last> ?last .
+        BIND(CONCAT(?first, " ", ?last) AS ?full)
+      } ORDER BY ?full
+    expect:
+      ordered: true
+      rows:
+        - ["Alix Vega"]
+        - ["Gus Fring"]
+
+  - name: bind_arithmetic_multiplication
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/item1> <http://ex.org/price> "100" .
+          <http://ex.org/item2> <http://ex.org/price> "200" .
+          <http://ex.org/item3> <http://ex.org/price> "50" .
+        }
+    query: |
+      SELECT ?price ?discounted WHERE {
+        ?item <http://ex.org/price> ?price .
+        BIND(?price * 0.9 AS ?discounted)
+      } ORDER BY ?price
+    expect:
+      ordered: true
+      count: 3
+
+  - name: bind_constant_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name ?greeting WHERE {
+        ?s <http://ex.org/name> ?name .
+        BIND("hello" AS ?greeting)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, hello]
+        - [Gus, hello]
+
+  - name: bind_strlen
+    skip: "STRLEN not yet evaluated in BIND projection expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+        }
+    query: |
+      SELECT ?name ?len WHERE {
+        ?s <http://ex.org/name> ?name .
+        BIND(STRLEN(?name) AS ?len)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, 4]
+        - [Gus, 3]
+        - [Vincent, 7]
+
+  - name: bind_after_optional_with_bound_variable
+    skip: "BOUND() not yet evaluated in BIND expressions"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name ?label WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/city> ?city }
+        BIND(BOUND(?city) AS ?label)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, true]
+        - [Gus, false]
+
+  - name: bind_after_optional_concat_with_unbound
+    # When ?city is unbound, CONCAT concatenates with empty string.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name ?desc WHERE {
+        ?s <http://ex.org/name> ?name .
+        OPTIONAL { ?s <http://ex.org/city> ?city }
+        BIND(CONCAT(?name, " from ", ?city) AS ?desc)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, "Alix from Amsterdam"]
+        - [Gus, "Gus from "]
+
+  - name: multiple_binds_in_one_query
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/score> "80" .
+        }
+    query: |
+      SELECT ?name ?doubled ?label WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/score> ?score .
+        BIND(?score * 2 AS ?doubled)
+        BIND(CONCAT(?name, ": ", STR(?score)) AS ?label)
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # VALUES (Section 10.2)
+  # ---------------------------------------------------------------------------
+
+  - name: values_single_variable_iris
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        VALUES ?s { <http://ex.org/alix> <http://ex.org/vincent> }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: values_single_variable_literals
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+          <http://ex.org/jules> <http://ex.org/city> "Prague" .
+        }
+    query: |
+      SELECT ?s ?city WHERE {
+        ?s <http://ex.org/city> ?city .
+        VALUES ?city { "Amsterdam" "Prague" }
+      } ORDER BY ?city
+    expect:
+      ordered: true
+      count: 2
+
+  - name: values_multiple_variables
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+        }
+    query: |
+      SELECT ?name ?city WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+        VALUES (?name ?city) { ("Alix" "Amsterdam") ("Vincent" "Paris") }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Amsterdam]
+        - [Vincent, Paris]
+
+  - name: values_with_undef
+    skip: "VALUES with UNDEF not fully evaluated"
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Berlin" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/city> "Paris" .
+        }
+    query: |
+      SELECT ?name ?city WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+        VALUES (?name ?city) { ("Alix" UNDEF) (UNDEF "Paris") }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Amsterdam]
+        - [Vincent, Paris]
+
+  - name: values_restricting_join_results
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/age> "30" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/age> "25" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/age> "35" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+          <http://ex.org/jules> <http://ex.org/age> "28" .
+        }
+    query: |
+      SELECT ?name ?age WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/age> ?age .
+        VALUES ?s { <http://ex.org/gus> <http://ex.org/jules> <http://ex.org/vincent> }
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Gus, 25]
+        - [Jules, 28]
+        - [Vincent, 35]
+
+  - name: values_no_matching_data
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        VALUES ?s { <http://ex.org/mia> <http://ex.org/butch> }
+      }
+    expect:
+      empty: true
+
+  - name: values_inline_at_query_start
+    # VALUES block placed before the WHERE clause body (inline data block).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/amsterdam> <http://ex.org/country> "Netherlands" .
+          <http://ex.org/berlin> <http://ex.org/country> "Germany" .
+          <http://ex.org/paris> <http://ex.org/country> "France" .
+          <http://ex.org/prague> <http://ex.org/country> "Czech Republic" .
+        }
+    query: |
+      SELECT ?city ?country WHERE {
+        VALUES ?city { <http://ex.org/amsterdam> <http://ex.org/prague> }
+        ?city <http://ex.org/country> ?country .
+      } ORDER BY ?country
+    expect:
+      ordered: true
+      count: 2
+
+  - name: bind_used_in_filter
+    # BIND a computed value and then FILTER on it.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/mia> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT ?name WHERE {
+        ?s <http://ex.org/name> ?name .
+        BIND(STRLEN(?name) AS ?len)
+        FILTER(?len > 3)
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Vincent]
+
+  - name: bind_iri_construction
+    # BIND with IRI() to construct a new IRI from a string.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/id> "42" .
+        }
+    query: |
+      SELECT ?name ?profile WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/id> ?id .
+        BIND(IRI(CONCAT("http://ex.org/profile/", ?id)) AS ?profile)
+      }
+    expect:
+      count: 1

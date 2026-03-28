@@ -1,0 +1,318 @@
+# SPARQL 1.1 Update: advanced operations
+#
+# Covers: DELETE WHERE (pattern-based), DELETE/INSERT/WHERE (MODIFY),
+# named graph operations, RDF set semantics, sequential updates, and edge cases.
+# Builds on basic INSERT DATA / DELETE DATA tested in update.gtest.
+
+meta:
+  language: sparql
+  model: rdf
+  section: update_advanced
+  title: Advanced Update Operations
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # DELETE WHERE (pattern-based deletion)
+  # ---------------------------------------------------------------------------
+
+  - name: delete_where_removes_all_matching
+    # DELETE WHERE removes every triple that matches the pattern.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/likes> "cycling" .
+          <http://ex.org/gus> <http://ex.org/likes> "cycling" .
+          <http://ex.org/vincent> <http://ex.org/likes> "cinema" .
+        }
+      - |
+        DELETE WHERE { ?s <http://ex.org/likes> "cycling" }
+    query: "SELECT ?s WHERE { ?s <http://ex.org/likes> ?o }"
+    expect:
+      rows:
+        - [http://ex.org/vincent]
+
+  - name: delete_where_specific_predicate
+    # Only triples with the targeted predicate are removed.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/alix> <http://ex.org/age> "28" .
+        }
+      - |
+        DELETE WHERE { <http://ex.org/alix> <http://ex.org/city> ?c }
+    query: |
+      SELECT ?p ?o WHERE {
+        <http://ex.org/alix> ?p ?o
+      } ORDER BY ?p
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/age, 28]
+        - [http://ex.org/name, Alix]
+
+  - name: delete_where_no_match_is_noop
+    # DELETE WHERE that matches nothing leaves the store unchanged.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        DELETE WHERE { ?s <http://ex.org/nonexistent> ?o }
+    query: "SELECT ?n WHERE { ?s <http://ex.org/name> ?n }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # MODIFY: DELETE / INSERT / WHERE
+  # ---------------------------------------------------------------------------
+
+  - name: modify_update_value
+    # Classic "rename" pattern: delete old value, insert new one.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/city> "Amsterdam" .
+        }
+      - |
+        DELETE { <http://ex.org/alix> <http://ex.org/city> ?old }
+        INSERT { <http://ex.org/alix> <http://ex.org/city> "Berlin" }
+        WHERE  { <http://ex.org/alix> <http://ex.org/city> ?old }
+    query: "SELECT ?city WHERE { <http://ex.org/alix> <http://ex.org/city> ?city }"
+    expect:
+      rows:
+        - [Berlin]
+
+  - name: modify_delete_only_with_where
+    skip: "DELETE-only MODIFY with FILTER not working as expected"
+    # DELETE clause with WHERE but no INSERT: removes matching triples.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "10" .
+          <http://ex.org/gus> <http://ex.org/score> "20" .
+          <http://ex.org/jules> <http://ex.org/score> "30" .
+        }
+      - |
+        DELETE { ?s <http://ex.org/score> ?v }
+        WHERE  { ?s <http://ex.org/score> ?v . FILTER(?v = "10") }
+    query: |
+      SELECT ?s WHERE {
+        ?s <http://ex.org/score> ?v
+      } ORDER BY ?s
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/gus]
+        - [http://ex.org/jules]
+
+  - name: modify_insert_only_with_where
+    # INSERT clause with WHERE but no DELETE: adds computed triples.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+        }
+      - |
+        INSERT { ?s <http://ex.org/hasRecord> "true" }
+        WHERE  { ?s <http://ex.org/name> ?n }
+    query: |
+      SELECT ?s WHERE {
+        ?s <http://ex.org/hasRecord> "true"
+      } ORDER BY ?s
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/alix]
+        - [http://ex.org/gus]
+
+  # ---------------------------------------------------------------------------
+  # Named graph operations
+  # ---------------------------------------------------------------------------
+
+  - name: insert_data_into_named_graph
+    # Insert triples into a named graph, then query with GRAPH clause.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/cities> {
+            <http://ex.org/amsterdam> <http://ex.org/country> "Netherlands" .
+            <http://ex.org/berlin> <http://ex.org/country> "Germany" .
+          }
+        }
+    query: |
+      SELECT ?city ?country WHERE {
+        GRAPH <http://ex.org/graph/cities> {
+          ?city <http://ex.org/country> ?country
+        }
+      } ORDER BY ?country
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/berlin, Germany]
+        - [http://ex.org/amsterdam, Netherlands]
+
+  - name: delete_data_from_named_graph
+    # Remove a specific triple from a named graph.
+    setup:
+      - |
+        INSERT DATA {
+          GRAPH <http://ex.org/graph/people> {
+            <http://ex.org/alix> <http://ex.org/role> "admin" .
+            <http://ex.org/gus> <http://ex.org/role> "editor" .
+          }
+        }
+      - |
+        DELETE DATA {
+          GRAPH <http://ex.org/graph/people> {
+            <http://ex.org/alix> <http://ex.org/role> "admin" .
+          }
+        }
+    query: |
+      SELECT ?s ?role WHERE {
+        GRAPH <http://ex.org/graph/people> {
+          ?s <http://ex.org/role> ?role
+        }
+      }
+    expect:
+      rows:
+        - [http://ex.org/gus, editor]
+
+  # ---------------------------------------------------------------------------
+  # RDF set semantics
+  # ---------------------------------------------------------------------------
+
+  - name: rdf_set_semantics_duplicate_insert
+    # Inserting the same triple twice must produce only one result (set, not bag).
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+    query: "SELECT ?n WHERE { <http://ex.org/alix> <http://ex.org/name> ?n }"
+    expect:
+      rows:
+        - [Alix]
+
+  # ---------------------------------------------------------------------------
+  # Sequential multi-step updates
+  # ---------------------------------------------------------------------------
+
+  - name: sequential_insert_delete_insert_chain
+    # Three-step mutation chain: insert, delete, insert again. Verify final state.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/status> "active" .
+          <http://ex.org/butch> <http://ex.org/status> "active" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/mia> <http://ex.org/status> "active" .
+        }
+      - |
+        INSERT DATA {
+          <http://ex.org/mia> <http://ex.org/status> "inactive" .
+        }
+    query: |
+      SELECT ?s ?status WHERE {
+        ?s <http://ex.org/status> ?status
+      } ORDER BY ?s
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/butch, active]
+        - [http://ex.org/mia, inactive]
+
+  - name: insert_multiple_then_delete_some
+    # Insert several subjects, delete a subset, verify the remainder.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/team> "alpha" .
+          <http://ex.org/gus> <http://ex.org/team> "alpha" .
+          <http://ex.org/vincent> <http://ex.org/team> "beta" .
+          <http://ex.org/jules> <http://ex.org/team> "beta" .
+        }
+      - |
+        DELETE WHERE { ?s <http://ex.org/team> "alpha" }
+    query: |
+      SELECT ?s WHERE {
+        ?s <http://ex.org/team> ?t
+      } ORDER BY ?s
+    expect:
+      ordered: true
+      rows:
+        - [http://ex.org/jules]
+        - [http://ex.org/vincent]
+
+  # ---------------------------------------------------------------------------
+  # Edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: delete_data_nonexistent_triple_is_noop
+    # DELETE DATA for a triple that does not exist must not raise an error.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        DELETE DATA {
+          <http://ex.org/alix> <http://ex.org/nonexistent> "ghost" .
+        }
+    query: "SELECT ?n WHERE { <http://ex.org/alix> <http://ex.org/name> ?n }"
+    expect:
+      rows:
+        - [Alix]
+
+  - name: insert_data_multiple_triples_one_operation
+    # A single INSERT DATA with many triples spanning different subjects.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/alix> <http://ex.org/city> "Paris" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/gus> <http://ex.org/city> "Prague" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/vincent> <http://ex.org/city> "Barcelona" .
+        }
+    query: |
+      SELECT ?name ?city WHERE {
+        ?s <http://ex.org/name> ?name .
+        ?s <http://ex.org/city> ?city .
+      } ORDER BY ?name
+    expect:
+      ordered: true
+      rows:
+        - [Alix, Paris]
+        - [Gus, Prague]
+        - [Vincent, Barcelona]
+
+  - name: modify_where_no_match_leaves_store_unchanged
+    # DELETE/INSERT/WHERE where the WHERE clause matches nothing: no changes.
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+        }
+      - |
+        DELETE { ?s <http://ex.org/name> ?old }
+        INSERT { ?s <http://ex.org/name> "Replaced" }
+        WHERE  { ?s <http://ex.org/nickname> ?old }
+    query: "SELECT ?n WHERE { ?s <http://ex.org/name> ?n }"
+    expect:
+      rows:
+        - [Alix]

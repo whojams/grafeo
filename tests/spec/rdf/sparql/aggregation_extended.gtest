@@ -1,0 +1,349 @@
+# SPARQL extended aggregation
+#
+# Covers: AVG, MIN, MAX, GROUP_CONCAT, SAMPLE, COUNT(DISTINCT),
+# multiple aggregates in one query, ORDER BY with multiple keys,
+# and aggregation edge cases.
+# Complements aggregation.gtest (COUNT, SUM, GROUP BY, HAVING, ORDER BY,
+# LIMIT, OFFSET) with the remaining W3C SPARQL 1.1 Section 11 functions.
+
+meta:
+  language: sparql
+  model: rdf
+  section: "11"
+  title: Extended Aggregation
+  dataset: empty
+  requires: [sparql, rdf]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # AVG
+  # ---------------------------------------------------------------------------
+
+  - name: avg_numeric_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/score> "10" .
+          <http://ex.org/gus> <http://ex.org/score> "20" .
+          <http://ex.org/vincent> <http://ex.org/score> "30" .
+        }
+    query: |
+      SELECT (AVG(?v) AS ?avg) WHERE {
+        ?s <http://ex.org/score> ?v
+      }
+    expect:
+      count: 1
+
+  - name: avg_on_empty_set
+    query: |
+      SELECT (AVG(?v) AS ?avg) WHERE {
+        ?s <http://ex.org/nonexistent> ?v
+      }
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # MIN / MAX
+  # ---------------------------------------------------------------------------
+
+  - name: min_of_string_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/city> "Paris" .
+          <http://ex.org/b> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/c> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT (MIN(?city) AS ?first) WHERE {
+        ?s <http://ex.org/city> ?city
+      }
+    expect:
+      rows:
+        - [Amsterdam]
+
+  - name: max_of_string_values
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/city> "Paris" .
+          <http://ex.org/b> <http://ex.org/city> "Amsterdam" .
+          <http://ex.org/c> <http://ex.org/city> "Berlin" .
+        }
+    query: |
+      SELECT (MAX(?city) AS ?last) WHERE {
+        ?s <http://ex.org/city> ?city
+      }
+    expect:
+      rows:
+        - [Paris]
+
+  - name: min_and_max_combined
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/name> "Alix" .
+          <http://ex.org/b> <http://ex.org/name> "Gus" .
+          <http://ex.org/c> <http://ex.org/name> "Vincent" .
+          <http://ex.org/d> <http://ex.org/name> "Jules" .
+          <http://ex.org/e> <http://ex.org/name> "Mia" .
+        }
+    query: |
+      SELECT (MIN(?n) AS ?first) (MAX(?n) AS ?last) WHERE {
+        ?s <http://ex.org/name> ?n
+      }
+    expect:
+      rows:
+        - [Alix, Vincent]
+
+  # ---------------------------------------------------------------------------
+  # GROUP_CONCAT
+  # ---------------------------------------------------------------------------
+
+  - name: group_concat_with_separator
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/hobby> "cycling" .
+          <http://ex.org/alix> <http://ex.org/hobby> "reading" .
+          <http://ex.org/alix> <http://ex.org/hobby> "chess" .
+        }
+    query: |
+      SELECT (GROUP_CONCAT(?h; SEPARATOR=", ") AS ?hobbies) WHERE {
+        <http://ex.org/alix> <http://ex.org/hobby> ?h
+      }
+    expect:
+      count: 1
+
+  - name: group_concat_default_separator
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/gus> <http://ex.org/tag> "rust" .
+          <http://ex.org/gus> <http://ex.org/tag> "graph" .
+        }
+    query: |
+      SELECT (GROUP_CONCAT(?t) AS ?tags) WHERE {
+        <http://ex.org/gus> <http://ex.org/tag> ?t
+      }
+    expect:
+      count: 1
+
+  - name: group_concat_with_group_by
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/alix> <http://ex.org/skill> "Rust" .
+          <http://ex.org/alix> <http://ex.org/skill> "Python" .
+          <http://ex.org/gus> <http://ex.org/dept> "Design" .
+          <http://ex.org/gus> <http://ex.org/skill> "CSS" .
+          <http://ex.org/gus> <http://ex.org/skill> "Figma" .
+        }
+    query: |
+      SELECT ?dept (GROUP_CONCAT(?sk; SEPARATOR=", ") AS ?skills) WHERE {
+        ?person <http://ex.org/dept> ?dept .
+        ?person <http://ex.org/skill> ?sk .
+      } GROUP BY ?dept ORDER BY ?dept
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # SAMPLE
+  # ---------------------------------------------------------------------------
+
+  - name: sample_returns_one_value
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/color> "red" .
+          <http://ex.org/b> <http://ex.org/color> "blue" .
+          <http://ex.org/c> <http://ex.org/color> "green" .
+        }
+    query: |
+      SELECT (SAMPLE(?c) AS ?pick) WHERE {
+        ?s <http://ex.org/color> ?c
+      }
+    expect:
+      count: 1
+
+  - name: sample_with_group_by
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/alix> <http://ex.org/project> "Grafeo" .
+          <http://ex.org/gus> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/gus> <http://ex.org/project> "Boltr" .
+          <http://ex.org/jules> <http://ex.org/dept> "Design" .
+          <http://ex.org/jules> <http://ex.org/project> "Widgets" .
+        }
+    query: |
+      SELECT ?dept (SAMPLE(?proj) AS ?example_project) WHERE {
+        ?person <http://ex.org/dept> ?dept .
+        ?person <http://ex.org/project> ?proj .
+      } GROUP BY ?dept ORDER BY ?dept
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # COUNT(DISTINCT)
+  # ---------------------------------------------------------------------------
+
+  - name: count_distinct_vs_count
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/visited> "Amsterdam" .
+          <http://ex.org/gus> <http://ex.org/visited> "Amsterdam" .
+          <http://ex.org/vincent> <http://ex.org/visited> "Berlin" .
+          <http://ex.org/jules> <http://ex.org/visited> "Amsterdam" .
+        }
+    query: |
+      SELECT (COUNT(?city) AS ?total) (COUNT(DISTINCT ?city) AS ?unique) WHERE {
+        ?s <http://ex.org/visited> ?city
+      }
+    expect:
+      rows:
+        - [4, 2]
+
+  # ---------------------------------------------------------------------------
+  # Multiple aggregates in one query
+  # ---------------------------------------------------------------------------
+
+  - name: count_and_sum_in_same_select
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/a> <http://ex.org/price> "10" .
+          <http://ex.org/b> <http://ex.org/price> "25" .
+          <http://ex.org/c> <http://ex.org/price> "15" .
+        }
+    query: |
+      SELECT (COUNT(?v) AS ?cnt) (SUM(?v) AS ?total) WHERE {
+        ?s <http://ex.org/price> ?v
+      }
+    expect:
+      count: 1
+
+  - name: group_by_with_multiple_aggregates
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/alix> <http://ex.org/salary> "80" .
+          <http://ex.org/gus> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/gus> <http://ex.org/salary> "90" .
+          <http://ex.org/vincent> <http://ex.org/dept> "Design" .
+          <http://ex.org/vincent> <http://ex.org/salary> "75" .
+          <http://ex.org/mia> <http://ex.org/dept> "Design" .
+          <http://ex.org/mia> <http://ex.org/salary> "85" .
+        }
+    query: |
+      SELECT ?dept (COUNT(?person) AS ?headcount) (MIN(?sal) AS ?lowest) (MAX(?sal) AS ?highest) WHERE {
+        ?person <http://ex.org/dept> ?dept .
+        ?person <http://ex.org/salary> ?sal .
+      } GROUP BY ?dept ORDER BY ?dept
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # ORDER BY with multiple keys
+  # ---------------------------------------------------------------------------
+
+  - name: order_by_multiple_keys
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/alix> <http://ex.org/name> "Alix" .
+          <http://ex.org/gus> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/gus> <http://ex.org/name> "Gus" .
+          <http://ex.org/vincent> <http://ex.org/dept> "Design" .
+          <http://ex.org/vincent> <http://ex.org/name> "Vincent" .
+          <http://ex.org/jules> <http://ex.org/dept> "Design" .
+          <http://ex.org/jules> <http://ex.org/name> "Jules" .
+        }
+    query: |
+      SELECT ?dept ?name WHERE {
+        ?s <http://ex.org/dept> ?dept .
+        ?s <http://ex.org/name> ?name .
+      } ORDER BY ?dept DESC(?name)
+    expect:
+      ordered: true
+      rows:
+        - [Design, Vincent]
+        - [Design, Jules]
+        - [Engineering, Gus]
+        - [Engineering, Alix]
+
+  # ---------------------------------------------------------------------------
+  # Edge cases
+  # ---------------------------------------------------------------------------
+
+  - name: aggregation_on_single_row
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/butch> <http://ex.org/score> "42" .
+        }
+    query: |
+      SELECT (COUNT(?v) AS ?cnt) (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) WHERE {
+        ?s <http://ex.org/score> ?v
+      }
+    expect:
+      rows:
+        - [1, 42, 42]
+
+  - name: group_by_with_no_matching_rows
+    query: |
+      SELECT ?category (COUNT(?item) AS ?cnt) WHERE {
+        ?item <http://ex.org/nonexistent_category> ?category
+      } GROUP BY ?category
+    expect:
+      count: 0
+
+  - name: min_max_on_single_group
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/team> "Alpha" .
+          <http://ex.org/alix> <http://ex.org/rating> "5" .
+          <http://ex.org/gus> <http://ex.org/team> "Alpha" .
+          <http://ex.org/gus> <http://ex.org/rating> "3" .
+          <http://ex.org/vincent> <http://ex.org/team> "Alpha" .
+          <http://ex.org/vincent> <http://ex.org/rating> "8" .
+        }
+    query: |
+      SELECT ?team (MIN(?r) AS ?worst) (MAX(?r) AS ?best) (COUNT(?person) AS ?members) WHERE {
+        ?person <http://ex.org/team> ?team .
+        ?person <http://ex.org/rating> ?r .
+      } GROUP BY ?team
+    expect:
+      count: 1
+
+  - name: having_with_avg
+    setup:
+      - |
+        INSERT DATA {
+          <http://ex.org/alix> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/alix> <http://ex.org/perf> "90" .
+          <http://ex.org/gus> <http://ex.org/dept> "Engineering" .
+          <http://ex.org/gus> <http://ex.org/perf> "85" .
+          <http://ex.org/jules> <http://ex.org/dept> "Support" .
+          <http://ex.org/jules> <http://ex.org/perf> "60" .
+          <http://ex.org/mia> <http://ex.org/dept> "Support" .
+          <http://ex.org/mia> <http://ex.org/perf> "55" .
+        }
+    query: |
+      SELECT ?dept (AVG(?p) AS ?avg_perf) WHERE {
+        ?person <http://ex.org/dept> ?dept .
+        ?person <http://ex.org/perf> ?p .
+      } GROUP BY ?dept
+      HAVING (AVG(?p) > 80)
+    expect:
+      count: 1

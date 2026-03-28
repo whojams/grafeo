@@ -269,6 +269,17 @@ func valueToString(v interface{}) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case map[string]interface{}:
+		// Temporal type-tagged values from C FFI JSON: {"$date": "2024-06-15"}
+		if len(val) == 1 {
+			for k, v := range val {
+				switch k {
+				case "$date", "$time", "$datetime", "$timestamp", "$zoned_datetime":
+					return fmt.Sprintf("%v", v)
+				case "$duration":
+					return fmt.Sprintf("%v", v)
+				}
+			}
+		}
 		// Duration: {months, days, nanos} -> ISO 8601
 		if len(val) == 3 {
 			if m, ok1 := val["months"]; ok1 {

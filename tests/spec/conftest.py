@@ -9,8 +9,12 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_runner_conftest = Path(__file__).resolve().parent / "runners" / "python" / "conftest.py"
-_spec = importlib.util.spec_from_file_location("_gtest_runner_conftest", _runner_conftest)
+_runner_conftest = (
+    Path(__file__).resolve().parent / "runners" / "python" / "conftest.py"
+)
+_spec = importlib.util.spec_from_file_location(
+    "_gtest_runner_conftest", _runner_conftest
+)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = _mod
 _spec.loader.exec_module(_mod)

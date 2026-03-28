@@ -44,8 +44,9 @@ pub fn execute_query(db: &GrafeoDB, language: &str, query: &str) {
 
 /// Execute a query with model-aware dispatch, panicking on failure.
 pub fn execute_query_with_model(db: &GrafeoDB, language: &str, model: &str, query: &str) {
-    execute_query_result(db, language, model, query)
-        .unwrap_or_else(|e| panic!("Query failed: {query}\nLanguage: {language}\nModel: {model}\nError: {e}"));
+    execute_query_result(db, language, model, query).unwrap_or_else(|e| {
+        panic!("Query failed: {query}\nLanguage: {language}\nModel: {model}\nError: {e}")
+    });
 }
 
 /// Execute a query using the (language, model) dispatch key, returning the Result.
@@ -215,11 +216,7 @@ pub fn assert_columns(result: &QueryResult, expected: &[&str]) {
 ///
 /// Cells that parse as `f64` on both sides are compared within `10^(-precision)`.
 /// All other cells use exact string comparison.
-pub fn assert_rows_with_precision(
-    result: &QueryResult,
-    expected: &[Vec<String>],
-    precision: u32,
-) {
+pub fn assert_rows_with_precision(result: &QueryResult, expected: &[Vec<String>], precision: u32) {
     let actual = result_to_strings(result);
     let tolerance = 10f64.powi(-(precision as i32));
 

@@ -475,6 +475,24 @@ public class SpecTests : IDisposable
 
     private static string FormatJsonObject(JsonElement element)
     {
+        // Temporal type-tagged objects from C FFI: {"$date": "2024-06-15"}
+        var props = element.EnumerateObject().ToList();
+        if (props.Count == 1)
+        {
+            var prop = props[0];
+            switch (prop.Name)
+            {
+                case "$date":
+                case "$time":
+                case "$datetime":
+                case "$zoned_datetime":
+                case "$duration":
+                    return prop.Value.GetString() ?? "null";
+                case "$timestamp_us":
+                    return prop.Value.GetInt64().ToString();
+            }
+        }
+
         var entries = element.EnumerateObject()
             .Select(p => $"{p.Name}: {JsonElementToCanonical(p.Value)}")
             .OrderBy(e => e)

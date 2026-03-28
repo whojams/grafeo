@@ -122,6 +122,20 @@ String _valueToString(dynamic val) {
     return '[$inner]';
   }
   if (val is Map) {
+    // Temporal type-tagged objects from C FFI: {"$date": "2024-06-15"}
+    if (val.length == 1) {
+      final key = val.keys.first.toString();
+      switch (key) {
+        case r'$date':
+        case r'$time':
+        case r'$datetime':
+        case r'$zoned_datetime':
+        case r'$duration':
+          return val.values.first.toString();
+        case r'$timestamp_us':
+          return (val.values.first as num).toInt().toString();
+      }
+    }
     // Duration: {months, days, nanos} -> ISO 8601
     if (val.length == 3 &&
         val.containsKey('months') &&

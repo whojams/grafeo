@@ -27,10 +27,10 @@ tests:
     expect:
       error: "Expected"
 
-  - name: missing_field_in_selection
-    query: "query { person { } }"
+  - name: no_operation_found
+    query: "fragment F on Person { name }"
     expect:
-      error: "Empty selection set"
+      error: "No operation found"
 
   # ---------------------------------------------------------------------------
   # Invalid mutations

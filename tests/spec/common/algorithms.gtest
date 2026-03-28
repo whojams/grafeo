@@ -1,0 +1,405 @@
+# Graph Algorithms: CALL procedure interface
+#
+# Tests the built-in algorithm procedures accessible via
+# CALL grafeo.<algorithm>() [YIELD columns].
+# All algorithms are available when the `embedded` profile is active
+# (which includes the `algos` feature).
+
+meta:
+  language: gql
+  model: lpg
+  section: "25.1"
+  title: Graph Algorithms
+  dataset: empty
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # PageRank
+  # ---------------------------------------------------------------------------
+
+  - name: pagerank_basic
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.pagerank()"
+    expect:
+      count: 3
+
+  - name: pagerank_with_params
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.pagerank({damping: 0.85, max_iterations: 10})"
+    expect:
+      count: 2
+
+  - name: pagerank_empty_graph
+    query: "CALL grafeo.pagerank()"
+    expect:
+      empty: true
+
+  - name: pagerank_single_node
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "CALL grafeo.pagerank()"
+    expect:
+      count: 1
+
+  - name: pagerank_yield_score_only
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.pagerank() YIELD score"
+    expect:
+      columns: [score]
+      count: 2
+
+  - name: pagerank_yield_alias
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.pagerank() YIELD node_id AS id, score AS rank"
+    expect:
+      columns: [id, rank]
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Degree Centrality
+  # ---------------------------------------------------------------------------
+
+  - name: degree_centrality_basic
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.degree_centrality()"
+    expect:
+      columns: [node_id, in_degree, out_degree, total_degree]
+      count: 3
+
+  - name: degree_centrality_empty_graph
+    query: "CALL grafeo.degree_centrality()"
+    expect:
+      empty: true
+
+  - name: degree_centrality_isolated_node
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "CALL grafeo.degree_centrality()"
+    expect:
+      count: 1
+
+  - name: degree_centrality_yield_total_only
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.degree_centrality() YIELD total_degree"
+    expect:
+      columns: [total_degree]
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Connected Components (WCC)
+  # ---------------------------------------------------------------------------
+
+  - name: connected_components_single_component
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.connected_components()"
+    expect:
+      columns: [node_id, component_id]
+      count: 3
+
+  - name: connected_components_empty_graph
+    query: "CALL grafeo.connected_components()"
+    expect:
+      empty: true
+
+  - name: connected_components_yield_component_only
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.connected_components() YIELD component_id"
+    expect:
+      columns: [component_id]
+      count: 2
+
+  - name: connected_components_disconnected_graph
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "INSERT (:Person {name: 'Jules'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Vincent'}), (b:Person {name: 'Jules'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.connected_components()"
+    expect:
+      count: 4
+
+  # ---------------------------------------------------------------------------
+  # Strongly Connected Components
+  # ---------------------------------------------------------------------------
+
+  - name: scc_basic
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Alix'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.strongly_connected_components()"
+    expect:
+      columns: [node_id, component_id]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Dijkstra Shortest Path
+  # ---------------------------------------------------------------------------
+
+  - name: dijkstra_unweighted
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.dijkstra(0)"
+    expect:
+      columns: [node_id, distance]
+      count: 3
+
+  - name: dijkstra_weighted
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 500}]->(b)"
+    query: "CALL grafeo.dijkstra({source: 0, weight: 'km'})"
+    expect:
+      count: 3
+
+  - name: dijkstra_single_pair
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE]->(b)"
+    query: "CALL grafeo.dijkstra({source: 0, target: 2})"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # SSSP (string-based node name lookup)
+  # ---------------------------------------------------------------------------
+
+  - name: sssp_by_name
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Paris'})"
+      - "MATCH (a:City {name: 'Amsterdam'}), (b:City {name: 'Berlin'}) INSERT (a)-[:ROUTE {km: 650}]->(b)"
+      - "MATCH (a:City {name: 'Berlin'}), (b:City {name: 'Paris'}) INSERT (a)-[:ROUTE {km: 1050}]->(b)"
+    query: "CALL grafeo.sssp('Amsterdam', 'km')"
+    expect:
+      columns: [node_id, distance]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # BFS / DFS Traversal
+  # ---------------------------------------------------------------------------
+
+  - name: bfs_from_source
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.bfs(0)"
+    expect:
+      columns: [node_id, depth]
+      count: 3
+
+  - name: dfs_from_source
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.dfs(0)"
+    expect:
+      columns: [node_id, depth]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Betweenness / Closeness Centrality
+  # ---------------------------------------------------------------------------
+
+  - name: betweenness_centrality
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.betweenness_centrality()"
+    expect:
+      columns: [node_id, centrality]
+      count: 3
+
+  - name: closeness_centrality
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.closeness_centrality()"
+    expect:
+      columns: [node_id, centrality]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Community Detection
+  # ---------------------------------------------------------------------------
+
+  - name: louvain_community
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.louvain()"
+    expect:
+      columns: [node_id, community_id, modularity]
+      count: 3
+
+  - name: label_propagation
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.label_propagation()"
+    expect:
+      columns: [node_id, community_id]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Clustering Coefficient
+  # ---------------------------------------------------------------------------
+
+  - name: clustering_coefficient
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.clustering_coefficient()"
+    expect:
+      columns: [node_id, coefficient, triangle_count]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Topological Sort
+  # ---------------------------------------------------------------------------
+
+  - name: topological_sort
+    setup:
+      - "INSERT (:Task {name: 'build'})"
+      - "INSERT (:Task {name: 'test'})"
+      - "INSERT (:Task {name: 'deploy'})"
+      - "MATCH (a:Task {name: 'build'}), (b:Task {name: 'test'}) INSERT (a)-[:DEPENDS_ON]->(b)"
+      - "MATCH (a:Task {name: 'test'}), (b:Task {name: 'deploy'}) INSERT (a)-[:DEPENDS_ON]->(b)"
+    query: "CALL grafeo.topological_sort()"
+    expect:
+      columns: [node_id, order]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Structure: Articulation Points, Bridges, K-Core
+  # ---------------------------------------------------------------------------
+
+  - name: articulation_points
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.articulation_points()"
+    expect:
+      columns: [node_id]
+      count: 1
+
+  - name: bridges_in_chain
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.bridges()"
+    expect:
+      columns: [source, target]
+      count: 2
+
+  - name: k_core
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Vincent'})"
+      - "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
+      - "MATCH (a:Person {name: 'Gus'}), (b:Person {name: 'Vincent'}) INSERT (a)-[:KNOWS]->(b)"
+    query: "CALL grafeo.kcore()"
+    expect:
+      columns: [node_id, core_number, max_core]
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # Error Handling
+  # ---------------------------------------------------------------------------
+
+  - name: call_unknown_procedure
+    query: "CALL grafeo.nonexistent()"
+    expect:
+      error: "Unknown procedure"
+
+  - name: call_yield_nonexistent_column
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+    query: "CALL grafeo.pagerank() YIELD fake_column"
+    expect:
+      error: "not found"
+
+  # ---------------------------------------------------------------------------
+  # Procedure Listing
+  # ---------------------------------------------------------------------------
+
+  - name: list_procedures
+    query: "CALL grafeo.procedures()"
+    expect:
+      columns: [name, description, parameters, output_columns]

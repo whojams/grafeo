@@ -1,0 +1,295 @@
+# Common: Vector search (k-NN, HNSW similarity)
+#
+# Covers: CREATE VECTOR INDEX DDL, vector() function, cosine_similarity,
+# euclidean_distance, dot_product, manhattan_distance, k-NN ordering.
+# These tests exercise vector operations via GQL functions and DDL.
+
+meta:
+  language: gql
+  model: lpg
+  section: vector
+  title: Vector search
+  dataset: empty
+  requires: [vector-index]
+
+tests:
+
+  # ---------------------------------------------------------------------------
+  # vector() function: list-to-vector conversion
+  # ---------------------------------------------------------------------------
+
+  - name: vector_literal_returns_vector
+    setup:
+      - "INSERT (:Dummy {x: 1})"
+    query: "MATCH (n:Dummy) RETURN vector([0.5, 0.5, 0.0]) AS v"
+    expect:
+      count: 1
+
+  - name: vector_roundtrip_via_insert
+    setup:
+      - "INSERT (:Doc {embedding: vector([1.0, 0.0, 0.0])})"
+    query: "MATCH (n:Doc) RETURN n.embedding AS emb"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # CREATE VECTOR INDEX DDL
+  # ---------------------------------------------------------------------------
+
+  - name: create_vector_index_basic
+    setup:
+      - "INSERT (:Doc {embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {embedding: vector([0.0, 1.0, 0.0])})"
+    statements:
+      - "CREATE VECTOR INDEX doc_emb ON :Doc(embedding)"
+      - "MATCH (n:Doc) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [2]
+
+  - name: create_vector_index_with_dimension
+    setup:
+      - "INSERT (:Item {vec: vector([0.1, 0.2, 0.3])})"
+    statements:
+      - "CREATE VECTOR INDEX item_vec ON :Item(vec) DIMENSION 3"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: create_vector_index_with_cosine_metric
+    setup:
+      - "INSERT (:Item {vec: vector([0.1, 0.2, 0.3])})"
+    statements:
+      - "CREATE VECTOR INDEX item_cos ON :Item(vec) DIMENSION 3 METRIC 'cosine'"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  - name: create_vector_index_with_euclidean_metric
+    setup:
+      - "INSERT (:Item {vec: vector([0.1, 0.2, 0.3])})"
+    statements:
+      - "CREATE VECTOR INDEX item_euc ON :Item(vec) DIMENSION 3 METRIC 'euclidean'"
+      - "MATCH (n:Item) RETURN count(n) AS cnt"
+    expect:
+      rows:
+        - [1]
+
+  # ---------------------------------------------------------------------------
+  # cosine_similarity function
+  # ---------------------------------------------------------------------------
+
+  - name: cosine_similarity_identical_vectors
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      RETURN cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+    expect:
+      count: 1
+
+  - name: cosine_similarity_orthogonal_is_zero
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      WITH cosine_similarity(n.embedding, vector([0.0, 1.0, 0.0])) AS s
+      WHERE s < 0.01 AND s > -0.01
+      RETURN s
+    expect:
+      count: 1
+
+  - name: cosine_similarity_ordering
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      columns: [id, s]
+      count: 3
+
+  - name: cosine_similarity_ordering_first_is_most_similar
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+      LIMIT 1
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # euclidean_distance function
+  # ---------------------------------------------------------------------------
+
+  - name: euclidean_distance_identical_is_zero
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      WITH euclidean_distance(n.embedding, vector([1.0, 0.0, 0.0])) AS d
+      WHERE d < 0.01
+      RETURN d
+    expect:
+      count: 1
+
+  - name: euclidean_distance_ordering
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, euclidean_distance(n.embedding, vector([1.0, 0.0, 0.0])) AS d
+      RETURN n.id AS id, d
+      ORDER BY d ASC
+    expect:
+      ordered: true
+      count: 3
+
+  # ---------------------------------------------------------------------------
+  # dot_product function
+  # ---------------------------------------------------------------------------
+
+  - name: dot_product_unit_vector_with_itself
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      RETURN dot_product(n.embedding, vector([1.0, 0.0, 0.0])) AS dp
+    expect:
+      count: 1
+
+  - name: dot_product_orthogonal_is_zero
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      WITH dot_product(n.embedding, vector([0.0, 1.0, 0.0])) AS dp
+      WHERE dp < 0.01 AND dp > -0.01
+      RETURN dp
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # manhattan_distance function
+  # ---------------------------------------------------------------------------
+
+  - name: manhattan_distance_identical_is_zero
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      WITH manhattan_distance(n.embedding, vector([1.0, 0.0, 0.0])) AS d
+      WHERE d < 0.01
+      RETURN d
+    expect:
+      count: 1
+
+  - name: manhattan_distance_unit_vectors
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+    query: |
+      MATCH (n:Doc) WHERE n.id = 'a'
+      RETURN manhattan_distance(n.embedding, vector([0.0, 1.0, 0.0])) AS d
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # k-NN via ORDER BY cosine_similarity with LIMIT
+  # ---------------------------------------------------------------------------
+
+  - name: knn_top_1
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd', embedding: vector([0.0, 0.0, 1.0])})"
+      - "INSERT (:Doc {id: 'e', embedding: vector([0.5, 0.5, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS score
+      RETURN n.id AS id, score
+      ORDER BY score DESC
+      LIMIT 1
+    expect:
+      ordered: true
+      count: 1
+
+  - name: knn_top_3
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd', embedding: vector([0.0, 0.0, 1.0])})"
+      - "INSERT (:Doc {id: 'e', embedding: vector([0.5, 0.5, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS score
+      RETURN n.id AS id, score
+      ORDER BY score DESC
+      LIMIT 3
+    expect:
+      ordered: true
+      count: 3
+
+  - name: knn_top_5_returns_all
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+      - "INSERT (:Doc {id: 'd', embedding: vector([0.0, 0.0, 1.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS score
+      RETURN n.id AS id, score
+      ORDER BY score DESC
+      LIMIT 5
+    expect:
+      count: 4
+
+  - name: knn_euclidean_top_2
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, euclidean_distance(n.embedding, vector([1.0, 0.0, 0.0])) AS dist
+      RETURN n.id AS id, dist
+      ORDER BY dist ASC
+      LIMIT 2
+    expect:
+      ordered: true
+      count: 2
+
+  # ---------------------------------------------------------------------------
+  # Similarity threshold filtering
+  # ---------------------------------------------------------------------------
+
+  - name: similarity_threshold_filter
+    setup:
+      - "INSERT (:Doc {id: 'a', embedding: vector([1.0, 0.0, 0.0])})"
+      - "INSERT (:Doc {id: 'b', embedding: vector([0.9, 0.1, 0.0])})"
+      - "INSERT (:Doc {id: 'c', embedding: vector([0.0, 1.0, 0.0])})"
+    query: |
+      MATCH (n:Doc)
+      WITH n, cosine_similarity(n.embedding, vector([1.0, 0.0, 0.0])) AS s
+      WHERE s > 0.8
+      RETURN n.id AS id, s
+      ORDER BY s DESC
+    expect:
+      ordered: true
+      count: 2

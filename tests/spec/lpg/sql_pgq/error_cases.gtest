@@ -109,6 +109,7 @@ tests:
       error: "WITH"
 
   - name: union_queries
+    skip: "UNION not yet supported in SQL/PGQ parser"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)

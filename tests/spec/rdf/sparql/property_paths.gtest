@@ -316,7 +316,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: negated_property_set_single
-    skip: "negated property set execution not yet integration-tested"
     # !<p> matches any predicate except p
     setup:
       - |
@@ -333,7 +332,6 @@ tests:
       count: 2
 
   - name: negated_property_set_multiple
-    skip: "negated property set execution not yet integration-tested"
     # !(p1|p2) excludes multiple predicates
     setup:
       - |

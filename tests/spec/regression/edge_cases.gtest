@@ -570,7 +570,6 @@ tests:
         - [Vincent]
 
   - name: label_intersection_filters_non_matching
-    skip: "dual MATCH on same variable with different labels not yet intersected correctly"
     setup:
       - "INSERT (:A:B {name: 'both'})"
       - "INSERT (:A {name: 'only_a'})"
@@ -948,7 +947,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: exists_returns_false_for_missing_pattern
-    skip: "EXISTS subquery in RETURN not yet supported"
     setup:
       - "INSERT (:User {name: 'Alix'})"
     query: |
@@ -959,7 +957,6 @@ tests:
         - [false]
 
   - name: exists_returns_true_for_present_pattern
-    skip: "EXISTS subquery in RETURN not yet supported"
     setup:
       - "INSERT (:User {name: 'Alix'})<-[:AUTH]-(:Identity {provider: 'github'})"
     query: |
@@ -970,7 +967,6 @@ tests:
         - [true]
 
   - name: exists_with_label_filter_no_false_positive
-    skip: "EXISTS subquery in RETURN not yet supported"
     # Wrong edge label: EXISTS should return false.
     setup:
       - "INSERT (:User {name: 'Gus'})<-[:FOLLOWS]-(:Bot {name: 'bot1'})"
@@ -1006,7 +1002,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: i64_max_plus_one_overflows
-    skip: "integer overflow wraps instead of returning null"
     # i64::MAX + 1 overflows: should return NULL.
     query: RETURN 9223372036854775807 + 1 AS r
     expect:
@@ -1014,7 +1009,6 @@ tests:
         - [null]
 
   - name: multiplication_intermediate_overflow
-    skip: "integer overflow wraps instead of returning null"
     # 100 * 1e9 * 1e8 = 1e19 overflows i64.
     query: RETURN 100 * 1000000000 * 100000000 AS r
     expect:

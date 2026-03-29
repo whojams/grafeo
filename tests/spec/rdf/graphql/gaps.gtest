@@ -45,21 +45,18 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: directive_skip_true
-    skip: "Directives (@skip, @include) not evaluated during translation"
     query: "{ person { name age @skip(if: true) } }"
     expect:
       columns: [name]
       count: 5
 
   - name: directive_include_false
-    skip: "Directives (@skip, @include) not evaluated during translation"
     query: "{ person { name age @include(if: false) } }"
     expect:
       columns: [name]
       count: 5
 
   - name: directive_include_true
-    skip: "Directives (@skip, @include) not evaluated during translation"
     query: "{ person { name age @include(if: true) } }"
     expect:
       count: 5

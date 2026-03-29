@@ -96,7 +96,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: from_named_restricts_named_graphs
-    skip: "FROM NAMED not enforced at execution level"
     setup:
       - |
         INSERT DATA {
@@ -232,7 +231,6 @@ tests:
       count: 2
 
   - name: from_named_without_graph_keyword
-    skip: "FROM NAMED not enforced at execution level"
     setup:
       - |
         INSERT DATA {
@@ -255,7 +253,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: from_nonexistent_graph
-    skip: "FROM clause not enforced at execution level"
     setup:
       - |
         INSERT DATA {

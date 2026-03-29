@@ -32,7 +32,6 @@ tests:
       count: 2
 
   - name: trail_mode_standalone
-    skip: "TRAIL as standalone match mode not implemented"
     setup:
       - "INSERT (:Node {name: 'a'})"
       - "INSERT (:Node {name: 'b'})"
@@ -49,7 +48,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: simple_mode
-    skip: "SIMPLE as standalone match mode not implemented"
     setup:
       - "INSERT (:Node {name: 'a'})"
       - "INSERT (:Node {name: 'b'})"
@@ -66,7 +64,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: acyclic_mode
-    skip: "ACYCLIC as standalone match mode not implemented"
     setup:
       - "INSERT (:Node {name: 'a'})"
       - "INSERT (:Node {name: 'b'})"
@@ -112,7 +109,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: walk_mode
-    skip: "WALK as standalone match mode not implemented"
     setup:
       - "INSERT (:Node {name: 'a'})"
       - "INSERT (:Node {name: 'b'})"
@@ -144,7 +140,6 @@ tests:
       count: 1
 
   - name: all_shortest_path_search
-    skip: "ALL SHORTEST path search prefix not implemented"
     setup:
       - "INSERT (:Node {name: 'a'})"
       - "INSERT (:Node {name: 'b'})"

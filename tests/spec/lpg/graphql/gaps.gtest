@@ -49,25 +49,21 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: skip_directive_true_excludes_field
-    skip: "@skip directive not executed, all fields returned regardless"
     query: "{ person { name age @skip(if: true) } }"
     expect:
       columns: [name]
 
   - name: skip_directive_false_includes_field
-    skip: "@skip(if: false) not evaluated, directive syntax ignored"
     query: "{ person { name age @skip(if: false) } }"
     expect:
       columns: [name, age]
 
   - name: include_directive_false_excludes_field
-    skip: "@include directive not executed, all fields returned regardless"
     query: "{ person { name @include(if: false) age } }"
     expect:
       columns: [age]
 
   - name: include_directive_true_includes_field
-    skip: "@include(if: true) not evaluated, directive syntax ignored"
     query: "{ person { name @include(if: true) age } }"
     expect:
       columns: [name, age]
@@ -111,7 +107,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: deeply_nested_four_levels
-    skip: "4-level nesting fails with column resolution error (GRAFEO-V001)"
+    skip: "Deep nesting (4+ levels) fails with column resolution error"
     query: |
       query {
         person(name: "Alix") {
@@ -145,7 +141,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: subscription_with_selection
-    skip: "Subscriptions explicitly not supported"
     query: "subscription { personCreated { name age } }"
     expect:
       error: "not supported"

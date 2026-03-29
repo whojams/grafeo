@@ -299,7 +299,6 @@ tests:
       count: 6
 
   - name: unbounded_upper_range
-    skip: "unbounded variable-length traversal does not explore multi-hop paths"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (src:Person)-[p:KNOWS*1..]->(dst:Person)

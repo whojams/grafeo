@@ -19,7 +19,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: strlen_returns_length
-    skip: "STRLEN in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -34,7 +33,6 @@ tests:
         - [4]
 
   - name: strlen_empty_string
-    skip: "STRLEN in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -53,7 +51,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: ucase_converts_to_uppercase
-    skip: "UCASE in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -72,7 +69,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: lcase_converts_to_lowercase
-    skip: "LCASE in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {

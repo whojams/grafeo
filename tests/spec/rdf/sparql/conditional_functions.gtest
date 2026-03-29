@@ -20,7 +20,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: bound_with_optional_matched
-    skip: "BOUND() with OPTIONAL returns true for all rows, including unbound"
     # When the OPTIONAL matches, BOUND(?city) should be true.
     setup:
       - |
@@ -40,7 +39,6 @@ tests:
         - [Alix]
 
   - name: not_bound_with_optional_unmatched
-    skip: "!BOUND() with OPTIONAL returns 0 rows, OPTIONAL variables always appear bound"
     # When the OPTIONAL does not match, !BOUND(?city) should be true.
     setup:
       - |
@@ -228,7 +226,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: in_operator_matches
-    skip: "IN operator evaluates as always-false, returns 0 rows instead of matching"
     # FILTER(?name IN ("Alix", "Gus")) should return matching rows.
     setup:
       - |
@@ -267,7 +264,6 @@ tests:
       empty: true
 
   - name: not_in_operator
-    skip: "NOT IN operator evaluates as always-false, returns 0 rows"
     # FILTER(?name NOT IN ("Alix")) should return everyone except Alix.
     setup:
       - |
@@ -288,7 +284,6 @@ tests:
         - [Vincent]
 
   - name: not_in_empty_list
-    skip: "NOT IN with empty list evaluates as always-false, returns 0 rows"
     # FILTER(?name NOT IN ()) should return all rows (empty exclusion list).
     setup:
       - |

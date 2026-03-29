@@ -99,7 +99,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: source_add_e_sub_traversal
-    skip: "bare V() in from()/to() at source level not parsed as sub-traversal"
     setup:
       - "g.addV('Tmp').property('name', 'p')"
       - "g.addV('Tmp').property('name', 'q')"

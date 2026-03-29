@@ -62,7 +62,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: or_mixed_label_property
-    skip: "or() with hasLabel + has across types returns 1 instead of 2"
     query: "g.V().or(hasLabel('Company'), has('city', 'Paris')).count()"
     expect:
       rows:
@@ -76,7 +75,6 @@ tests:
         - [Vincent]
 
   - name: or_label_and_age
-    skip: "or() with hasLabel + has across types returns 1 instead of 2"
     query: "g.V().or(hasLabel('Company'), has('age', gt(34))).count()"
     expect:
       rows:
@@ -181,7 +179,6 @@ tests:
       count: 1
 
   - name: coalesce_first_match_only
-    skip: "coalesce still returns all branches instead of first non-empty"
     # Alix has out('KNOWS') (Gus) and out('WORKS_AT') (Grafeo OSS)
     # True coalesce should only return the first non-empty branch
     query: "g.V().has('Person', 'name', 'Alix').coalesce(out('KNOWS'), out('WORKS_AT')).count()"

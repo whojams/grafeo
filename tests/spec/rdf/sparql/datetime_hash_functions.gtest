@@ -215,7 +215,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: md5_hash
-    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (MD5("hello") AS ?hash) WHERE { }
     expect:
@@ -227,7 +226,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha1_hash
-    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA1("hello") AS ?hash) WHERE { }
     expect:
@@ -239,7 +237,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha256_hash
-    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA256("hello") AS ?hash) WHERE { }
     expect:
@@ -251,7 +248,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha384_hash
-    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA384("hello") AS ?hash) WHERE { }
     expect:
@@ -263,7 +259,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha512_hash
-    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA512("hello") AS ?hash) WHERE { }
     expect:

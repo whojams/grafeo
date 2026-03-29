@@ -20,7 +20,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: labeled_blank_node_as_subject
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # _:b1 used as a subject in INSERT DATA, then queried back
     setup:
       - |
@@ -38,7 +37,6 @@ tests:
         - [Alix, Amsterdam]
 
   - name: labeled_blank_node_as_object
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # _:b1 used as an object, then joined to retrieve its properties
     setup:
       - |
@@ -56,7 +54,6 @@ tests:
         - [Gus]
 
   - name: blank_node_join
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # Two triples sharing _:b1 as subject, joined on that blank node
     setup:
       - |
@@ -74,7 +71,6 @@ tests:
         - [Vincent, Paris]
 
   - name: multiple_labeled_blank_nodes
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # _:b1, _:b2, _:b3 as different subjects within a single INSERT DATA
     setup:
       - |
@@ -88,7 +84,6 @@ tests:
       count: 3
 
   - name: blank_node_in_query_pattern
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # _:x in a WHERE pattern acts as a non-distinguished variable,
     # matching any blank node or value in that position
     setup:
@@ -106,7 +101,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: anonymous_blank_node_subject
-    skip: "anonymous blank node [] as subject not yet supported in parser"
     setup:
       - |
         INSERT DATA {
@@ -138,7 +132,6 @@ tests:
         - [Jules, Prague]
 
   - name: anonymous_blank_node_nested
-    skip: "anonymous blank node [] as subject not yet supported in parser"
     setup:
       - |
         INSERT DATA {
@@ -179,7 +172,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: insert_data_with_blank_node_reuse
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # Within a single INSERT DATA block, _:b1 used multiple times
     # refers to the same blank node (per RDF spec)
     setup:
@@ -200,7 +192,6 @@ tests:
         - [Mia, Barcelona, 28]
 
   - name: insert_data_blank_nodes_across_operations
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # _:b1 in separate INSERT DATA operations are DIFFERENT nodes
     # per RDF spec (blank node scope is per operation)
     setup:
@@ -224,7 +215,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: blank_node_not_equal_to_iri
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # A blank node and an IRI are never equal, even if the blank node
     # label textually matches part of the IRI
     setup:
@@ -242,7 +232,6 @@ tests:
         - [Jules]
 
   - name: isblank_on_blank_node
-    skip: "blank nodes in INSERT DATA not yet supported: Unbound variable '_:b1'"
     # isBLANK(?s) should return true for blank node subjects
     setup:
       - |

@@ -21,7 +21,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: strlen_in_select_projection
-    skip: "STRLEN in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -41,7 +40,6 @@ tests:
         - [Vincent, 7]
 
   - name: ucase_in_select_projection
-    skip: "UCASE in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -59,7 +57,6 @@ tests:
         - [Gus, GUS]
 
   - name: lcase_in_select_projection
-    skip: "LCASE in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -98,7 +95,6 @@ tests:
         - ["Gus Fring"]
 
   - name: substr_in_select_projection
-    skip: "SUBSTR in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -163,7 +159,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: if_true_branch
-    skip: "IF with literal boolean in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -178,7 +173,6 @@ tests:
         - [yes]
 
   - name: if_false_branch
-    skip: "IF with literal boolean in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -325,7 +319,6 @@ tests:
         - [8]
 
   - name: nested_ucase_substr
-    skip: "nested UCASE(SUBSTR()) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -345,7 +338,6 @@ tests:
         - [Mia, M]
 
   - name: nested_concat_ucase_lcase
-    skip: "nested CONCAT(UCASE, LCASE) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -362,7 +354,6 @@ tests:
         - ["ALIX vega"]
 
   - name: nested_if_strlen
-    skip: "nested IF(STRLEN()) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -470,7 +461,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: str_in_select_projection
-    skip: "STR() with IRI constant in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -539,7 +529,6 @@ tests:
         - [Mia, Wallace]
 
   - name: if_in_select_projection
-    skip: "IF() in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -563,7 +552,6 @@ tests:
         - [Prague, large]
 
   - name: nested_coalesce_if
-    skip: "nested IF(COALESCE()) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {

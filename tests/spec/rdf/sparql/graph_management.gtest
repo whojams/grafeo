@@ -19,7 +19,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: create_graph_and_insert
-    skip: "CREATE GRAPH not yet executed"
     # CREATE GRAPH declares a named graph, then INSERT DATA populates it.
     setup:
       - "CREATE GRAPH <http://ex.org/graph/amsterdam>"
@@ -40,7 +39,6 @@ tests:
       count: 2
 
   - name: create_graph_silent_already_exists
-    skip: "CREATE SILENT GRAPH not yet executed"
     # CREATE SILENT GRAPH on an existing graph must not raise an error.
     setup:
       - "CREATE GRAPH <http://ex.org/graph/berlin>"
@@ -66,7 +64,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: drop_graph_removes_data
-    skip: "DROP GRAPH not yet executed"
     # Insert data into a named graph, DROP it, verify it is empty.
     setup:
       - |
@@ -87,7 +84,6 @@ tests:
       empty: true
 
   - name: drop_silent_nonexistent
-    skip: "DROP SILENT GRAPH not yet executed"
     # DROP SILENT on a graph that does not exist must not raise an error.
     # Insert unrelated data to verify the store is unaffected.
     setup:
@@ -106,7 +102,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: clear_graph_empties_named_graph
-    skip: "CLEAR GRAPH not yet executed"
     # Insert data, CLEAR the named graph, verify the graph is empty.
     setup:
       - |
@@ -127,7 +122,6 @@ tests:
       empty: true
 
   - name: clear_default_empties_default_graph
-    skip: "CLEAR DEFAULT not yet executed"
     # Insert triples into the default graph, CLEAR DEFAULT, verify empty.
     setup:
       - |
@@ -169,7 +163,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: copy_graph_to_graph
-    skip: "COPY not yet executed"
     # COPY replaces the destination graph with the source graph's contents.
     setup:
       - |
@@ -199,7 +192,6 @@ tests:
         - [http://ex.org/gus, designer]
 
   - name: copy_default_to_named
-    skip: "COPY DEFAULT not yet executed"
     # COPY DEFAULT TO <graph> copies the default graph into a named graph.
     setup:
       - |
@@ -225,7 +217,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: move_graph_to_graph
-    skip: "MOVE not yet executed"
     # MOVE transfers all data from source to destination, leaving source empty.
     setup:
       - |
@@ -246,7 +237,6 @@ tests:
       empty: true
 
   - name: move_graph_to_graph_verify_destination
-    skip: "MOVE not yet executed"
     # Verify the destination graph received the data after MOVE.
     setup:
       - |
@@ -270,7 +260,6 @@ tests:
         - [http://ex.org/vincent, 88]
 
   - name: move_default_to_named
-    skip: "MOVE DEFAULT not yet executed"
     # MOVE DEFAULT TO <graph> moves the default graph into a named graph.
     setup:
       - |
@@ -293,7 +282,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: add_graph_to_graph
-    skip: "ADD not yet executed"
     # ADD merges source triples into destination, keeping existing destination data.
     setup:
       - |
@@ -322,7 +310,6 @@ tests:
         - [http://ex.org/gus, beta]
 
   - name: add_default_to_named
-    skip: "ADD DEFAULT not yet executed"
     # ADD DEFAULT TO <graph> merges default graph triples into named graph.
     setup:
       - |

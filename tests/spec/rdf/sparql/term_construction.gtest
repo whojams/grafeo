@@ -3,7 +3,8 @@
 # Covers: STRDT, STRLANG, IRI/URI, BNODE, UUID, STRUUID.
 # Based on W3C SPARQL 1.1 Query Language specification, Section 17.4.7.
 # These functions construct new RDF terms from string values and other inputs.
-# Most parse correctly but are not yet evaluated at execution level.
+# STRDT, STRLANG, IRI/URI, BNODE, UUID, and STRUUID are evaluated in BIND and
+# projection. Combined use (e.g., BIND value as triple subject) is not yet supported.
 
 meta:
   language: sparql
@@ -20,7 +21,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: strdt_creates_typed_literal
-    skip: "STRDT() not yet evaluated in BIND expressions"
     setup:
       - |
         INSERT DATA {
@@ -35,7 +35,6 @@ tests:
       count: 1
 
   - name: strdt_in_construct
-    skip: "STRDT() not yet evaluated in CONSTRUCT templates"
     setup:
       - |
         INSERT DATA {
@@ -56,7 +55,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: strlang_creates_language_tagged_literal
-    skip: "STRLANG() not yet evaluated in BIND expressions"
     setup:
       - |
         INSERT DATA {
@@ -71,7 +69,6 @@ tests:
       count: 1
 
   - name: strlang_with_variable
-    skip: "STRLANG() not yet evaluated in BIND expressions"
     setup:
       - |
         INSERT DATA {
@@ -105,7 +102,6 @@ tests:
       count: 1
 
   - name: iri_concat_construction
-    skip: "IRI() with CONCAT not evaluated in BIND"
     setup:
       - |
         INSERT DATA {
@@ -139,7 +135,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: bnode_with_label
-    skip: "BNODE() not yet evaluated in BIND expressions"
     setup:
       - |
         INSERT DATA {
@@ -154,7 +149,6 @@ tests:
       count: 1
 
   - name: bnode_without_label
-    skip: "BNODE() not yet evaluated in BIND expressions"
     setup:
       - |
         INSERT DATA {
@@ -174,7 +168,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: uuid_returns_iri
-    skip: "UUID() not yet evaluated in SELECT projection"
     query: |
       SELECT (UUID() AS ?id) WHERE { }
     expect:
@@ -185,7 +178,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: struuid_returns_string
-    skip: "STRUUID() not yet evaluated in SELECT projection"
     query: |
       SELECT (STRUUID() AS ?id) WHERE { }
     expect:
@@ -196,7 +188,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: iri_used_in_triple_pattern
-    skip: "IRI() from BIND not usable as subject in subsequent pattern"
+    skip: "BIND(IRI(...)) value not used as subject in subsequent triple pattern, returns all rows"
     setup:
       - |
         INSERT DATA {
@@ -218,7 +210,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: strdt_with_filter
-    skip: "STRDT() result not available for DATATYPE() comparison in FILTER"
+    skip: "DATATYPE() on BIND-produced STRDT value returns 0 rows in FILTER comparison"
     setup:
       - |
         INSERT DATA {

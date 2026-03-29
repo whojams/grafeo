@@ -21,7 +21,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: strlen_in_select_projection
-    skip: "STRLEN not yet evaluated in SELECT projection"
+    skip: "STRLEN in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -41,7 +41,7 @@ tests:
         - [Vincent, 7]
 
   - name: ucase_in_select_projection
-    skip: "UCASE not yet evaluated in SELECT projection"
+    skip: "UCASE in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -59,7 +59,7 @@ tests:
         - [Gus, GUS]
 
   - name: lcase_in_select_projection
-    skip: "LCASE not yet evaluated in SELECT projection"
+    skip: "LCASE in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -77,7 +77,7 @@ tests:
         - [Vincent, vincent]
 
   - name: concat_in_select_projection
-    skip: "CONCAT not yet evaluated in SELECT projection"
+    skip: "CONCAT-only SELECT projection: variable not found"
     setup:
       - |
         INSERT DATA {
@@ -98,7 +98,7 @@ tests:
         - ["Gus Fring"]
 
   - name: substr_in_select_projection
-    skip: "SUBSTR not yet evaluated in SELECT projection"
+    skip: "SUBSTR in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -120,7 +120,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: addition_in_projection
-    skip: "arithmetic not evaluated in SELECT projection"
+    skip: "arithmetic in SELECT projection performs string concatenation instead of math"
     setup:
       - |
         INSERT DATA {
@@ -138,7 +138,7 @@ tests:
         - ["<http://ex.org/gus>", 75]
 
   - name: multiplication_in_projection
-    skip: "arithmetic not evaluated in SELECT projection"
+    skip: "expression-only SELECT projection: variable not found"
     setup:
       - |
         INSERT DATA {
@@ -163,7 +163,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: if_true_branch
-    skip: "IF() not yet evaluated"
+    skip: "IF with literal boolean in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -178,7 +178,7 @@ tests:
         - [yes]
 
   - name: if_false_branch
-    skip: "IF() not yet evaluated"
+    skip: "IF with literal boolean in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -193,7 +193,6 @@ tests:
         - [no]
 
   - name: if_with_comparison
-    skip: "IF() not yet evaluated"
     setup:
       - |
         INSERT DATA {
@@ -218,7 +217,6 @@ tests:
         - [Vincent, senior]
 
   - name: if_in_filter_context
-    skip: "IF() not evaluated in FILTER context"
     setup:
       - |
         INSERT DATA {
@@ -242,7 +240,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: coalesce_returns_first_bound
-    skip: "COALESCE() not yet evaluated in BIND"
+    skip: "COALESCE in BIND does not pick up OPTIONAL-bound variables"
     setup:
       - |
         INSERT DATA {
@@ -263,7 +261,7 @@ tests:
         - [Gus, Gus]
 
   - name: coalesce_with_constant_fallback
-    skip: "COALESCE() not yet evaluated in BIND"
+    skip: "COALESCE in BIND does not pick up OPTIONAL-bound variables"
     setup:
       - |
         INSERT DATA {
@@ -284,7 +282,6 @@ tests:
         - [Gus, unknown]
 
   - name: coalesce_all_unbound
-    skip: "COALESCE() not yet evaluated in BIND"
     setup:
       - |
         INSERT DATA {
@@ -307,7 +304,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: nested_strlen_concat
-    skip: "nested function composition not evaluated in projection"
+    skip: "expression-only SELECT projection: variable not found"
     setup:
       - |
         INSERT DATA {
@@ -328,7 +325,7 @@ tests:
         - [8]
 
   - name: nested_ucase_substr
-    skip: "nested function composition not evaluated in projection"
+    skip: "nested UCASE(SUBSTR()) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -348,7 +345,7 @@ tests:
         - [Mia, M]
 
   - name: nested_concat_ucase_lcase
-    skip: "nested function composition not evaluated in projection"
+    skip: "nested CONCAT(UCASE, LCASE) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -365,7 +362,7 @@ tests:
         - ["ALIX vega"]
 
   - name: nested_if_strlen
-    skip: "nested function composition not evaluated in projection"
+    skip: "nested IF(STRLEN()) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -473,7 +470,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: str_in_select_projection
-    skip: "STR() not yet evaluated in SELECT projection"
+    skip: "STR() with IRI constant in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -488,7 +485,6 @@ tests:
         - ["http://ex.org/alix"]
 
   - name: replace_in_select_projection
-    skip: "REPLACE not yet evaluated in SELECT projection"
     setup:
       - |
         INSERT DATA {
@@ -506,7 +502,7 @@ tests:
         - [Berlin, Berlin]
 
   - name: subtraction_in_projection
-    skip: "arithmetic not evaluated in SELECT projection"
+    skip: "arithmetic in SELECT projection returns null instead of computed value"
     setup:
       - |
         INSERT DATA {
@@ -524,7 +520,6 @@ tests:
         - ["<http://ex.org/gus>", 70]
 
   - name: coalesce_in_select_projection
-    skip: "COALESCE() not yet evaluated in SELECT projection"
     setup:
       - |
         INSERT DATA {
@@ -544,7 +539,7 @@ tests:
         - [Mia, Wallace]
 
   - name: if_in_select_projection
-    skip: "IF() not yet evaluated in SELECT projection"
+    skip: "IF() in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {
@@ -568,7 +563,7 @@ tests:
         - [Prague, large]
 
   - name: nested_coalesce_if
-    skip: "nested function composition not evaluated in projection"
+    skip: "nested IF(COALESCE()) in SELECT projection returns null"
     setup:
       - |
         INSERT DATA {

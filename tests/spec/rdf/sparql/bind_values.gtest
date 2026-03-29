@@ -76,7 +76,7 @@ tests:
         - [Gus, hello]
 
   - name: bind_strlen
-    skip: "STRLEN not yet evaluated in BIND projection expressions"
+    skip: "STRLEN in BIND returns empty string instead of integer length"
     setup:
       - |
         INSERT DATA {
@@ -97,7 +97,7 @@ tests:
         - [Vincent, 7]
 
   - name: bind_after_optional_with_bound_variable
-    skip: "BOUND() not yet evaluated in BIND expressions"
+    skip: "BOUND() in BIND returns empty string instead of true/false"
     setup:
       - |
         INSERT DATA {

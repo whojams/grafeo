@@ -121,7 +121,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: describe_specific_iri
-    skip: "DESCRIBE result count is implementation-defined"
+    skip: "DESCRIBE returns 1 row instead of expected 2 (CBD not fully expanding all triples)"
     setup:
       - |
         INSERT DATA {
@@ -135,7 +135,7 @@ tests:
       count: 2
 
   - name: describe_variable_with_where
-    skip: "DESCRIBE result count is implementation-defined"
+    skip: "DESCRIBE returns 1 row instead of expected 2 (CBD not fully expanding all triples)"
     setup:
       - |
         INSERT DATA {
@@ -244,7 +244,7 @@ tests:
         - [Mia]
 
   - name: subquery_with_aggregation_feeding_outer
-    skip: "subquery aggregation results not yet propagated to outer query"
+    skip: "subquery COUNT() aggregation value not propagated to outer query (returns empty string)"
     setup:
       - |
         INSERT DATA {

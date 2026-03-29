@@ -40,7 +40,7 @@ tests:
         - [Alix]
 
   - name: not_bound_with_optional_unmatched
-    skip: "BOUND() with OPTIONAL returns true for all rows, including unbound"
+    skip: "!BOUND() with OPTIONAL returns 0 rows, OPTIONAL variables always appear bound"
     # When the OPTIONAL does not match, !BOUND(?city) should be true.
     setup:
       - |
@@ -101,7 +101,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: if_in_bind_expression
-    skip: "Projection functions (IF in BIND) not evaluated in expression context"
     # BIND(IF(?age > "28", "senior", "junior") AS ?category)
     setup:
       - |
@@ -127,7 +126,6 @@ tests:
         - [Vincent, senior]
 
   - name: if_in_filter
-    skip: "IF function not evaluated in FILTER context"
     # FILTER(IF(?val > "10", true, false)) should keep rows where val > 10.
     setup:
       - |
@@ -145,7 +143,7 @@ tests:
       count: 2
 
   - name: if_with_bound_check
-    skip: "BOUND() with OPTIONAL returns true for all rows, including unbound"
+    skip: "BOUND() with OPTIONAL always returns true, so IF always takes the true branch"
     # IF(BOUND(?opt), ?opt, "default") to provide a fallback for unbound.
     setup:
       - |
@@ -171,7 +169,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: coalesce_first_non_null
-    skip: "Projection functions (COALESCE in BIND) may not be evaluated"
     # COALESCE(?nick, ?name) where nick exists, should return nick.
     setup:
       - |
@@ -190,7 +187,6 @@ tests:
         - [Lix]
 
   - name: coalesce_fallback_to_second
-    skip: "Projection functions (COALESCE in BIND) may not be evaluated"
     # COALESCE(?missing, ?name) where first is unbound via OPTIONAL.
     setup:
       - |
@@ -208,7 +204,6 @@ tests:
         - [Gus]
 
   - name: coalesce_all_present
-    skip: "Projection functions (COALESCE in BIND) may not be evaluated"
     # All arguments present: returns the first.
     setup:
       - |
@@ -233,7 +228,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: in_operator_matches
-    skip: "IN operator evaluates as always-false"
+    skip: "IN operator evaluates as always-false, returns 0 rows instead of matching"
     # FILTER(?name IN ("Alix", "Gus")) should return matching rows.
     setup:
       - |
@@ -255,7 +250,6 @@ tests:
         - [Gus]
 
   - name: in_operator_no_match
-    skip: "IN operator evaluates as always-false"
     # FILTER(?name IN ("Django", "Shosanna")) should return no rows.
     setup:
       - |
@@ -273,7 +267,7 @@ tests:
       empty: true
 
   - name: not_in_operator
-    skip: "NOT IN operator evaluates as always-false"
+    skip: "NOT IN operator evaluates as always-false, returns 0 rows"
     # FILTER(?name NOT IN ("Alix")) should return everyone except Alix.
     setup:
       - |
@@ -294,7 +288,7 @@ tests:
         - [Vincent]
 
   - name: not_in_empty_list
-    skip: "NOT IN operator evaluates as always-false"
+    skip: "NOT IN with empty list evaluates as always-false, returns 0 rows"
     # FILTER(?name NOT IN ()) should return all rows (empty exclusion list).
     setup:
       - |

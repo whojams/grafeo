@@ -190,7 +190,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: coalesce_first_match
-    skip: "coalesce currently implemented as union, returns all branches"
+    skip: "coalesce still returns all branches instead of first non-empty"
     query: "g.V().has('Person', 'name', 'Alix').coalesce(out('KNOWS'), out('WORKS_AT')).values('name')"
     expect:
       rows:

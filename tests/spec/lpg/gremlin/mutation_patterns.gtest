@@ -161,7 +161,6 @@ tests:
         - [4]
 
   - name: add_e_mid_traversal_v_not_supported
-    skip: "mid-traversal V() is not supported as a step"
     query: "g.V().has('Person', 'name', 'Vincent').as('v').V().has('Person', 'name', 'Alix').addE('FOLLOWS').from('v')"
     expect:
       count: 1

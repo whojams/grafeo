@@ -19,7 +19,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: now_returns_current_datetime
-    skip: "NOW() not yet evaluated in SELECT projection"
     query: |
       SELECT (NOW() AS ?ts) WHERE { }
     expect:
@@ -30,7 +29,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: year_extracts_year
-    skip: "YEAR() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -49,7 +48,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: month_extracts_month
-    skip: "MONTH() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -68,7 +67,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: day_extracts_day
-    skip: "DAY() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -87,7 +86,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: hours_extracts_hours
-    skip: "HOURS() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -106,7 +105,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: minutes_extracts_minutes
-    skip: "MINUTES() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -125,7 +124,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: seconds_extracts_seconds
-    skip: "SECONDS() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -144,7 +143,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: timezone_returns_offset
-    skip: "TIMEZONE() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -163,7 +162,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: tz_returns_string_offset
-    skip: "TZ() not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -182,7 +181,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: year_month_day_from_single_datetime
-    skip: "Date/time component functions not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -197,7 +196,7 @@ tests:
         - [1990, 3, 22]
 
   - name: hours_minutes_seconds_from_single_datetime
-    skip: "Date/time component functions not yet evaluated in SELECT projection"
+    skip: "function on typed dateTime literal returns null in projection"
     setup:
       - |
         INSERT DATA {
@@ -216,7 +215,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: md5_hash
-    skip: "MD5() not yet evaluated in SELECT projection"
+    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (MD5("hello") AS ?hash) WHERE { }
     expect:
@@ -228,7 +227,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha1_hash
-    skip: "SHA1() not yet evaluated in SELECT projection"
+    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA1("hello") AS ?hash) WHERE { }
     expect:
@@ -240,7 +239,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha256_hash
-    skip: "SHA256() not yet evaluated in SELECT projection"
+    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA256("hello") AS ?hash) WHERE { }
     expect:
@@ -252,7 +251,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha384_hash
-    skip: "SHA384() not yet evaluated in SELECT projection"
+    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA384("hello") AS ?hash) WHERE { }
     expect:
@@ -264,7 +263,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sha512_hash
-    skip: "SHA512() not yet evaluated in SELECT projection"
+    skip: "hash function on string literal returns null in projection"
     query: |
       SELECT (SHA512("hello") AS ?hash) WHERE { }
     expect:
@@ -276,7 +275,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: md5_hash_of_bound_variable
-    skip: "MD5() not yet evaluated in SELECT projection"
     setup:
       - |
         INSERT DATA {
@@ -290,7 +288,6 @@ tests:
       count: 1
 
   - name: sha256_hash_of_bound_variable
-    skip: "SHA256() not yet evaluated in SELECT projection"
     setup:
       - |
         INSERT DATA {

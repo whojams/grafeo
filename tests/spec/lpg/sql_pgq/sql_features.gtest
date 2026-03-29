@@ -142,7 +142,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: order_by_count_alias_desc
-    skip: "ORDER BY on aggregate alias not yet implemented"
+    skip: "ORDER BY on aggregate alias: 'cnt' not resolved in ORDER BY scope"
     query: |
       SELECT city, COUNT(*) AS cnt FROM GRAPH_TABLE (
         MATCH (n:Person)
@@ -156,7 +156,7 @@ tests:
         - [Paris, 1]
 
   - name: order_by_sum_alias
-    skip: "ORDER BY on aggregate alias not yet implemented"
+    skip: "ORDER BY on aggregate alias: 'total' not resolved in ORDER BY scope"
     query: |
       SELECT source, SUM(year) AS total FROM GRAPH_TABLE (
         MATCH (a:Person)-[e:KNOWS]->(b:Person)

@@ -87,7 +87,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: mid_traversal_v_step
-    skip: "V() only recognized as source, not as step"
     setup:
       - "g.addV('Tmp').property('name', 'x')"
       - "g.addV('Tmp').property('name', 'y')"
@@ -100,7 +99,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: source_add_e_sub_traversal
-    skip: "sub-traversal in from()/to() at source level not supported"
+    skip: "bare V() in from()/to() at source level not parsed as sub-traversal"
     setup:
       - "g.addV('Tmp').property('name', 'p')"
       - "g.addV('Tmp').property('name', 'q')"

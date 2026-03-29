@@ -299,7 +299,7 @@ tests:
       count: 6
 
   - name: unbounded_upper_range
-    skip: "unbounded upper range not yet implemented"
+    skip: "unbounded upper range (*1..) only returns 1-hop, not transitive closure"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (src:Person)-[p:KNOWS*1..]->(dst:Person)

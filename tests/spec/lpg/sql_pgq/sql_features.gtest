@@ -148,11 +148,7 @@ tests:
         - [Paris, 1]
 
   - name: order_by_sum_alias
-<<<<<<< ours
-    skip: "ORDER BY on aggregate alias: 'total' not resolved in ORDER BY scope"
-=======
     skip: "ORDER BY on aggregate alias placed before Aggregate in plan"
->>>>>>> theirs
     query: |
       SELECT source, SUM(year) AS total FROM GRAPH_TABLE (
         MATCH (a:Person)-[e:KNOWS]->(b:Person)

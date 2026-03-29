@@ -522,4 +522,134 @@ mod tests {
         assert_eq!(wal.record_count(), 7);
         assert_eq!(ws.store().edge_count(), 0);
     }
+
+    #[tokio::test]
+    async fn set_edge_property_logs_and_applies() {
+        let (ws, wal) = setup().await;
+        let a = ws.create_node(&["Person"]).await.unwrap();
+        let b = ws.create_node(&["Person"]).await.unwrap();
+        let eid = ws.create_edge(a, b, "KNOWS").await.unwrap();
+        ws.set_edge_property(eid, "weight", Value::Int64(42))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            ws.store()
+                .get_edge_property(eid, &PropertyKey::from("weight")),
+            Some(Value::Int64(42))
+        );
+        // 2 CreateNode + 1 CreateEdge + 1 SetEdgeProperty
+        assert_eq!(wal.record_count(), 4);
+    }
+
+    #[tokio::test]
+    async fn remove_edge_property_only_logs_on_success() {
+        let (ws, wal) = setup().await;
+        let a = ws.create_node(&["Node"]).await.unwrap();
+        let b = ws.create_node(&["Node"]).await.unwrap();
+        let eid = ws.create_edge(a, b, "LINK").await.unwrap();
+        ws.set_edge_property(eid, "w", Value::Int64(1))
+            .await
+            .unwrap();
+        let before = wal.record_count();
+
+        // Remove nonexistent: no log
+        assert!(
+            ws.remove_edge_property(eid, "missing")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(wal.record_count(), before);
+
+        // Remove real: logs
+        assert_eq!(
+            ws.remove_edge_property(eid, "w").await.unwrap(),
+            Some(Value::Int64(1))
+        );
+        assert_eq!(wal.record_count(), before + 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_mutations_to_same_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(LpgStore::new().unwrap());
+        let wal: Arc<AsyncLpgWal> = Arc::new(AsyncTypedWal::open(dir.keep()).await.unwrap());
+        let ctx = Arc::new(tokio::sync::Mutex::new(None));
+
+        let ws = Arc::new(AsyncWalGraphStore::new(
+            Arc::clone(&store),
+            Arc::clone(&wal),
+            ctx,
+        ));
+
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let ws_clone = Arc::clone(&ws);
+            handles.push(tokio::spawn(async move {
+                for _ in 0..10 {
+                    ws_clone.create_node(&["Test"]).await.unwrap();
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert_eq!(store.node_count(), 40);
+        assert_eq!(wal.record_count(), 40);
+    }
+
+    #[tokio::test]
+    async fn wal_ordering_matches_mutation_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_path = dir.path().to_path_buf();
+
+        {
+            let (ws, _wal) = setup_at(&wal_path).await;
+            let id = ws.create_node(&["Person"]).await.unwrap();
+            ws.set_node_property(id, "name", Value::String("Alix".into()))
+                .await
+                .unwrap();
+            ws.add_label(id, "Employee").await.unwrap();
+            ws.remove_node_property(id, "name").await.unwrap();
+            ws.delete_node(id).await.unwrap();
+            _wal.sync().await.unwrap();
+        }
+
+        // Recover and verify ordering
+        let recovery = grafeo_adapters::storage::wal::WalRecovery::new(&wal_path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(records.len(), 5);
+
+        assert!(matches!(
+            records[0],
+            grafeo_adapters::storage::wal::WalRecord::CreateNode { .. }
+        ));
+        assert!(matches!(
+            records[1],
+            grafeo_adapters::storage::wal::WalRecord::SetNodeProperty { .. }
+        ));
+        assert!(matches!(
+            records[2],
+            grafeo_adapters::storage::wal::WalRecord::AddNodeLabel { .. }
+        ));
+        assert!(matches!(
+            records[3],
+            grafeo_adapters::storage::wal::WalRecord::RemoveNodeProperty { .. }
+        ));
+        assert!(matches!(
+            records[4],
+            grafeo_adapters::storage::wal::WalRecord::DeleteNode { .. }
+        ));
+    }
+
+    async fn setup_at(wal_path: &std::path::Path) -> (AsyncWalGraphStore, Arc<AsyncLpgWal>) {
+        let store = Arc::new(LpgStore::new().unwrap());
+        let wal = Arc::new(AsyncTypedWal::open(wal_path).await.unwrap());
+        let wal_ref = Arc::clone(&wal);
+        let ctx = Arc::new(tokio::sync::Mutex::new(None));
+        (AsyncWalGraphStore::new(store, wal, ctx), wal_ref)
+    }
 }

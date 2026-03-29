@@ -1181,26 +1181,22 @@ impl GremlinTranslator {
                     LogicalOperator::MapCollect(mut map_op) => {
                         // Second .by() for group(): modify the Collect expression
                         // inside the MapCollect's inner Aggregate.
-                        if let LogicalOperator::Aggregate(ref mut agg_op) = *map_op.input {
-                            if let Some(agg) = agg_op.aggregates.first() {
-                                if matches!(agg.function, AggregateFunction::Collect) {
-                                    let original_var = match &agg.expression {
-                                        Some(LogicalExpression::Variable(v)) => v.clone(),
-                                        _ => current_var.to_string(),
-                                    };
-                                    let by_expr =
-                                        self.translate_by_modifier(by_modifier, &original_var);
-                                    let new_value_var =
-                                        crate::query::planner::common::expression_to_string(
-                                            &by_expr,
-                                        );
-                                    agg_op.aggregates[0].expression = Some(by_expr);
-                                    agg_op.aggregates[0].alias = Some(new_value_var.clone());
-                                    map_op.value_var = new_value_var;
-                                    let alias = map_op.alias.clone();
-                                    return Ok((LogicalOperator::MapCollect(map_op), Some(alias)));
-                                }
-                            }
+                        if let LogicalOperator::Aggregate(ref mut agg_op) = *map_op.input
+                            && let Some(agg) = agg_op.aggregates.first()
+                            && matches!(agg.function, AggregateFunction::Collect)
+                        {
+                            let original_var = match &agg.expression {
+                                Some(LogicalExpression::Variable(v)) => v.clone(),
+                                _ => current_var.to_string(),
+                            };
+                            let by_expr = self.translate_by_modifier(by_modifier, &original_var);
+                            let new_value_var =
+                                crate::query::planner::common::expression_to_string(&by_expr);
+                            agg_op.aggregates[0].expression = Some(by_expr);
+                            agg_op.aggregates[0].alias = Some(new_value_var.clone());
+                            map_op.value_var = new_value_var;
+                            let alias = map_op.alias.clone();
+                            return Ok((LogicalOperator::MapCollect(map_op), Some(alias)));
                         }
                         // Not a group second .by(), pass through
                         Ok((LogicalOperator::MapCollect(map_op), None))

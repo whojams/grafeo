@@ -2,7 +2,7 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.29] - 2026-03-28
+## [0.5.29] - Unreleased
 
 Query engine correctness improvements and unified declarative test suite.
 

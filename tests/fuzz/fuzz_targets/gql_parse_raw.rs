@@ -3,7 +3,7 @@
 //! Feeds arbitrary byte sequences to the parser. Tests that the parser
 //! never panics, even on completely invalid input.
 //!
-//! Run: cargo +nightly fuzz run gql_parse_raw
+//! Run: cargo +nightly fuzz run gql_parse_raw --fuzz-dir tests/fuzz
 
 #![no_main]
 

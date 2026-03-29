@@ -1,5 +1,6 @@
 //! Async WAL implementation using tokio for non-blocking I/O.
 
+use super::record::WalEntry;
 use super::{DurabilityMode, WalConfig, WalRecord};
 use grafeo_common::types::{EpochId, TransactionId};
 use grafeo_common::utils::error::{Error, Result};
@@ -104,6 +105,22 @@ impl AsyncWalManager {
     ///
     /// Returns an error if the record cannot be written.
     pub async fn log(&self, record: &WalRecord) -> Result<()> {
+        let data = bincode::serde::encode_to_vec(record, bincode::config::standard())
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let force_sync = record.requires_sync();
+        self.write_frame(&data, force_sync).await
+    }
+
+    /// Writes a pre-serialized frame (length-prefix + data + CRC32) to the WAL.
+    ///
+    /// This is the low-level write method used by both [`log`](Self::log) and
+    /// [`AsyncTypedWal::log`](super::AsyncTypedWal::log). Callers are responsible
+    /// for serializing the record and determining whether to force a sync.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the write or durability handling fails.
+    pub async fn write_frame(&self, data: &[u8], force_sync: bool) -> Result<()> {
         self.ensure_active_log().await?;
 
         let mut guard = self.active_log.lock().await;
@@ -111,19 +128,15 @@ impl AsyncWalManager {
             .as_mut()
             .ok_or_else(|| Error::Internal("WAL writer not available".to_string()))?;
 
-        // Serialize the record
-        let data = bincode::serde::encode_to_vec(record, bincode::config::standard())
-            .map_err(|e| Error::Serialization(e.to_string()))?;
-
         // Write length prefix
         let len = data.len() as u32;
         log_file.writer.write_all(&len.to_le_bytes()).await?;
 
         // Write data
-        log_file.writer.write_all(&data).await?;
+        log_file.writer.write_all(data).await?;
 
         // Write checksum
-        let checksum = crc32fast::hash(&data);
+        let checksum = crc32fast::hash(data);
         log_file.writer.write_all(&checksum.to_le_bytes()).await?;
 
         // Update size tracking
@@ -139,8 +152,7 @@ impl AsyncWalManager {
         // Handle durability mode
         match &self.config.durability {
             DurabilityMode::Sync => {
-                // Sync on every commit record
-                if matches!(record, WalRecord::TransactionCommit { .. }) {
+                if force_sync {
                     log_file.writer.flush().await?;
                     log_file.writer.get_ref().sync_all().await?;
                     self.records_since_sync.store(0, Ordering::Relaxed);
@@ -162,12 +174,9 @@ impl AsyncWalManager {
                 }
             }
             DurabilityMode::Adaptive { .. } => {
-                // Adaptive mode: just flush buffer, background thread handles sync
-                // Note: For async, consider using a tokio task-based flusher
                 log_file.writer.flush().await?;
             }
             DurabilityMode::NoSync => {
-                // Just flush buffer, no sync
                 log_file.writer.flush().await?;
             }
         }
@@ -373,6 +382,14 @@ impl AsyncWalManager {
     /// Returns the latest checkpoint epoch, if any.
     pub async fn checkpoint_epoch(&self) -> Option<EpochId> {
         *self.checkpoint_epoch.lock().await
+    }
+
+    /// Sets the checkpoint epoch.
+    ///
+    /// Used by [`AsyncTypedWal`](super::AsyncTypedWal) after logging a
+    /// type-safe checkpoint record and syncing.
+    pub async fn set_checkpoint_epoch(&self, epoch: EpochId) {
+        *self.checkpoint_epoch.lock().await = Some(epoch);
     }
 
     // === Private methods ===

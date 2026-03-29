@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-grafeo-adapters = { path = "../crates/grafeo-adapters", features = ["gql"] }
+grafeo-adapters = { path = "../../crates/grafeo-adapters", features = ["gql"] }
 
 # Prevent this crate from interfering with the workspace
 [workspace]

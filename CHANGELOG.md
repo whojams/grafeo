@@ -2,6 +2,23 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.30] - Unreleased
+
+Async storage foundation and continued test coverage.
+
+### Added
+
+- **`async-storage` feature flag**: new opt-in feature for async WAL and storage operations, included in `server` profile
+- **`AsyncTypedWal<R>`**: type-safe async WAL wrapper mirroring sync `TypedWal<R>`, with identical on-disk format for cross-recovery compatibility
+- **`AsyncLpgWal`**: type alias for `AsyncTypedWal<WalRecord>`, the async equivalent of `LpgWal`
+- **`AsyncWalManager::write_frame`**: extracted low-level frame writer enabling generic `WalEntry` types in async context
+- **`AsyncWalGraphStore`**: async decorator that logs mutations to `AsyncLpgWal` before applying to `LpgStore`, with named graph context tracking via tokio mutex
+- **`GrafeoDB::async_wal_checkpoint()`**: async WAL checkpoint via `spawn_blocking`, avoids blocking the tokio runtime during fsync
+- **`GrafeoDB::async_write_snapshot()`**: async snapshot write via `spawn_blocking` for `.grafeo` single-file format
+- **`AsyncStorageBackend` trait**: object-safe async trait for pluggable persistence backends (WAL batches, snapshots, sync), enabling community implementations for Postgres, S3, etc.
+- **`AsyncLocalBackend`**: built-in local filesystem implementation wrapping `AsyncLpgWal`
+- **`SnapshotMetadata`**: metadata type for snapshot listing in async backends
+
 ## [0.5.29] - 2026-03-29
 
 Query engine correctness improvements and unified declarative test suite.

@@ -12,12 +12,20 @@
 //! The [`mod@file`] module implements a single-file `.grafeo` format with
 //! dual-header crash safety and sidecar WAL. Gated behind `grafeo-file`.
 
+#[cfg(feature = "async-storage")]
+pub mod async_backend;
+#[cfg(feature = "async-storage")]
+pub mod async_local;
 #[cfg(feature = "grafeo-file")]
 pub mod file;
 pub mod memory;
 #[cfg(feature = "wal")]
 pub mod wal;
 
+#[cfg(feature = "async-storage")]
+pub use async_backend::{AsyncStorageBackend, SnapshotMetadata};
+#[cfg(feature = "async-storage")]
+pub use async_local::AsyncLocalBackend;
 #[cfg(feature = "grafeo-file")]
 pub use file::GrafeoFileManager;
 pub use memory::MemoryBackend;

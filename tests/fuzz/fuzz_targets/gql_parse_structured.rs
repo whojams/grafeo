@@ -4,7 +4,7 @@
 //! More effective than raw bytes because every input exercises meaningful
 //! parser paths.
 //!
-//! Run: cargo +nightly fuzz run gql_parse_structured
+//! Run: cargo +nightly fuzz run gql_parse_structured --fuzz-dir tests/fuzz
 
 #![no_main]
 

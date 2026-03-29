@@ -37,6 +37,8 @@
 //! Choose [`WalManager`] for sync code, [`AsyncWalManager`] for async.
 
 mod async_log;
+#[cfg(feature = "async-storage")]
+mod async_typed;
 mod flusher;
 mod log;
 mod record;
@@ -44,6 +46,8 @@ mod recovery;
 mod typed;
 
 pub use async_log::AsyncWalManager;
+#[cfg(feature = "async-storage")]
+pub use async_typed::{AsyncLpgWal, AsyncTypedWal};
 pub use flusher::{AdaptiveFlusher, FlusherStats};
 pub use log::{CheckpointMetadata, DurabilityMode, WalConfig, WalManager};
 pub use record::{WalEntry, WalRecord};

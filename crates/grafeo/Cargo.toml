@@ -53,7 +53,7 @@ tracing = ["grafeo-engine/tracing"]  # Observability spans and events
 # Named profiles (ecosystem-aligned)
 embedded = ["gql", "ai", "algos", "parallel", "regex", "grafeo-file"]  # Python libs, MCP, in-process (default)
 browser = ["gql", "regex-lite"]  # WASM / grafeo-web
-server = ["embedded", "languages", "storage", "rdf", "cdc", "tracing"]  # grafeo-server
+server = ["embedded", "languages", "storage", "rdf", "cdc", "async-storage", "tracing"]  # grafeo-server
 full = ["server"]  # Everything (except embed)
 
 # Platform capabilities
@@ -63,6 +63,7 @@ spill = ["grafeo-engine/spill"]
 mmap = ["grafeo-engine/mmap"]
 temporal = ["grafeo-engine/temporal"]  # Append-only versioned properties
 grafeo-file = ["grafeo-engine/grafeo-file"]  # Single-file .grafeo database format
+async-storage = ["grafeo-engine/async-storage"]  # Async WAL and storage backend
 
 # Enable platform-optimized memory allocator (10-20% faster allocations)
 jemalloc = ["tikv-jemallocator"]

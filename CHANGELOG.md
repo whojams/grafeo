@@ -2,6 +2,17 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.30] - 2026-03-29
+
+Async storage foundation and continued test coverage.
+
+### Added
+
+- **`async-storage` feature flag**: new opt-in feature for async WAL and storage operations, included in `server` profile
+- **`AsyncTypedWal<R>`**: type-safe async WAL wrapper mirroring sync `TypedWal<R>`, with identical on-disk format for cross-recovery compatibility
+- **`AsyncLpgWal`**: type alias for `AsyncTypedWal<WalRecord>`, the async equivalent of `LpgWal`
+- **`AsyncWalManager::write_frame`**: extracted low-level frame writer enabling generic `WalEntry` types in async context
+
 ## [0.5.29] - 2026-03-29
 
 Query engine correctness improvements and unified declarative test suite.

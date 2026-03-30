@@ -44,10 +44,10 @@ use grafeo_adapters::storage::wal::{
 };
 use grafeo_common::memory::buffer::{BufferManager, BufferManagerConfig};
 use grafeo_common::utils::error::Result;
-use grafeo_core::graph::GraphStoreMut;
 use grafeo_core::graph::lpg::LpgStore;
 #[cfg(feature = "rdf")]
 use grafeo_core::graph::rdf::RdfStore;
+use grafeo_core::graph::{GraphStore, GraphStoreMut, ReadOnlyGraphStore};
 
 use crate::catalog::Catalog;
 use crate::config::Config;
@@ -524,6 +524,81 @@ impl GrafeoDB {
             current_graph: RwLock::new(None),
             current_schema: RwLock::new(None),
             read_only: false,
+        })
+    }
+
+    /// Creates a database backed by a read-only [`GraphStore`].
+    ///
+    /// The store is wrapped in [`ReadOnlyGraphStore`] and the database is
+    /// set to read-only mode. Write queries (CREATE, SET, DELETE) will
+    /// return `TransactionError::ReadOnly`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use grafeo_engine::{GrafeoDB, Config};
+    /// use grafeo_core::graph::GraphStore;
+    ///
+    /// fn example(store: Arc<dyn GraphStore>) -> grafeo_common::utils::error::Result<()> {
+    ///     let db = GrafeoDB::with_read_store(store, Config::in_memory())?;
+    ///     let result = db.execute("MATCH (n) RETURN count(n)")?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`GraphStore`]: grafeo_core::graph::GraphStore
+    /// [`ReadOnlyGraphStore`]: grafeo_core::graph::ReadOnlyGraphStore
+    pub fn with_read_store(store: Arc<dyn GraphStore>, config: Config) -> Result<Self> {
+        let wrapped: Arc<dyn GraphStoreMut> = Arc::new(ReadOnlyGraphStore::new(store));
+
+        config
+            .validate()
+            .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
+
+        // The `store` field requires `Arc<LpgStore>`. We create a minimal dummy
+        // instance that is never read because `external_store` takes precedence.
+        let dummy_store = Arc::new(LpgStore::new()?);
+        let transaction_manager = Arc::new(TransactionManager::new());
+
+        let buffer_config = BufferManagerConfig {
+            budget: config.memory_limit.unwrap_or_else(|| {
+                (BufferManagerConfig::detect_system_memory() as f64 * 0.75) as usize
+            }),
+            spill_path: None,
+            ..BufferManagerConfig::default()
+        };
+        let buffer_manager = BufferManager::new(buffer_config);
+
+        let query_cache = Arc::new(QueryCache::default());
+
+        Ok(Self {
+            config,
+            store: dummy_store,
+            catalog: Arc::new(Catalog::new()),
+            #[cfg(feature = "rdf")]
+            rdf_store: Arc::new(RdfStore::new()),
+            transaction_manager,
+            buffer_manager,
+            #[cfg(feature = "wal")]
+            wal: None,
+            #[cfg(feature = "wal")]
+            wal_graph_context: Arc::new(parking_lot::Mutex::new(None)),
+            query_cache,
+            commit_counter: Arc::new(AtomicUsize::new(0)),
+            is_open: RwLock::new(true),
+            #[cfg(feature = "cdc")]
+            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
+            #[cfg(feature = "embed")]
+            embedding_models: RwLock::new(hashbrown::HashMap::new()),
+            #[cfg(feature = "grafeo-file")]
+            file_manager: None,
+            external_store: Some(wrapped),
+            #[cfg(feature = "metrics")]
+            metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
+            current_graph: RwLock::new(None),
+            current_schema: RwLock::new(None),
+            read_only: true,
         })
     }
 

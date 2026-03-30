@@ -67,7 +67,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 // Re-export the main database API
 pub use grafeo_engine::{
     AccessMode, Catalog, CatalogError, Config, ConfigError, DurabilityMode, GrafeoDB, GraphModel,
-    GraphStore, GraphStoreMut, IndexDefinition, IndexType, Session, VERSION,
+    GraphStore, GraphStoreMut, IndexDefinition, IndexType, ReadOnlyGraphStore, Session, VERSION,
 };
 
 // Re-export query results

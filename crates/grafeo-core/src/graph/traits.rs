@@ -654,6 +654,423 @@ impl GraphStore for NullGraphStore {
     }
 }
 
+/// Wraps an `Arc<dyn GraphStore>` to satisfy APIs requiring `GraphStoreMut`.
+///
+/// All [`GraphStore`] methods are forwarded to the inner store. All
+/// [`GraphStoreMut`] write methods panic with a "read-only store" message.
+/// This is a defense-in-depth safety net: the session layer checks
+/// `read_only_tx` and returns `TransactionError::ReadOnly` before any
+/// write method is reached.
+pub struct ReadOnlyGraphStore(Arc<dyn GraphStore>);
+
+impl ReadOnlyGraphStore {
+    /// Creates a new read-only wrapper around the given store.
+    pub fn new(inner: Arc<dyn GraphStore>) -> Self {
+        Self(inner)
+    }
+}
+
+impl GraphStore for ReadOnlyGraphStore {
+    fn get_node(&self, id: NodeId) -> Option<Node> {
+        self.0.get_node(id)
+    }
+
+    fn get_edge(&self, id: EdgeId) -> Option<Edge> {
+        self.0.get_edge(id)
+    }
+
+    fn get_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Node> {
+        self.0.get_node_versioned(id, epoch, transaction_id)
+    }
+
+    fn get_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Edge> {
+        self.0.get_edge_versioned(id, epoch, transaction_id)
+    }
+
+    fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+        self.0.get_node_at_epoch(id, epoch)
+    }
+
+    fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+        self.0.get_edge_at_epoch(id, epoch)
+    }
+
+    fn get_node_property(&self, id: NodeId, key: &PropertyKey) -> Option<Value> {
+        self.0.get_node_property(id, key)
+    }
+
+    fn get_edge_property(&self, id: EdgeId, key: &PropertyKey) -> Option<Value> {
+        self.0.get_edge_property(id, key)
+    }
+
+    fn get_node_property_batch(&self, ids: &[NodeId], key: &PropertyKey) -> Vec<Option<Value>> {
+        self.0.get_node_property_batch(ids, key)
+    }
+
+    fn get_nodes_properties_batch(&self, ids: &[NodeId]) -> Vec<FxHashMap<PropertyKey, Value>> {
+        self.0.get_nodes_properties_batch(ids)
+    }
+
+    fn get_nodes_properties_selective_batch(
+        &self,
+        ids: &[NodeId],
+        keys: &[PropertyKey],
+    ) -> Vec<FxHashMap<PropertyKey, Value>> {
+        self.0.get_nodes_properties_selective_batch(ids, keys)
+    }
+
+    fn get_edges_properties_selective_batch(
+        &self,
+        ids: &[EdgeId],
+        keys: &[PropertyKey],
+    ) -> Vec<FxHashMap<PropertyKey, Value>> {
+        self.0.get_edges_properties_selective_batch(ids, keys)
+    }
+
+    fn neighbors(&self, node: NodeId, direction: Direction) -> Vec<NodeId> {
+        self.0.neighbors(node, direction)
+    }
+
+    fn edges_from(&self, node: NodeId, direction: Direction) -> Vec<(NodeId, EdgeId)> {
+        self.0.edges_from(node, direction)
+    }
+
+    fn out_degree(&self, node: NodeId) -> usize {
+        self.0.out_degree(node)
+    }
+
+    fn in_degree(&self, node: NodeId) -> usize {
+        self.0.in_degree(node)
+    }
+
+    fn has_backward_adjacency(&self) -> bool {
+        self.0.has_backward_adjacency()
+    }
+
+    fn node_ids(&self) -> Vec<NodeId> {
+        self.0.node_ids()
+    }
+
+    fn all_node_ids(&self) -> Vec<NodeId> {
+        self.0.all_node_ids()
+    }
+
+    fn nodes_by_label(&self, label: &str) -> Vec<NodeId> {
+        self.0.nodes_by_label(label)
+    }
+
+    fn node_count(&self) -> usize {
+        self.0.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.0.edge_count()
+    }
+
+    fn edge_type(&self, id: EdgeId) -> Option<ArcStr> {
+        self.0.edge_type(id)
+    }
+
+    fn edge_type_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<ArcStr> {
+        self.0.edge_type_versioned(id, epoch, transaction_id)
+    }
+
+    fn has_property_index(&self, property: &str) -> bool {
+        self.0.has_property_index(property)
+    }
+
+    fn find_nodes_by_property(&self, property: &str, value: &Value) -> Vec<NodeId> {
+        self.0.find_nodes_by_property(property, value)
+    }
+
+    fn find_nodes_by_properties(&self, conditions: &[(&str, Value)]) -> Vec<NodeId> {
+        self.0.find_nodes_by_properties(conditions)
+    }
+
+    fn find_nodes_in_range(
+        &self,
+        property: &str,
+        min: Option<&Value>,
+        max: Option<&Value>,
+        min_inclusive: bool,
+        max_inclusive: bool,
+    ) -> Vec<NodeId> {
+        self.0
+            .find_nodes_in_range(property, min, max, min_inclusive, max_inclusive)
+    }
+
+    fn node_property_might_match(
+        &self,
+        property: &PropertyKey,
+        op: CompareOp,
+        value: &Value,
+    ) -> bool {
+        self.0.node_property_might_match(property, op, value)
+    }
+
+    fn edge_property_might_match(
+        &self,
+        property: &PropertyKey,
+        op: CompareOp,
+        value: &Value,
+    ) -> bool {
+        self.0.edge_property_might_match(property, op, value)
+    }
+
+    fn statistics(&self) -> Arc<Statistics> {
+        self.0.statistics()
+    }
+
+    fn estimate_label_cardinality(&self, label: &str) -> f64 {
+        self.0.estimate_label_cardinality(label)
+    }
+
+    fn estimate_avg_degree(&self, edge_type: &str, outgoing: bool) -> f64 {
+        self.0.estimate_avg_degree(edge_type, outgoing)
+    }
+
+    fn current_epoch(&self) -> EpochId {
+        self.0.current_epoch()
+    }
+
+    fn all_labels(&self) -> Vec<String> {
+        self.0.all_labels()
+    }
+
+    fn all_edge_types(&self) -> Vec<String> {
+        self.0.all_edge_types()
+    }
+
+    fn all_property_keys(&self) -> Vec<String> {
+        self.0.all_property_keys()
+    }
+
+    fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        self.0.is_node_visible_at_epoch(id, epoch)
+    }
+
+    fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.0.is_node_visible_versioned(id, epoch, transaction_id)
+    }
+
+    fn is_edge_visible_at_epoch(&self, id: EdgeId, epoch: EpochId) -> bool {
+        self.0.is_edge_visible_at_epoch(id, epoch)
+    }
+
+    fn is_edge_visible_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.0.is_edge_visible_versioned(id, epoch, transaction_id)
+    }
+
+    fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        self.0.filter_visible_node_ids(ids, epoch)
+    }
+
+    fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        self.0
+            .filter_visible_node_ids_versioned(ids, epoch, transaction_id)
+    }
+
+    fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
+        self.0.get_node_history(id)
+    }
+
+    fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
+        self.0.get_edge_history(id)
+    }
+}
+
+impl GraphStoreMut for ReadOnlyGraphStore {
+    fn create_node(&self, _labels: &[&str]) -> NodeId {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn create_node_versioned(
+        &self,
+        _labels: &[&str],
+        _epoch: EpochId,
+        _transaction_id: TransactionId,
+    ) -> NodeId {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn create_edge(&self, _src: NodeId, _dst: NodeId, _edge_type: &str) -> EdgeId {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn create_edge_versioned(
+        &self,
+        _src: NodeId,
+        _dst: NodeId,
+        _edge_type: &str,
+        _epoch: EpochId,
+        _transaction_id: TransactionId,
+    ) -> EdgeId {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn batch_create_edges(&self, _edges: &[(NodeId, NodeId, &str)]) -> Vec<EdgeId> {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn delete_node(&self, _id: NodeId) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn delete_node_versioned(
+        &self,
+        _id: NodeId,
+        _epoch: EpochId,
+        _transaction_id: TransactionId,
+    ) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn delete_node_edges(&self, _node_id: NodeId) {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn delete_edge(&self, _id: EdgeId) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn delete_edge_versioned(
+        &self,
+        _id: EdgeId,
+        _epoch: EpochId,
+        _transaction_id: TransactionId,
+    ) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn set_node_property(&self, _id: NodeId, _key: &str, _value: Value) {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn set_edge_property(&self, _id: EdgeId, _key: &str, _value: Value) {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn set_node_property_versioned(
+        &self,
+        _id: NodeId,
+        _key: &str,
+        _value: Value,
+        _transaction_id: TransactionId,
+    ) {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn set_edge_property_versioned(
+        &self,
+        _id: EdgeId,
+        _key: &str,
+        _value: Value,
+        _transaction_id: TransactionId,
+    ) {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn remove_node_property(&self, _id: NodeId, _key: &str) -> Option<Value> {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn remove_edge_property(&self, _id: EdgeId, _key: &str) -> Option<Value> {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn remove_node_property_versioned(
+        &self,
+        _id: NodeId,
+        _key: &str,
+        _transaction_id: TransactionId,
+    ) -> Option<Value> {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn remove_edge_property_versioned(
+        &self,
+        _id: EdgeId,
+        _key: &str,
+        _transaction_id: TransactionId,
+    ) -> Option<Value> {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn add_label(&self, _node_id: NodeId, _label: &str) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn remove_label(&self, _node_id: NodeId, _label: &str) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn add_label_versioned(
+        &self,
+        _node_id: NodeId,
+        _label: &str,
+        _transaction_id: TransactionId,
+    ) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn remove_label_versioned(
+        &self,
+        _node_id: NodeId,
+        _label: &str,
+        _transaction_id: TransactionId,
+    ) -> bool {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn create_node_with_props(
+        &self,
+        _labels: &[&str],
+        _properties: &[(PropertyKey, Value)],
+    ) -> NodeId {
+        panic!("read-only store: mutations are not supported");
+    }
+
+    fn create_edge_with_props(
+        &self,
+        _src: NodeId,
+        _dst: NodeId,
+        _edge_type: &str,
+        _properties: &[(PropertyKey, Value)],
+    ) -> EdgeId {
+        panic!("read-only store: mutations are not supported");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

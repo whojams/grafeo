@@ -29,10 +29,10 @@ impl CsrAdjacency {
     ///
     /// # Panics
     ///
-    /// Debug builds panic if `edges` is not sorted by source.
+    /// Panics if `edges` is not sorted by source.
     #[must_use]
     pub fn from_sorted_edges(num_nodes: usize, edges: &[(u32, u32)]) -> Self {
-        debug_assert!(
+        assert!(
             edges.windows(2).all(|w| w[0].0 <= w[1].0),
             "edges must be sorted by source"
         );

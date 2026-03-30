@@ -130,10 +130,16 @@ impl NodeTableBuilder {
 
     /// Adds an int8 quantised vector column (for embeddings).
     pub fn column_int8_vector(&mut self, name: &str, data: Vec<i8>, dimensions: u16) -> &mut Self {
-        let row_count = if dimensions == 0 {
+        let dims = dimensions as usize;
+        let row_count = if dims == 0 {
             0
         } else {
-            data.len() / dimensions as usize
+            assert!(
+                data.len().is_multiple_of(dims),
+                "Int8Vector data length {} is not a multiple of dimensions {dimensions}",
+                data.len(),
+            );
+            data.len() / dims
         };
         self.record_len(row_count);
 

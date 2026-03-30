@@ -31,7 +31,7 @@ pub fn encode_node_id(table_id: u16, offset: u64) -> NodeId {
         offset <= MAX_OFFSET,
         "offset {offset} exceeds 48-bit max {MAX_OFFSET}"
     );
-    let raw = (u64::from(table_id & 0x7FFF) << 48) | (offset & OFFSET_MASK);
+    let raw = (u64::from(table_id & MAX_TABLE_ID) << 48) | (offset & OFFSET_MASK);
     NodeId::new(raw)
 }
 
@@ -43,7 +43,7 @@ pub fn encode_node_id(table_id: u16, offset: u64) -> NodeId {
 #[must_use]
 pub fn decode_node_id(id: NodeId) -> (u16, u64) {
     let raw = id.as_u64();
-    let table_id = ((raw >> 48) & 0x7FFF) as u16;
+    let table_id = ((raw >> 48) & u64::from(MAX_TABLE_ID)) as u16;
     let offset = raw & OFFSET_MASK;
     (table_id, offset)
 }
@@ -64,7 +64,7 @@ pub fn encode_edge_id(rel_table_id: u16, csr_position: u64) -> EdgeId {
         csr_position <= MAX_OFFSET,
         "csr_position {csr_position} exceeds 48-bit max {MAX_OFFSET}"
     );
-    let raw = (u64::from(rel_table_id & 0x7FFF) << 48) | (csr_position & OFFSET_MASK);
+    let raw = (u64::from(rel_table_id & MAX_TABLE_ID) << 48) | (csr_position & OFFSET_MASK);
     EdgeId::new(raw)
 }
 
@@ -76,7 +76,7 @@ pub fn encode_edge_id(rel_table_id: u16, csr_position: u64) -> EdgeId {
 #[must_use]
 pub fn decode_edge_id(id: EdgeId) -> (u16, u64) {
     let raw = id.as_u64();
-    let rel_table_id = ((raw >> 48) & 0x7FFF) as u16;
+    let rel_table_id = ((raw >> 48) & u64::from(MAX_TABLE_ID)) as u16;
     let csr_position = raw & OFFSET_MASK;
     (rel_table_id, csr_position)
 }

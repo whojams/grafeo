@@ -286,9 +286,19 @@ impl QueryProcessor {
         // 1. Parse and translate to logical plan
         let mut logical_plan = self.translate_lpg(query, language)?;
 
-        // 2. Substitute parameters if provided
-        if let Some(params) = params {
-            substitute_params(&mut logical_plan, params)?;
+        // 2. Substitute parameters if provided (merge defaults from the plan first)
+        let has_defaults = !logical_plan.default_params.is_empty();
+        if params.is_some() || has_defaults {
+            let merged = if has_defaults {
+                let mut merged = logical_plan.default_params.clone();
+                if let Some(params) = params {
+                    merged.extend(params.iter().map(|(k, v)| (k.clone(), v.clone())));
+                }
+                merged
+            } else {
+                params.cloned().unwrap_or_default()
+            };
+            substitute_params(&mut logical_plan, &merged)?;
         }
 
         // 3. Semantic validation
@@ -459,9 +469,19 @@ impl QueryProcessor {
         // 1. Parse and translate to logical plan
         let mut logical_plan = self.translate_rdf(query, language)?;
 
-        // 2. Substitute parameters if provided
-        if let Some(params) = params {
-            substitute_params(&mut logical_plan, params)?;
+        // 2. Substitute parameters if provided (merge defaults from the plan first)
+        let has_defaults = !logical_plan.default_params.is_empty();
+        if params.is_some() || has_defaults {
+            let merged = if has_defaults {
+                let mut merged = logical_plan.default_params.clone();
+                if let Some(params) = params {
+                    merged.extend(params.iter().map(|(k, v)| (k.clone(), v.clone())));
+                }
+                merged
+            } else {
+                params.cloned().unwrap_or_default()
+            };
+            substitute_params(&mut logical_plan, &merged)?;
         }
 
         // 3. Semantic validation

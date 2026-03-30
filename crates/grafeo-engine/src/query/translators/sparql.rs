@@ -131,7 +131,21 @@ impl SparqlTranslator {
             });
         }
 
-        // Apply ORDER BY
+        // Apply projection before ORDER BY so that computed aliases
+        // (e.g. `SELECT (CONCAT(?a, ?b) AS ?full) ... ORDER BY ?full`)
+        // are available to the sort operator.
+        if !has_aggregates {
+            let projections = self.translate_projection(&select.projection)?;
+            if !projections.is_empty() {
+                plan = LogicalOperator::Project(ProjectOp {
+                    projections,
+                    input: Box::new(plan),
+                    pass_through_input: false,
+                });
+            }
+        }
+
+        // Apply ORDER BY (after projection so aliases are resolvable)
         if let Some(order_by) = &select.solution_modifiers.order_by {
             let keys = order_by
                 .iter()
@@ -148,18 +162,6 @@ impl SparqlTranslator {
                 .collect::<Result<Vec<_>>>()?;
 
             plan = wrap_sort(plan, keys);
-        }
-
-        // Apply projection before DISTINCT (so dedup operates on projected columns only)
-        if !has_aggregates {
-            let projections = self.translate_projection(&select.projection)?;
-            if !projections.is_empty() {
-                plan = LogicalOperator::Project(ProjectOp {
-                    projections,
-                    input: Box::new(plan),
-                    pass_through_input: false,
-                });
-            }
         }
 
         // Apply DISTINCT/REDUCED (after projection, before OFFSET/LIMIT)
@@ -570,23 +572,21 @@ impl SparqlTranslator {
             ast::GraphPattern::Basic(triples) => self.translate_basic_pattern(triples),
 
             ast::GraphPattern::Group(patterns) => {
-                // Categorize patterns by type for proper composition
-                let mut basic_patterns: Vec<&ast::GraphPattern> = Vec::new();
+                // Process patterns in document order so that BIND, OPTIONAL,
+                // MINUS, etc. see the variables introduced by preceding
+                // patterns. FILTER and FILTER NOT EXISTS/EXISTS scope over
+                // the entire group (SPARQL spec), so they are collected and
+                // applied last.
                 let mut filter_exprs: Vec<&ast::Expression> = Vec::new();
-                let mut optional_patterns: Vec<&ast::GraphPattern> = Vec::new();
-                let mut minus_patterns: Vec<&ast::GraphPattern> = Vec::new();
-                let mut bind_patterns: Vec<(&ast::Expression, &String)> = Vec::new();
-
-                // Track NOT EXISTS / EXISTS patterns for join-level handling
                 let mut not_exists_patterns: Vec<&ast::GraphPattern> = Vec::new();
                 let mut exists_patterns: Vec<&ast::GraphPattern> = Vec::new();
+
+                let mut plan = LogicalOperator::Empty;
 
                 for p in patterns {
                     match p {
                         ast::GraphPattern::Filter(expr) => {
-                            // Extract FILTER NOT EXISTS / FILTER EXISTS into join
-                            // operations instead of filter predicates, since the
-                            // physical filter does not support subquery evaluation.
+                            // Collect filters for group-level application
                             match expr {
                                 ast::Expression::NotExists(inner) => {
                                     not_exists_patterns.push(inner);
@@ -597,59 +597,46 @@ impl SparqlTranslator {
                                 _ => filter_exprs.push(expr),
                             }
                         }
-                        ast::GraphPattern::Optional(inner) => optional_patterns.push(inner),
-                        ast::GraphPattern::Minus(inner) => minus_patterns.push(inner),
                         ast::GraphPattern::Bind {
                             expression,
                             variable,
-                        } => bind_patterns.push((expression, variable)),
-                        _ => basic_patterns.push(p),
+                        } => {
+                            let expr = self.translate_expression(expression)?;
+                            plan = LogicalOperator::Bind(BindOp {
+                                expression: expr,
+                                variable: variable.clone(),
+                                input: Box::new(plan),
+                            });
+                        }
+                        ast::GraphPattern::Optional(inner) => {
+                            let inner_plan = self.translate_graph_pattern(inner)?;
+                            if matches!(plan, LogicalOperator::Empty) {
+                                plan = inner_plan;
+                            } else {
+                                plan = LogicalOperator::LeftJoin(LeftJoinOp {
+                                    left: Box::new(plan),
+                                    right: Box::new(inner_plan),
+                                    condition: None,
+                                });
+                            }
+                        }
+                        ast::GraphPattern::Minus(inner) => {
+                            let inner_plan = self.translate_graph_pattern(inner)?;
+                            if !matches!(plan, LogicalOperator::Empty) {
+                                plan = LogicalOperator::AntiJoin(AntiJoinOp {
+                                    left: Box::new(plan),
+                                    right: Box::new(inner_plan),
+                                });
+                            }
+                        }
+                        _ => {
+                            let p_plan = self.translate_graph_pattern(p)?;
+                            plan = self.join_patterns(plan, p_plan);
+                        }
                     }
                 }
 
-                // 1. Translate and join basic/required patterns
-                let mut plan = LogicalOperator::Empty;
-                for p in basic_patterns {
-                    let p_plan = self.translate_graph_pattern(p)?;
-                    plan = self.join_patterns(plan, p_plan);
-                }
-
-                // 2. Apply BIND expressions (adds computed columns)
-                for (expression, variable) in bind_patterns {
-                    let expr = self.translate_expression(expression)?;
-                    plan = LogicalOperator::Bind(BindOp {
-                        expression: expr,
-                        variable: variable.clone(),
-                        input: Box::new(plan),
-                    });
-                }
-
-                // 3. Apply OPTIONAL patterns (left outer joins)
-                for inner in optional_patterns {
-                    let inner_plan = self.translate_graph_pattern(inner)?;
-                    if matches!(plan, LogicalOperator::Empty) {
-                        plan = inner_plan;
-                    } else {
-                        plan = LogicalOperator::LeftJoin(LeftJoinOp {
-                            left: Box::new(plan),
-                            right: Box::new(inner_plan),
-                            condition: None,
-                        });
-                    }
-                }
-
-                // 4. Apply MINUS patterns (anti joins)
-                for inner in minus_patterns {
-                    let inner_plan = self.translate_graph_pattern(inner)?;
-                    if !matches!(plan, LogicalOperator::Empty) {
-                        plan = LogicalOperator::AntiJoin(AntiJoinOp {
-                            left: Box::new(plan),
-                            right: Box::new(inner_plan),
-                        });
-                    }
-                }
-
-                // 4b. Apply FILTER NOT EXISTS as anti joins
+                // Apply FILTER NOT EXISTS as anti joins
                 for inner in not_exists_patterns {
                     let inner_plan = self.translate_graph_pattern(inner)?;
                     if !matches!(plan, LogicalOperator::Empty) {
@@ -1735,36 +1722,8 @@ impl SparqlTranslator {
 
         let mut branches = Vec::new();
 
-        // 0-hop: reflexive matches from subjects of the predicate
-        let fresh_obj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
-        let pred = self.translate_property_path(inner_path)?;
-        let subj_scan = LogicalOperator::TripleScan(TripleScanOp {
-            subject: subject.clone(),
-            predicate: pred,
-            object: fresh_obj,
-            graph: graph.clone(),
-            input: None,
-        });
-        let subj_reflexive = self.project_reflexive(&subject, &object, subj_scan)?;
-        branches.push(subj_reflexive);
-
-        // 0-hop: reflexive matches from objects of the predicate.
-        // Only needed when the subject is a variable (unbound). When the subject is
-        // a fixed term (IRI/Literal), the subject reflexive branch already handles
-        // the 0-hop case, and this branch would produce spurious matches.
-        if matches!(&subject, TripleComponent::Variable(_)) {
-            let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
-            let pred2 = self.translate_property_path(inner_path)?;
-            let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
-                subject: fresh_subj,
-                predicate: pred2,
-                object: object.clone(),
-                graph: graph.clone(),
-                input: None,
-            });
-            let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
-            branches.push(obj_reflexive);
-        }
+        // 0-hop reflexive branches
+        self.add_reflexive_branches(&subject, &object, inner_path, &graph, &mut branches)?;
 
         // 1+ hops: same as OneOrMore
         for depth in 1..=MAX_DEPTH {
@@ -1793,22 +1752,50 @@ impl SparqlTranslator {
 
         let mut branches = Vec::new();
 
-        // 0-hop: reflexive matches from subjects of the predicate
-        let fresh_obj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
-        let pred = self.translate_property_path(inner_path)?;
-        let subj_scan = LogicalOperator::TripleScan(TripleScanOp {
-            subject: subject.clone(),
-            predicate: pred,
-            object: fresh_obj,
-            graph: graph.clone(),
-            input: None,
-        });
-        let subj_reflexive = self.project_reflexive(&subject, &object, subj_scan)?;
-        branches.push(subj_reflexive);
+        // 0-hop reflexive branches
+        self.add_reflexive_branches(&subject, &object, inner_path, &graph, &mut branches)?;
 
-        // 0-hop: reflexive matches from objects of the predicate.
-        // Only needed when the subject is a variable (see zero_or_more for rationale).
-        if matches!(&subject, TripleComponent::Variable(_)) {
+        // 1-hop: exactly one traversal of the predicate
+        let one_hop = self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, 1)?;
+        branches.push(one_hop);
+
+        let union = LogicalOperator::Union(UnionOp { inputs: branches });
+        Ok(wrap_distinct(union))
+    }
+
+    /// Adds 0-hop reflexive branches for `ZeroOrMore` and `ZeroOrOne` paths.
+    ///
+    /// When the subject is a fixed term (IRI, literal, blank node), produces a
+    /// constant row binding that term to the object variable, which always yields
+    /// exactly one reflexive match regardless of whether any edges exist.
+    ///
+    /// When the subject is a variable, scans for nodes that participate as
+    /// subjects or objects of the predicate and produces reflexive rows from those.
+    fn add_reflexive_branches(
+        &mut self,
+        subject: &TripleComponent,
+        object: &TripleComponent,
+        inner_path: &ast::PropertyPath,
+        graph: &Option<TripleComponent>,
+        branches: &mut Vec<LogicalOperator>,
+    ) -> Result<()> {
+        if matches!(subject, TripleComponent::Variable(_)) {
+            // Subject is a variable: discover nodes via triple scans
+
+            // Reflexive matches from subjects of the predicate
+            let fresh_obj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+            let pred = self.translate_property_path(inner_path)?;
+            let subj_scan = LogicalOperator::TripleScan(TripleScanOp {
+                subject: subject.clone(),
+                predicate: pred,
+                object: fresh_obj,
+                graph: graph.clone(),
+                input: None,
+            });
+            let subj_reflexive = self.project_reflexive(subject, object, subj_scan)?;
+            branches.push(subj_reflexive);
+
+            // Reflexive matches from objects of the predicate
             let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
             let pred2 = self.translate_property_path(inner_path)?;
             let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
@@ -1818,16 +1805,24 @@ impl SparqlTranslator {
                 graph: graph.clone(),
                 input: None,
             });
-            let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
+            let obj_reflexive = self.project_reflexive_from_object(subject, object, obj_scan)?;
             branches.push(obj_reflexive);
+        } else if let TripleComponent::Variable(obj_var) = object {
+            // Subject is a fixed term (IRI, literal, blank node) and object is
+            // a variable: produce a constant reflexive row binding subject =
+            // object. This does not require any triple to exist in the store.
+            let subj_expr = self.triple_component_to_expression(subject);
+            let reflexive = LogicalOperator::Bind(BindOp {
+                expression: subj_expr,
+                variable: obj_var.clone(),
+                input: Box::new(LogicalOperator::Empty),
+            });
+            branches.push(reflexive);
         }
-
-        // 1-hop: exactly one traversal of the predicate
-        let one_hop = self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, 1)?;
-        branches.push(one_hop);
-
-        let union = LogicalOperator::Union(UnionOp { inputs: branches });
-        Ok(wrap_distinct(union))
+        // When both subject and object are fixed terms, the reflexive match is
+        // implicitly handled by the Distinct wrapper: the 1+ hop branches will
+        // include the zero-length case if subject equals object.
+        Ok(())
     }
 
     /// Translates a property path at a fixed depth (number of hops).

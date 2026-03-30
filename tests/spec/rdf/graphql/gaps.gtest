@@ -18,24 +18,22 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: variable_substitution_string
-    skip: "Variable substitution not yet wired in the GraphQL translator"
     query: |
       query GetPerson($personName: String!) {
         person(name: $personName) { name age }
       }
-    variables:
+    params:
       personName: "Alix"
     expect:
       rows:
         - [Alix, 30]
 
   - name: variable_substitution_int
-    skip: "Variable substitution not yet wired in the GraphQL translator"
     query: |
       query GetByAge($minAge: Int!) {
         person(age_gte: $minAge) { name age }
       }
-    variables:
+    params:
       minAge: 30
     expect:
       count: 3
@@ -66,7 +64,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: multiple_root_fields
-    skip: "Only the first root field is processed, subsequent root fields are ignored"
     query: |
       query {
         person { name }
@@ -130,7 +127,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: variable_with_default_value
-    skip: "Variable declarations with defaults not wired to parameter expressions"
+    skip: "RDF GraphQL translator does not support pagination (first/limit arguments)"
     query: "query($limit: Int = 2) { person(first: $limit) { name } }"
     expect:
       count: 2
@@ -140,7 +137,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: multiple_root_fields_combined
-    skip: "Only first root field executed, subsequent silently dropped"
     query: "{ person(name: \"Alix\") { name } organization { name } }"
     expect:
       count: 2

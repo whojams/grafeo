@@ -4,6 +4,7 @@
 //! and physical execution. Both GQL and Cypher queries are translated to this
 //! common representation.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use grafeo_common::types::Value;
@@ -75,6 +76,10 @@ pub struct LogicalPlan {
     pub explain: bool,
     /// When true, execute the query and return per-operator runtime metrics.
     pub profile: bool,
+    /// Default parameter values from variable declarations (e.g., GraphQL
+    /// `query($limit: Int = 2)`). The processor merges these with caller-supplied
+    /// params, giving caller values higher precedence.
+    pub default_params: HashMap<String, Value>,
 }
 
 impl LogicalPlan {
@@ -84,6 +89,7 @@ impl LogicalPlan {
             root,
             explain: false,
             profile: false,
+            default_params: HashMap::new(),
         }
     }
 
@@ -93,6 +99,7 @@ impl LogicalPlan {
             root,
             explain: true,
             profile: false,
+            default_params: HashMap::new(),
         }
     }
 
@@ -102,6 +109,7 @@ impl LogicalPlan {
             root,
             explain: false,
             profile: true,
+            default_params: HashMap::new(),
         }
     }
 }

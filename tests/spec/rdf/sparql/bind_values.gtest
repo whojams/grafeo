@@ -76,7 +76,6 @@ tests:
         - [Gus, hello]
 
   - name: bind_strlen
-    skip: "STRLEN in BIND returns empty string instead of integer length"
     setup:
       - |
         INSERT DATA {
@@ -97,7 +96,6 @@ tests:
         - [Vincent, 7]
 
   - name: bind_after_optional_with_bound_variable
-    skip: "BOUND() in BIND returns empty string instead of true/false"
     setup:
       - |
         INSERT DATA {
@@ -118,7 +116,6 @@ tests:
         - [Gus, false]
 
   - name: bind_after_optional_concat_with_unbound
-    skip: "CONCAT in BIND does not resolve OPTIONAL-bound variables"
     # When ?city is unbound, CONCAT concatenates with empty string.
     setup:
       - |

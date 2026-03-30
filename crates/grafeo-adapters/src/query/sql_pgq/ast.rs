@@ -18,10 +18,38 @@ pub use crate::query::gql::ast::{
 pub enum Statement {
     /// A `SELECT ... FROM GRAPH_TABLE(...)` query.
     Select(SelectStatement),
+    /// A set operation (UNION, INTERSECT, EXCEPT) between two SELECT queries.
+    SetOperation(SetOperationStatement),
     /// A `CREATE PROPERTY GRAPH` DDL statement.
     CreatePropertyGraph(CreatePropertyGraphStatement),
     /// A `CALL procedure(args)` statement (SQL:2003+).
     Call(CallStatement),
+}
+
+/// The kind of set operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetOperationKind {
+    /// UNION: combines results from both queries, deduplicating by default.
+    Union,
+    /// INTERSECT: returns only rows present in both queries.
+    Intersect,
+    /// EXCEPT: returns rows from the left query that are not in the right.
+    Except,
+}
+
+/// A set operation (UNION, INTERSECT, EXCEPT) between two SELECT queries.
+#[derive(Debug, Clone)]
+pub struct SetOperationStatement {
+    /// The left SELECT query.
+    pub left: SelectStatement,
+    /// The kind of set operation.
+    pub operation: SetOperationKind,
+    /// Whether ALL was specified (preserve duplicates).
+    pub all: bool,
+    /// The right SELECT query.
+    pub right: SelectStatement,
+    /// Source span.
+    pub span: Option<SourceSpan>,
 }
 
 /// A complete SQL/PGQ SELECT statement.

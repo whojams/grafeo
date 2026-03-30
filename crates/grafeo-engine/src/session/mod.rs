@@ -2775,12 +2775,22 @@ impl Session {
     /// ```
     #[cfg(feature = "graphql")]
     pub fn execute_graphql(&self, query: &str) -> Result<QueryResult> {
-        use crate::query::{Executor, binder::Binder, optimizer::Optimizer, translators::graphql};
+        use crate::query::{
+            Executor, binder::Binder, optimizer::Optimizer, processor::substitute_params,
+            translators::graphql,
+        };
 
         #[cfg(all(feature = "metrics", not(target_arch = "wasm32")))]
         let start_time = Instant::now();
 
-        let logical_plan = graphql::translate(query)?;
+        let mut logical_plan = graphql::translate(query)?;
+
+        // Substitute default parameter values from variable declarations
+        if !logical_plan.default_params.is_empty() {
+            let defaults = logical_plan.default_params.clone();
+            substitute_params(&mut logical_plan, &defaults)?;
+        }
+
         let mut binder = Binder::new();
         let _binding_context = binder.bind(&logical_plan)?;
 

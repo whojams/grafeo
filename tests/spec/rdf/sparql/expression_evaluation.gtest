@@ -74,7 +74,6 @@ tests:
         - [Vincent, vincent]
 
   - name: concat_in_select_projection
-    skip: "CONCAT-only SELECT projection: variable not found"
     setup:
       - |
         INSERT DATA {
@@ -116,7 +115,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: addition_in_projection
-    skip: "arithmetic in SELECT projection performs string concatenation instead of math"
     setup:
       - |
         INSERT DATA {
@@ -130,11 +128,10 @@ tests:
     expect:
       ordered: true
       rows:
-        - ["<http://ex.org/alix>", 90]
-        - ["<http://ex.org/gus>", 75]
+        - ["http://ex.org/alix", 90]
+        - ["http://ex.org/gus", 75]
 
   - name: multiplication_in_projection
-    skip: "expression-only SELECT projection: variable not found"
     setup:
       - |
         INSERT DATA {
@@ -159,7 +156,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: if_true_branch
-    skip: "Python runner compares IF() string result against boolean string representation"
     setup:
       - |
         INSERT DATA {
@@ -174,7 +170,6 @@ tests:
         - [yes]
 
   - name: if_false_branch
-    skip: "Python runner compares IF() string result against boolean string representation"
     setup:
       - |
         INSERT DATA {
@@ -236,7 +231,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: coalesce_returns_first_bound
-    skip: "COALESCE in BIND does not pick up OPTIONAL-bound variables"
     setup:
       - |
         INSERT DATA {
@@ -257,7 +251,6 @@ tests:
         - [Gus, Gus]
 
   - name: coalesce_with_constant_fallback
-    skip: "COALESCE in BIND does not pick up OPTIONAL-bound variables"
     setup:
       - |
         INSERT DATA {
@@ -300,7 +293,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: nested_strlen_concat
-    skip: "expression-only SELECT projection: variable not found"
     setup:
       - |
         INSERT DATA {
@@ -494,7 +486,6 @@ tests:
         - [Berlin, Berlin]
 
   - name: subtraction_in_projection
-    skip: "arithmetic in SELECT projection returns null instead of computed value"
     setup:
       - |
         INSERT DATA {
@@ -508,8 +499,8 @@ tests:
     expect:
       ordered: true
       rows:
-        - ["<http://ex.org/alix>", 85]
-        - ["<http://ex.org/gus>", 70]
+        - ["http://ex.org/alix", 85]
+        - ["http://ex.org/gus", 70]
 
   - name: coalesce_in_select_projection
     setup:

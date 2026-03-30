@@ -541,7 +541,7 @@ impl RdfPlanner {
             let mut projections: Vec<ProjectExpr> =
                 (0..columns.len()).map(ProjectExpr::Column).collect();
             let mut output_types: Vec<LogicalType> =
-                columns.iter().map(|_| LogicalType::String).collect();
+                columns.iter().map(|_| LogicalType::Any).collect();
 
             for (filter_expr, _col_name) in &expression_projections {
                 projections.push(ProjectExpr::Expression {
@@ -730,7 +730,7 @@ impl RdfPlanner {
             let mut projections: Vec<ProjectExpr> =
                 (0..input_columns.len()).map(ProjectExpr::Column).collect();
             let mut output_types: Vec<LogicalType> =
-                input_columns.iter().map(|_| LogicalType::String).collect();
+                input_columns.iter().map(|_| LogicalType::Any).collect();
 
             for (filter_expr, _col_name) in &expression_projections {
                 projections.push(ProjectExpr::Expression {
@@ -2487,7 +2487,7 @@ impl Operator for RdfBindOperator {
             if let Some(col) = input.column(col_idx) {
                 output_types.push(col.logical_type());
             } else {
-                output_types.push(LogicalType::String);
+                output_types.push(LogicalType::Any);
             }
         }
         output_types.push(LogicalType::Any);
@@ -4074,7 +4074,7 @@ fn strip_internal_columns(
     }
 
     let output_columns: Vec<String> = keep_indices.iter().map(|&i| columns[i].clone()).collect();
-    let output_types: Vec<LogicalType> = keep_indices.iter().map(|_| LogicalType::String).collect();
+    let output_types: Vec<LogicalType> = keep_indices.iter().map(|_| LogicalType::Any).collect();
 
     let projections = keep_indices
         .into_iter()
@@ -4131,9 +4131,10 @@ fn component_to_term(component: &TripleComponent) -> Option<Term> {
     }
 }
 
-/// Derives RDF schema (all String type for simplicity).
+/// Derives RDF schema (all Any type to handle mixed value types from
+/// BIND expressions, computed columns, and aggregates).
 fn derive_rdf_schema(columns: &[String]) -> Vec<LogicalType> {
-    columns.iter().map(|_| LogicalType::String).collect()
+    columns.iter().map(|_| LogicalType::Any).collect()
 }
 
 /// Quick cardinality estimate for a logical operator subtree.

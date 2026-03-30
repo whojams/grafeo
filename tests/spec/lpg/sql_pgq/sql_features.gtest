@@ -179,7 +179,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: union_two_graph_table_queries
-    skip: "UNION not yet supported in SQL/PGQ parser"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)
@@ -196,7 +195,6 @@ tests:
       count: 2
 
   - name: intersect_two_graph_table_queries
-    skip: "INTERSECT not yet supported in SQL/PGQ parser"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)
@@ -213,7 +211,6 @@ tests:
       count: 2
 
   - name: except_two_graph_table_queries
-    skip: "EXCEPT not yet supported in SQL/PGQ parser"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)

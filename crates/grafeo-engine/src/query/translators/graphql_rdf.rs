@@ -13,7 +13,7 @@
 use super::common::{VarGen, capitalize_first, graphql_directives_allow, wrap_filter};
 use crate::query::plan::{
     BinaryOp, JoinOp, JoinType, LogicalExpression, LogicalOperator, LogicalPlan, ProjectOp,
-    Projection, TripleComponent, TripleScanOp,
+    Projection, TripleComponent, TripleScanOp, UnionOp,
 };
 use grafeo_adapters::query::graphql::{self, ast};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -41,6 +41,8 @@ struct GraphQLRdfTranslator {
     namespace: String,
     /// Fragment definitions for resolution.
     fragments: HashMap<String, ast::FragmentDefinition>,
+    /// Default values from variable declarations (e.g., `query($limit: Int = 2)`).
+    variable_defaults: HashMap<String, grafeo_common::types::Value>,
 }
 
 impl GraphQLRdfTranslator {
@@ -49,6 +51,7 @@ impl GraphQLRdfTranslator {
             var_gen: VarGen::new(),
             namespace: namespace.to_string(),
             fragments: HashMap::new(),
+            variable_defaults: HashMap::new(),
         }
     }
 
@@ -84,11 +87,23 @@ impl GraphQLRdfTranslator {
             )));
         }
 
-        // Create translator with fragments
+        // Collect default values from variable declarations
+        let variable_defaults: HashMap<String, grafeo_common::types::Value> = operation
+            .variables
+            .iter()
+            .filter_map(|v| {
+                v.default_value
+                    .as_ref()
+                    .map(|dv| (v.name.clone(), dv.clone()))
+            })
+            .collect();
+
+        // Create translator with fragments and variable defaults
         let translator = GraphQLRdfTranslator {
             var_gen: VarGen::new(),
             namespace: self.namespace.clone(),
             fragments,
+            variable_defaults,
         };
 
         translator.translate_operation(operation)
@@ -104,11 +119,43 @@ impl GraphQLRdfTranslator {
             )));
         }
 
-        // Get the first field
-        let field = self.get_first_field(&op.selection_set)?;
-        let plan = self.translate_root_field(field)?;
+        // Collect all root fields from the selection set
+        let root_fields: Vec<&ast::Field> = selections
+            .iter()
+            .filter_map(|sel| {
+                if let ast::Selection::Field(field) = sel {
+                    Some(field)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        Ok(LogicalPlan::new(plan))
+        if root_fields.is_empty() {
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Syntax,
+                "No field found in selection set",
+            )));
+        }
+
+        // Translate each root field independently
+        let mut plans: Vec<LogicalOperator> = Vec::with_capacity(root_fields.len());
+        for field in &root_fields {
+            plans.push(self.translate_root_field(field)?);
+        }
+
+        // If there is only one root field, use it directly; otherwise union them
+        let root = if plans.len() == 1 {
+            plans.remove(0)
+        } else {
+            LogicalOperator::Union(UnionOp { inputs: plans })
+        };
+
+        let mut logical_plan = LogicalPlan::new(root);
+        logical_plan
+            .default_params
+            .clone_from(&self.variable_defaults);
+        Ok(logical_plan)
     }
 
     fn translate_root_field(&self, field: &ast::Field) -> Result<LogicalOperator> {
@@ -314,11 +361,15 @@ impl GraphQLRdfTranslator {
 
             plan = self.join_patterns(plan, triple);
 
-            // Add filter for the value
+            // Add filter for the value (variable refs become Parameter expressions)
+            let right = match &arg.value {
+                ast::InputValue::Variable(name) => LogicalExpression::Parameter(name.clone()),
+                other => LogicalExpression::Literal(other.to_value()),
+            };
             let filter = LogicalExpression::Binary {
                 left: Box::new(LogicalExpression::Variable(object_var)),
                 op: BinaryOp::Eq,
-                right: Box::new(LogicalExpression::Literal(arg.value.to_value())),
+                right: Box::new(right),
             };
 
             plan = wrap_filter(plan, filter);
@@ -363,18 +414,6 @@ impl GraphQLRdfTranslator {
             join_type: JoinType::Inner,
             conditions: vec![], // Shared variables are implicit join conditions
         })
-    }
-
-    fn get_first_field<'a>(&self, selection_set: &'a ast::SelectionSet) -> Result<&'a ast::Field> {
-        for selection in &selection_set.selections {
-            if let ast::Selection::Field(field) = selection {
-                return Ok(field);
-            }
-        }
-        Err(Error::Query(QueryError::new(
-            QueryErrorKind::Syntax,
-            "No field found in selection set",
-        )))
     }
 
     fn make_type_iri(&self, type_name: &str) -> String {

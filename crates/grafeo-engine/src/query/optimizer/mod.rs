@@ -244,6 +244,7 @@ impl Optimizer {
             root,
             explain: plan.explain,
             profile: plan.profile,
+            default_params: plan.default_params,
         })
     }
 

@@ -141,7 +141,6 @@ tests:
       count: 2
 
   - name: if_with_bound_check
-    skip: "BOUND() with OPTIONAL always returns true, so IF always takes the true branch"
     # IF(BOUND(?opt), ?opt, "default") to provide a fallback for unbound.
     setup:
       - |

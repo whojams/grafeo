@@ -124,6 +124,16 @@ pub enum TokenKind {
     /// END
     End,
 
+    // Set operation keywords
+    /// UNION
+    Union,
+    /// INTERSECT
+    Intersect,
+    /// EXCEPT
+    Except,
+    /// ALL
+    All,
+
     // Procedure keywords
     /// CALL
     Call,
@@ -504,6 +514,10 @@ impl<'a> Lexer<'a> {
             "KEY" => Some(TokenKind::Key),
             "REFERENCES" => Some(TokenKind::References),
             "GROUP" => Some(TokenKind::Group),
+            "UNION" => Some(TokenKind::Union),
+            "INTERSECT" => Some(TokenKind::Intersect),
+            "EXCEPT" => Some(TokenKind::Except),
+            "ALL" => Some(TokenKind::All),
             _ => None,
         }
     }

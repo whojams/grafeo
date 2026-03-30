@@ -17,21 +17,22 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: variable_in_argument_position
-    skip: "Variable references ($var) in arguments resolve to Null, not wired to parameters"
     query: "{ person(name: $name) { name age } }"
+    params:
+      name: "Alix"
     expect:
       rows:
         - [Alix, 30]
 
   - name: variable_declaration_syntax
-    skip: "Query-level variable declarations not parsed (query($name: String) syntax)"
     query: "query($name: String) { person(name: $name) { name } }"
+    params:
+      name: "Alix"
     expect:
       rows:
         - [Alix]
 
   - name: variable_in_nested_argument
-    skip: "Variable references in nested field arguments not resolved"
     query: |
       {
         person {
@@ -41,6 +42,8 @@ tests:
           }
         }
       }
+    params:
+      minAge: 30
     expect:
       count: 1
 
@@ -73,13 +76,11 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: two_root_fields_in_one_query
-    skip: "Only the first root field is executed, subsequent root fields are ignored"
     query: "{ person { name } company { name } }"
     expect:
       count: 4
 
   - name: three_root_fields
-    skip: "Multiple root fields not supported, only first selection set is processed"
     query: "{ person { name } company { name } person { age } }"
     expect:
       count: 7
@@ -131,7 +132,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: variable_with_default_value
-    skip: "Variable declarations with defaults not wired to parameter expressions"
     query: "query($limit: Int = 2) { person(first: $limit) { name } }"
     expect:
       count: 2
@@ -150,7 +150,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: multiple_root_fields_combined_results
-    skip: "Only first root field executed, subsequent silently dropped"
     query: "{ person(name: \"Alix\") { name } company { name } }"
     expect:
       count: 2

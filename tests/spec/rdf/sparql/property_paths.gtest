@@ -186,7 +186,6 @@ tests:
       count: 3
 
   - name: zero_or_more_path_no_outgoing_edges
-    skip: "zero-or-more path reflexive case not yet implemented"
     # Node has no outgoing edges for predicate, but * still returns the node itself
     setup:
       - |
@@ -282,7 +281,6 @@ tests:
       count: 2
 
   - name: zero_or_one_path_no_edge
-    skip: "zero-or-one path reflexive case not yet implemented"
     # No matching edge, still returns the start node (0-hop reflexive)
     setup:
       - |
@@ -423,7 +421,7 @@ tests:
       count: 2
 
   - name: zero_or_more_rdf_collection_traversal
-    skip: "complex path composition with rdf:rest/rdf:first not yet supported"
+    skip: "rdf:rest*/rdf:first returns duplicate items due to reflexive object-scan discovering unreachable nodes"
     # Traverse an RDF collection using rdf:rest*/rdf:first
     setup:
       - |

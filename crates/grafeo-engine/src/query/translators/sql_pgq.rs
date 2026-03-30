@@ -10,9 +10,10 @@ use super::common::{
 };
 use crate::query::plan::{
     AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CallProcedureOp,
-    CreatePropertyGraphOp, DistinctOp, ExpandDirection, ExpandOp, LeftJoinOp, LogicalExpression,
-    LogicalOperator, LogicalPlan, NodeScanOp, PathMode, ProcedureYield, PropertyGraphEdgeTable,
-    PropertyGraphNodeTable, ReturnItem, SortKey, SortOrder, UnaryOp,
+    CreatePropertyGraphOp, DistinctOp, ExceptOp, ExpandDirection, ExpandOp, IntersectOp,
+    LeftJoinOp, LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, PathMode,
+    ProcedureYield, PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, SortKey, SortOrder,
+    UnaryOp, UnionOp,
 };
 use grafeo_adapters::query::sql_pgq::{self, ast};
 use grafeo_common::types::Value;
@@ -36,9 +37,44 @@ impl SqlPgqTranslator {
     fn translate_statement(&self, stmt: &ast::Statement) -> Result<LogicalPlan> {
         match stmt {
             ast::Statement::Select(select) => self.translate_select(select),
+            ast::Statement::SetOperation(set_op) => self.translate_set_operation(set_op),
             ast::Statement::CreatePropertyGraph(cpg) => self.translate_create_property_graph(cpg),
             ast::Statement::Call(call) => self.translate_call(call),
         }
+    }
+
+    fn translate_set_operation(&self, set_op: &ast::SetOperationStatement) -> Result<LogicalPlan> {
+        let left_plan = self.translate_select(&set_op.left)?;
+        let right_plan = self.translate_select(&set_op.right)?;
+
+        let root = match set_op.operation {
+            ast::SetOperationKind::Union => {
+                let union_op = LogicalOperator::Union(UnionOp {
+                    inputs: vec![left_plan.root, right_plan.root],
+                });
+                // UNION (without ALL) deduplicates
+                if set_op.all {
+                    union_op
+                } else {
+                    LogicalOperator::Distinct(DistinctOp {
+                        input: Box::new(union_op),
+                        columns: None,
+                    })
+                }
+            }
+            ast::SetOperationKind::Intersect => LogicalOperator::Intersect(IntersectOp {
+                left: Box::new(left_plan.root),
+                right: Box::new(right_plan.root),
+                all: set_op.all,
+            }),
+            ast::SetOperationKind::Except => LogicalOperator::Except(ExceptOp {
+                left: Box::new(left_plan.root),
+                right: Box::new(right_plan.root),
+                all: set_op.all,
+            }),
+        };
+
+        Ok(LogicalPlan::new(root))
     }
 
     fn translate_select(&self, select: &ast::SelectStatement) -> Result<LogicalPlan> {

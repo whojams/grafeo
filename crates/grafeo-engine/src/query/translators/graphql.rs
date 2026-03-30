@@ -15,9 +15,9 @@ use super::common::{
     wrap_skip, wrap_sort,
 };
 use crate::query::plan::{
-    BinaryOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LogicalExpression,
+    BinaryOp, CountExpr, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LogicalExpression,
     LogicalOperator, LogicalPlan, NodeScanOp, PathMode, ReturnItem, SetPropertyOp, SortKey,
-    SortOrder,
+    SortOrder, UnionOp,
 };
 use grafeo_adapters::query::graphql::{self, ast};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -45,9 +45,9 @@ enum MutationType {
 /// Extracted special arguments from a field.
 struct ExtractedArgs<'a> {
     /// Pagination: first (limit)
-    first: Option<usize>,
+    first: Option<CountExpr>,
     /// Pagination: skip (offset)
-    skip: Option<usize>,
+    skip: Option<CountExpr>,
     /// Sort keys from orderBy
     order_by: Option<Vec<SortKey>>,
     /// Remaining filter arguments
@@ -60,6 +60,8 @@ struct GraphQLTranslator {
     var_gen: VarGen,
     /// Fragment definitions for resolution.
     fragments: HashMap<String, ast::FragmentDefinition>,
+    /// Default values from variable declarations (e.g., `query($limit: Int = 2)`).
+    variable_defaults: HashMap<String, grafeo_common::types::Value>,
 }
 
 impl GraphQLTranslator {
@@ -67,6 +69,7 @@ impl GraphQLTranslator {
         Self {
             var_gen: VarGen::new(),
             fragments: HashMap::new(),
+            variable_defaults: HashMap::new(),
         }
     }
 
@@ -94,10 +97,22 @@ impl GraphQLTranslator {
                 ))
             })?;
 
-        // Create translator with fragments
+        // Collect default values from variable declarations
+        let variable_defaults: HashMap<String, grafeo_common::types::Value> = operation
+            .variables
+            .iter()
+            .filter_map(|v| {
+                v.default_value
+                    .as_ref()
+                    .map(|dv| (v.name.clone(), dv.clone()))
+            })
+            .collect();
+
+        // Create translator with fragments and variable defaults
         let translator = GraphQLTranslator {
             var_gen: VarGen::new(),
             fragments,
+            variable_defaults,
         };
 
         translator.translate_operation(operation)
@@ -123,11 +138,43 @@ impl GraphQLTranslator {
             )));
         }
 
-        // Get the first field
-        let field = self.get_first_field(&op.selection_set)?;
-        let plan = self.translate_root_field(field)?;
+        // Collect all root fields from the selection set
+        let root_fields: Vec<&ast::Field> = selections
+            .iter()
+            .filter_map(|sel| {
+                if let ast::Selection::Field(field) = sel {
+                    Some(field)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        Ok(LogicalPlan::new(plan))
+        if root_fields.is_empty() {
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Syntax,
+                "No field found in selection set",
+            )));
+        }
+
+        // Translate each root field independently
+        let mut plans: Vec<LogicalOperator> = Vec::with_capacity(root_fields.len());
+        for field in &root_fields {
+            plans.push(self.translate_root_field(field)?);
+        }
+
+        // If there is only one root field, use it directly; otherwise union them
+        let root = if plans.len() == 1 {
+            plans.remove(0)
+        } else {
+            LogicalOperator::Union(UnionOp { inputs: plans })
+        };
+
+        let mut logical_plan = LogicalPlan::new(root);
+        logical_plan
+            .default_params
+            .clone_from(&self.variable_defaults);
+        Ok(logical_plan)
     }
 
     fn translate_mutation(&self, op: &ast::OperationDefinition) -> Result<LogicalPlan> {
@@ -172,12 +219,7 @@ impl GraphQLTranslator {
         let properties: Vec<(String, LogicalExpression)> = field
             .arguments
             .iter()
-            .map(|arg| {
-                (
-                    arg.name.clone(),
-                    LogicalExpression::Literal(arg.value.to_value()),
-                )
-            })
+            .map(|arg| (arg.name.clone(), self.input_value_to_expression(&arg.value)))
             .collect();
 
         let mut plan = LogicalOperator::CreateNode(CreateNodeOp {
@@ -252,12 +294,7 @@ impl GraphQLTranslator {
             .arguments
             .iter()
             .filter(|arg| arg.name != filter_arg_name)
-            .map(|arg| {
-                (
-                    arg.name.clone(),
-                    LogicalExpression::Literal(arg.value.to_value()),
-                )
-            })
+            .map(|arg| (arg.name.clone(), self.input_value_to_expression(&arg.value)))
             .collect();
 
         if properties.is_empty() {
@@ -422,16 +459,20 @@ impl GraphQLTranslator {
 
         for arg in args {
             match arg.name.as_str() {
-                "first" | "limit" => {
-                    if let ast::InputValue::Int(n) = &arg.value {
-                        first = Some(*n as usize);
+                "first" | "limit" => match &arg.value {
+                    ast::InputValue::Int(n) => first = Some(CountExpr::Literal(*n as usize)),
+                    ast::InputValue::Variable(name) => {
+                        first = Some(CountExpr::Parameter(name.clone()));
                     }
-                }
-                "skip" | "offset" => {
-                    if let ast::InputValue::Int(n) = &arg.value {
-                        skip = Some(*n as usize);
+                    _ => {}
+                },
+                "skip" | "offset" => match &arg.value {
+                    ast::InputValue::Int(n) => skip = Some(CountExpr::Literal(*n as usize)),
+                    ast::InputValue::Variable(name) => {
+                        skip = Some(CountExpr::Parameter(name.clone()));
                     }
-                }
+                    _ => {}
+                },
                 "orderBy" => {
                     if let ast::InputValue::Object(fields) = &arg.value {
                         let keys: Vec<SortKey> = fields
@@ -645,7 +686,7 @@ impl GraphQLTranslator {
                             variable: var.to_string(),
                             property,
                         };
-                        let val = LogicalExpression::Literal(self.input_value_to_value(value));
+                        let val = self.input_value_to_expression(value);
                         predicates.push(LogicalExpression::Binary {
                             left: Box::new(prop),
                             op,
@@ -660,7 +701,7 @@ impl GraphQLTranslator {
                     variable: var.to_string(),
                     property,
                 };
-                let value = LogicalExpression::Literal(arg.value.to_value());
+                let value = self.input_value_to_expression(&arg.value);
                 predicates.push(LogicalExpression::Binary {
                     left: Box::new(prop),
                     op,
@@ -703,9 +744,15 @@ impl GraphQLTranslator {
         (field.to_string(), BinaryOp::Eq)
     }
 
-    /// Converts an InputValue to a Value.
-    fn input_value_to_value(&self, input: &ast::InputValue) -> grafeo_common::types::Value {
-        input.to_value()
+    /// Converts an `InputValue` to a `LogicalExpression`.
+    ///
+    /// Variable references (`$name`) are translated to `LogicalExpression::Parameter`
+    /// so the executor can substitute the actual value from the parameter map.
+    fn input_value_to_expression(&self, input: &ast::InputValue) -> LogicalExpression {
+        match input {
+            ast::InputValue::Variable(name) => LogicalExpression::Parameter(name.clone()),
+            _ => LogicalExpression::Literal(input.to_value()),
+        }
     }
 
     /// Combines predicates with AND.

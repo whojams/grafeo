@@ -167,7 +167,7 @@ tests:
       }
     expect:
       rows:
-        - [yes]
+        - ["yes"]
 
   - name: if_false_branch
     setup:
@@ -181,7 +181,7 @@ tests:
       }
     expect:
       rows:
-        - [no]
+        - ["no"]
 
   - name: if_with_comparison
     setup:

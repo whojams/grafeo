@@ -186,17 +186,20 @@ class GtestItem(pytest.Item):
 
         expect = tc.expect
 
+        # Coerce params (only applied to the last query)
+        params = _coerce_params(tc.params)
+
         # Error tests
         if expect.error is not None:
-            self._run_error_test(db, language, queries, expect.error)
+            self._run_error_test(db, language, queries, expect.error, params)
             return
 
         # Execute all-but-last as fire-and-forget
         for q in queries[:-1]:
             _execute(db, language, q)
 
-        # Last query: capture result
-        result = _execute(db, language, queries[-1])
+        # Last query: capture result (with params if present)
+        result = _execute(db, language, queries[-1], params)
 
         # Column assertion (checked before value assertions)
         if expect.columns:
@@ -224,15 +227,16 @@ class GtestItem(pytest.Item):
         language: str,
         queries: List[str],
         expected_substr: str,
+        params=None,
     ) -> None:
         """Execute queries expecting the last one to raise an error."""
         # Execute all-but-last normally
         for q in queries[:-1]:
             _execute(db, language, q)
 
-        # Last query should fail
+        # Last query should fail (with params if present)
         try:
-            _execute(db, language, queries[-1])
+            _execute(db, language, queries[-1], params)
         except Exception as exc:
             assert_error(exc, expected_substr)
         else:
@@ -269,7 +273,41 @@ def _load_dataset(db, dataset_name: str) -> None:
         db.execute(trimmed)
 
 
-def _execute(db, language: str, query: str):
+def _coerce_params(raw_params: Dict[str, str]) -> Optional[Dict[str, object]]:
+    """Convert string param values to typed Python values.
+
+    Mirrors the Rust build.rs coercion order: int, float, bool, string.
+    Returns None when the params dict is empty (so callers can skip it).
+    """
+    if not raw_params:
+        return None
+    coerced: Dict[str, object] = {}
+    for key, value in raw_params.items():
+        # int first
+        try:
+            coerced[key] = int(value)
+            continue
+        except (ValueError, TypeError):
+            pass
+        # float second
+        try:
+            coerced[key] = float(value)
+            continue
+        except (ValueError, TypeError):
+            pass
+        # bool third
+        if value == "true":
+            coerced[key] = True
+            continue
+        if value == "false":
+            coerced[key] = False
+            continue
+        # fall back to string
+        coerced[key] = value
+    return coerced
+
+
+def _execute(db, language: str, query: str, params=None):
     """Execute a query in the specified language, returning the QueryResult."""
     method_name = _LANGUAGE_METHODS.get(language, "execute")
     method = getattr(db, method_name, None)
@@ -278,4 +316,6 @@ def _execute(db, language: str, query: str):
             f"grafeo build does not support language '{language}' "
             f"(no {method_name} method)"
         )
+    if params is not None:
+        return method(query, params)
     return method(query)

@@ -134,12 +134,15 @@ public class SpecTests : IDisposable
 
             Assert.True(queries.Count > 0, $"No query or statements in test '{tc.Name}'");
 
+            // Coerce params (only applied to the last query)
+            var parameters = CoerceParams(tc.Params);
+
             var expect = tc.Expect;
 
             // Error tests
             if (expect.Error is not null)
             {
-                RunErrorTest(_db, language, queries, expect.Error);
+                RunErrorTest(_db, language, queries, expect.Error, parameters);
                 return;
             }
 
@@ -147,8 +150,8 @@ public class SpecTests : IDisposable
             for (var i = 0; i < queries.Count - 1; i++)
                 ExecuteQuery(_db, language, queries[i]);
 
-            // Last query: capture result
-            var result = ExecuteQuery(_db, language, queries[^1]);
+            // Last query: capture result (with params if present)
+            var result = ExecuteQuery(_db, language, queries[^1], parameters);
 
             // Column assertion
             if (expect.Columns.Count > 0)
@@ -255,9 +258,24 @@ public class SpecTests : IDisposable
     // Query execution
     // =========================================================================
 
-    /// <summary>Execute a query in the specified language.</summary>
-    private static QueryResult ExecuteQuery(GrafeoDB db, string language, string query)
+    /// <summary>Execute a query in the specified language, optionally with parameters.</summary>
+    private static QueryResult ExecuteQuery(
+        GrafeoDB db, string language, string query,
+        Dictionary<string, object?>? parameters = null)
     {
+        // When parameters are provided, use the universal ExecuteLanguage path
+        // which supports all languages with params in a single call.
+        if (parameters is not null)
+        {
+            var lang = language switch
+            {
+                "" => "gql",
+                "sql-pgq" or "sql_pgq" => "sql",
+                _ => language,
+            };
+            return db.ExecuteLanguage(lang, query, parameters);
+        }
+
         return language switch
         {
             "gql" or "" => db.Execute(query),
@@ -281,6 +299,46 @@ public class SpecTests : IDisposable
         var result = tx.ExecuteLanguage(language, query);
         tx.Commit();
         return result;
+    }
+
+    /// <summary>
+    /// Coerce raw string parameter values to typed C# objects.
+    /// Mirrors the Rust build.rs coercion order: int, float, bool, string.
+    /// Returns null when the params dict is empty (so callers can skip it).
+    /// </summary>
+    private static Dictionary<string, object?>? CoerceParams(Dictionary<string, string> rawParams)
+    {
+        if (rawParams.Count == 0)
+            return null;
+
+        var coerced = new Dictionary<string, object?>(rawParams.Count);
+        foreach (var (key, value) in rawParams)
+        {
+            if (long.TryParse(value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var l))
+            {
+                coerced[key] = l;
+            }
+            else if (double.TryParse(value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var d))
+            {
+                coerced[key] = d;
+            }
+            else if (value == "true")
+            {
+                coerced[key] = true;
+            }
+            else if (value == "false")
+            {
+                coerced[key] = false;
+            }
+            else
+            {
+                coerced[key] = value;
+            }
+        }
+
+        return coerced;
     }
 
     /// <summary>Check if a language method exists on GrafeoDB.</summary>
@@ -316,15 +374,16 @@ public class SpecTests : IDisposable
     // =========================================================================
 
     private static void RunErrorTest(
-        GrafeoDB db, string language, List<string> queries, string expectedSubstring)
+        GrafeoDB db, string language, List<string> queries, string expectedSubstring,
+        Dictionary<string, object?>? parameters = null)
     {
         // Execute all-but-last normally
         for (var i = 0; i < queries.Count - 1; i++)
             ExecuteQuery(db, language, queries[i]);
 
-        // Last query should fail
+        // Last query should fail (with params if present)
         var ex = Assert.ThrowsAny<Exception>(() =>
-            ExecuteQuery(db, language, queries[^1]));
+            ExecuteQuery(db, language, queries[^1], parameters));
         Assert.Contains(expectedSubstring, ex.Message);
     }
 

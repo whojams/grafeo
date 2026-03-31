@@ -67,28 +67,52 @@ async function loadDataset(db, datasetName) {
   }
 }
 
+/**
+ * Coerce raw param string values to proper JS types.
+ * Mirrors the type coercion in crates/grafeo-spec-tests/build.rs.
+ */
+function coerceParams(rawParams) {
+  if (!rawParams || Object.keys(rawParams).length === 0) return undefined
+  const result = {}
+  for (const [key, val] of Object.entries(rawParams)) {
+    if (val === 'true') {
+      result[key] = true
+    } else if (val === 'false') {
+      result[key] = false
+    } else {
+      const num = Number(val)
+      if (!isNaN(num) && val.trim() !== '') {
+        result[key] = num
+      } else {
+        result[key] = val
+      }
+    }
+  }
+  return result
+}
+
 /** Execute a query in the specified language. */
-async function executeQuery(db, language, query) {
+async function executeQuery(db, language, query, params) {
   switch (language) {
     case 'gql':
     case '':
-      return db.execute(query)
+      return params ? db.execute(query, params) : db.execute(query)
     case 'cypher':
       if (!db.executeCypher) throw new Error('Cypher not available')
-      return db.executeCypher(query)
+      return params ? db.executeCypher(query, params) : db.executeCypher(query)
     case 'gremlin':
       if (!db.executeGremlin) throw new Error('Gremlin not available')
-      return db.executeGremlin(query)
+      return params ? db.executeGremlin(query, params) : db.executeGremlin(query)
     case 'graphql':
       if (!db.executeGraphql) throw new Error('GraphQL not available')
-      return db.executeGraphql(query)
+      return params ? db.executeGraphql(query, params) : db.executeGraphql(query)
     case 'sparql':
       if (!db.executeSparql) throw new Error('SPARQL not available')
-      return db.executeSparql(query)
+      return params ? db.executeSparql(query, params) : db.executeSparql(query)
     case 'sql-pgq':
     case 'sql_pgq':
       if (!db.executeSql) throw new Error('SQL/PGQ not available')
-      return db.executeSql(query)
+      return params ? db.executeSql(query, params) : db.executeSql(query)
     default:
       throw new Error(`Unsupported language: ${language}`)
   }
@@ -196,6 +220,9 @@ async function runTestCase(db, tc, language, setupLanguage) {
 
   const exp = tc.expect
 
+  // Coerce params (only applied to the final query)
+  const params = coerceParams(tc.params)
+
   // Determine queries
   const queries = tc.statements.length > 0 ? tc.statements : tc.query ? [tc.query] : []
   if (queries.length === 0) throw new Error(`No query or statements in test '${tc.name}'`)
@@ -206,7 +233,7 @@ async function runTestCase(db, tc, language, setupLanguage) {
       await executeQuery(db, language, queries[i])
     }
     try {
-      await executeQuery(db, language, queries[queries.length - 1])
+      await executeQuery(db, language, queries[queries.length - 1], params)
       throw new Error(`Expected error containing '${exp.error}' but query succeeded`)
     } catch (err) {
       if (err.message.startsWith('Expected error')) throw err
@@ -218,7 +245,8 @@ async function runTestCase(db, tc, language, setupLanguage) {
   // Execute all queries, capture last result
   let result
   for (let i = 0; i < queries.length; i++) {
-    result = await executeQuery(db, language, queries[i])
+    const isLast = i === queries.length - 1
+    result = await executeQuery(db, language, queries[i], isLast ? params : undefined)
   }
 
   // Column assertion (checked before value assertions)

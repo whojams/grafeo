@@ -18,7 +18,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: variable_substitution_string
-    skip: "binding spec runners do not pass params to query execution"
     query: |
       query GetPerson($personName: String!) {
         person(name: $personName) { name age }
@@ -30,7 +29,6 @@ tests:
         - [Alix, 30]
 
   - name: variable_substitution_int
-    skip: "binding spec runners do not pass params to query execution"
     query: |
       query GetByAge($minAge: Int!) {
         person(age_gte: $minAge) { name age }

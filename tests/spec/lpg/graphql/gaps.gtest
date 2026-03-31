@@ -17,7 +17,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: variable_in_argument_position
-    skip: "binding spec runners do not pass params to query execution"
     query: "{ person(name: $name) { name age } }"
     params:
       name: "Alix"
@@ -26,7 +25,6 @@ tests:
         - [Alix, 30]
 
   - name: variable_declaration_syntax
-    skip: "binding spec runners do not pass params to query execution"
     query: "query($name: String) { person(name: $name) { name } }"
     params:
       name: "Alix"
@@ -35,7 +33,6 @@ tests:
         - [Alix]
 
   - name: variable_in_nested_argument
-    skip: "binding spec runners do not pass params to query execution"
     query: |
       {
         person {

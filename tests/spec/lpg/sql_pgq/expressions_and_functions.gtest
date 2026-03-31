@@ -811,7 +811,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: param_string_in_where
-    skip: "binding spec runners do not pass params to query execution"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)
@@ -825,7 +824,6 @@ tests:
         - [Alix, 30]
 
   - name: param_integer_in_where
-    skip: "binding spec runners do not pass params to query execution"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)
@@ -840,7 +838,6 @@ tests:
         - [Vincent, 35]
 
   - name: param_multiple_in_where
-    skip: "binding spec runners do not pass params to query execution"
     query: |
       SELECT * FROM GRAPH_TABLE (
         MATCH (n:Person)

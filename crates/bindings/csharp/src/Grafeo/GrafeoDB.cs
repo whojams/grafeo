@@ -209,6 +209,23 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public Task<QueryResult> ExecuteSqlAsync(string query, CancellationToken ct = default)
         => ExecuteLanguageAsync(NativeMethods.grafeo_execute_sql, query, ct);
 
+    /// <summary>
+    /// Execute a query in any supported language, optionally with parameters.
+    /// </summary>
+    /// <param name="language">Query language: "gql", "cypher", "gremlin", "graphql", "sparql", "sql", etc.</param>
+    /// <param name="query">The query string.</param>
+    /// <param name="parameters">Optional typed parameters to bind.</param>
+    public QueryResult ExecuteLanguage(
+        string language, string query, Dictionary<string, object?>? parameters = null)
+    {
+        ThrowIfDisposed();
+        string? paramsJson = parameters is not null ? ValueConverter.EncodeParams(parameters) : null;
+        var resultPtr = NativeMethods.grafeo_execute_language(Handle, language, query, paramsJson);
+        if (resultPtr == nint.Zero)
+            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+        return BuildResult(resultPtr);
+    }
+
     // =========================================================================
     // Transactions
     // =========================================================================

@@ -288,13 +288,13 @@ def _coerce_params(raw_params: Dict[str, str]) -> Optional[Dict[str, object]]:
             coerced[key] = int(value)
             continue
         except (ValueError, TypeError):
-            pass
+            pass  # not an int, try next coercion type
         # float second
         try:
             coerced[key] = float(value)
             continue
         except (ValueError, TypeError):
-            pass
+            pass  # not a float, try next coercion type
         # bool third
         if value == "true":
             coerced[key] = True

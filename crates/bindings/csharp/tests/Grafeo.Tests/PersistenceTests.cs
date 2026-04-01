@@ -9,7 +9,10 @@ public sealed class PersistenceTests
     {
         var dir = Path.Combine(Path.GetTempPath(), $"grafeo-csharp-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        return Path.Combine(dir, Path.GetFileName(name));
+        var fileName = Path.GetFileName(name);
+        if (string.IsNullOrEmpty(fileName))
+            fileName = "db.grafeo";
+        return Path.Combine(dir, fileName);
     }
 
     private static void Cleanup(string dbPath)

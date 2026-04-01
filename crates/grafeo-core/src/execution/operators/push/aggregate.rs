@@ -140,19 +140,106 @@ fn hash_value(value: &Value) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
+    // Discriminant tag prevents cross-type collisions (e.g. Null vs unknown)
     match value {
         Value::Null => 0u8.hash(&mut hasher),
-        Value::Bool(b) => b.hash(&mut hasher),
-        Value::Int64(i) => i.hash(&mut hasher),
-        Value::Float64(f) => f.to_bits().hash(&mut hasher),
-        Value::String(s) => s.hash(&mut hasher),
+        Value::Bool(b) => {
+            1u8.hash(&mut hasher);
+            b.hash(&mut hasher);
+        }
+        Value::Int64(i) => {
+            2u8.hash(&mut hasher);
+            i.hash(&mut hasher);
+        }
+        Value::Float64(f) => {
+            3u8.hash(&mut hasher);
+            f.to_bits().hash(&mut hasher);
+        }
+        Value::String(s) => {
+            4u8.hash(&mut hasher);
+            s.hash(&mut hasher);
+        }
+        Value::Bytes(b) => {
+            5u8.hash(&mut hasher);
+            b.hash(&mut hasher);
+        }
+        Value::Timestamp(t) => {
+            6u8.hash(&mut hasher);
+            t.hash(&mut hasher);
+        }
+        Value::Date(d) => {
+            7u8.hash(&mut hasher);
+            d.hash(&mut hasher);
+        }
+        Value::Time(t) => {
+            8u8.hash(&mut hasher);
+            t.hash(&mut hasher);
+        }
+        Value::Duration(d) => {
+            9u8.hash(&mut hasher);
+            d.hash(&mut hasher);
+        }
+        Value::ZonedDatetime(zdt) => {
+            10u8.hash(&mut hasher);
+            zdt.hash(&mut hasher);
+        }
         Value::List(list) => {
+            11u8.hash(&mut hasher);
             list.len().hash(&mut hasher);
             for elem in list.iter() {
                 hash_value(elem).hash(&mut hasher);
             }
         }
-        _ => 0u8.hash(&mut hasher),
+        Value::Map(map) => {
+            12u8.hash(&mut hasher);
+            map.len().hash(&mut hasher);
+            // BTreeMap iterates in key order, so hashing is deterministic
+            for (k, v) in map.as_ref() {
+                k.as_str().hash(&mut hasher);
+                hash_value(v).hash(&mut hasher);
+            }
+        }
+        Value::Vector(vec) => {
+            13u8.hash(&mut hasher);
+            vec.len().hash(&mut hasher);
+            for f in vec.iter() {
+                f.to_bits().hash(&mut hasher);
+            }
+        }
+        Value::Path { nodes, edges } => {
+            14u8.hash(&mut hasher);
+            nodes.len().hash(&mut hasher);
+            for n in nodes.iter() {
+                hash_value(n).hash(&mut hasher);
+            }
+            for e in edges.iter() {
+                hash_value(e).hash(&mut hasher);
+            }
+        }
+        Value::GCounter(map) => {
+            15u8.hash(&mut hasher);
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by_key(|(k, _)| *k);
+            for (k, v) in entries {
+                k.hash(&mut hasher);
+                v.hash(&mut hasher);
+            }
+        }
+        Value::OnCounter { pos, neg } => {
+            16u8.hash(&mut hasher);
+            let mut pos_entries: Vec<_> = pos.iter().collect();
+            pos_entries.sort_by_key(|(k, _)| *k);
+            for (k, v) in pos_entries {
+                k.hash(&mut hasher);
+                v.hash(&mut hasher);
+            }
+            let mut neg_entries: Vec<_> = neg.iter().collect();
+            neg_entries.sort_by_key(|(k, _)| *k);
+            for (k, v) in neg_entries {
+                k.hash(&mut hasher);
+                v.hash(&mut hasher);
+            }
+        }
     }
     hasher.finish()
 }

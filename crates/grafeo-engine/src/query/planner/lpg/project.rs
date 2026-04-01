@@ -290,6 +290,13 @@ impl super::Planner {
                 .with_session_context(self.session_context.clone()),
             );
 
+            // RETURN materializes all outputs (PropertyAccess, NodeResolve,
+            // expressions, etc.). Register them as scalar so enclosing Apply
+            // operators do not misinterpret them as raw node/edge IDs.
+            for col in &columns {
+                self.scalar_columns.borrow_mut().insert(col.clone());
+            }
+
             Ok((operator, columns))
         } else {
             // Simple case: all return items are bare variables
@@ -313,6 +320,11 @@ impl super::Planner {
                         output_types.push(LogicalType::Any);
                     }
                 }
+            }
+
+            // RETURN materializes all outputs; register as scalar.
+            for col in &columns {
+                self.scalar_columns.borrow_mut().insert(col.clone());
             }
 
             // Skip ProjectOperator only when all projections are plain Column pass-throughs

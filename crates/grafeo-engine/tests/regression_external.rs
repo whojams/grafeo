@@ -4348,3 +4348,170 @@ mod persistence_roundtrip {
         assert_eq!(r.rows[0][0], Value::Int64(42));
     }
 }
+
+// ============================================================================
+// GROUP BY on list-valued keys (Bug 20 + Bug 24)
+// Push-based aggregator must hash lists distinctly; pull-based aggregator
+// must produce separate GroupKeyPart values for different lists.
+// ============================================================================
+
+// ============================================================================
+// ORDER BY with complex expressions should not leak synthetic columns (Bug 23)
+// ============================================================================
+
+mod order_by_synthetic_columns {
+    use super::*;
+
+    #[test]
+    fn order_by_labels_does_not_leak_expr_column() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+
+        let r = s
+            .execute("MATCH (n:Person) RETURN n.name ORDER BY labels(n)[0]")
+            .unwrap();
+
+        assert_eq!(r.row_count(), 2);
+        // Should only have the 'n.name' column, no __expr_* columns
+        assert_eq!(
+            r.columns.len(),
+            1,
+            "Expected 1 column (n.name), got {}: {:?}",
+            r.columns.len(),
+            r.columns
+        );
+        for col in &r.columns {
+            assert!(
+                !col.starts_with("__expr"),
+                "Synthetic __expr column leaked into results: {col}"
+            );
+        }
+    }
+
+    #[test]
+    fn order_by_arithmetic_does_not_leak_expr_column() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Alix', age: 30})")
+            .unwrap();
+        s.execute("INSERT (:Person {name: 'Gus', age: 25})")
+            .unwrap();
+
+        let r = s
+            .execute("MATCH (n:Person) RETURN n.name, n.age ORDER BY n.age + 1")
+            .unwrap();
+
+        assert_eq!(r.row_count(), 2);
+        assert_eq!(
+            r.columns.len(),
+            2,
+            "Expected 2 columns (n.name, n.age), got {}: {:?}",
+            r.columns.len(),
+            r.columns
+        );
+        for col in &r.columns {
+            assert!(
+                !col.starts_with("__expr"),
+                "Synthetic __expr column leaked into results: {col}"
+            );
+        }
+    }
+
+    #[test]
+    fn order_by_type_on_edges_does_not_leak() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+            .unwrap();
+
+        let r = s
+            .execute("MATCH (a:Person)-[r]->(b:Person) RETURN a.name, b.name ORDER BY type(r)")
+            .unwrap();
+
+        assert_eq!(r.row_count(), 1);
+        for col in &r.columns {
+            assert!(
+                !col.starts_with("__expr"),
+                "Synthetic __expr column leaked into results: {col}"
+            );
+        }
+    }
+}
+
+mod group_by_list_keys {
+    use super::*;
+
+    #[test]
+    fn group_by_labels_multi_label_nodes() {
+        let db = db();
+        let s = db.session();
+        // Create nodes with different label sets
+        s.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        s.execute("INSERT (:Person:Employee {name: 'Gus'})")
+            .unwrap();
+        s.execute("INSERT (:Person:Employee {name: 'Jules'})")
+            .unwrap();
+        s.execute("INSERT (:Company {name: 'GrafeoDB'})").unwrap();
+
+        let r = s
+            .execute("MATCH (n) RETURN labels(n) AS lbl, count(*) AS cnt ORDER BY cnt DESC")
+            .unwrap();
+
+        // Should produce 3 groups: [Person, Employee] (2), [Person] (1), [Company] (1)
+        assert_eq!(
+            r.row_count(),
+            3,
+            "GROUP BY labels(n) should produce 3 distinct groups, got {}: {:?}",
+            r.row_count(),
+            r.rows
+        );
+    }
+
+    #[test]
+    fn group_by_labels_single_label_nodes() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        s.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+        s.execute("INSERT (:Company {name: 'GrafeoDB'})").unwrap();
+
+        let r = s
+            .execute("MATCH (n) RETURN labels(n) AS lbl, count(*) AS cnt ORDER BY cnt DESC")
+            .unwrap();
+
+        // Should produce 2 groups: [Person] (2), [Company] (1)
+        assert_eq!(
+            r.row_count(),
+            2,
+            "GROUP BY labels(n) should produce 2 distinct groups, got {}: {:?}",
+            r.row_count(),
+            r.rows
+        );
+    }
+
+    #[test]
+    fn group_by_date_valued_property() {
+        let db = db();
+        let s = db.session();
+        s.execute("INSERT (:Event {name: 'A', day: date('2024-06-15')})")
+            .unwrap();
+        s.execute("INSERT (:Event {name: 'B', day: date('2024-06-15')})")
+            .unwrap();
+        s.execute("INSERT (:Event {name: 'C', day: date('2024-12-25')})")
+            .unwrap();
+
+        let r = s
+            .execute("MATCH (e:Event) RETURN e.day AS day, count(*) AS cnt ORDER BY cnt DESC")
+            .unwrap();
+
+        assert_eq!(
+            r.row_count(),
+            2,
+            "GROUP BY date should produce 2 distinct groups, got {}: {:?}",
+            r.row_count(),
+            r.rows
+        );
+    }
+}

@@ -2,8 +2,8 @@
 
 use super::{
     ApplyOp, ApplyOperator, DistinctOp, Error, ExceptOp, HashJoinOperator, IntersectOp, JoinOp,
-    JoinType, LeapfrogJoinOperator, LogicalExpression, LogicalOperator, MultiWayJoinOp, Operator,
-    OtherwiseOp, PhysicalJoinType, Result, UnionOp, common,
+    JoinType, LeapfrogJoinOperator, LogicalExpression, MultiWayJoinOp, Operator, OtherwiseOp,
+    PhysicalJoinType, Result, UnionOp, common,
 };
 
 impl super::Planner {
@@ -227,38 +227,12 @@ impl super::Planner {
         Ok(common::build_otherwise(left_op, right_op, columns))
     }
 
-    /// Returns true when the logical operator materializes all its output
-    /// values (via Return, Aggregate, or a nested Apply). Columns produced
-    /// by such operators are scalar and should not be treated as raw node or
-    /// edge IDs by downstream operators.
-    fn plan_materializes_output(op: &LogicalOperator) -> bool {
-        match op {
-            LogicalOperator::Return(_)
-            | LogicalOperator::Aggregate(_)
-            | LogicalOperator::Apply(_) => true,
-            LogicalOperator::Sort(s) => Self::plan_materializes_output(&s.input),
-            LogicalOperator::Limit(l) => Self::plan_materializes_output(&l.input),
-            LogicalOperator::Distinct(d) => Self::plan_materializes_output(&d.input),
-            LogicalOperator::Skip(s) => Self::plan_materializes_output(&s.input),
-            _ => false,
-        }
-    }
-
     /// Plans an APPLY (lateral join) operator.
     ///
     /// When `shared_variables` is non-empty, creates a correlated Apply that
     /// injects outer row values into the inner plan via [`ParameterState`].
     pub(super) fn plan_apply(&self, apply: &ApplyOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (outer_op, outer_columns) = self.plan_operator(&apply.input)?;
-
-        // When the input plan materializes values (e.g. a sibling CALL block
-        // with its own RETURN), register its output columns as scalar so that
-        // downstream operators do not misinterpret them as raw node/edge IDs.
-        if Self::plan_materializes_output(&apply.input) {
-            for col in &outer_columns {
-                self.scalar_columns.borrow_mut().insert(col.clone());
-            }
-        }
 
         if apply.shared_variables.is_empty() {
             // Uncorrelated Apply

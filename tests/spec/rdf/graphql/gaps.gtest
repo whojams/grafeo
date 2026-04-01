@@ -1,7 +1,7 @@
-# GraphQL implementation gaps on RDF-like data
+# GraphQL advanced features on RDF-like data
 #
-# Documents known RDF-specific limitations in the GraphQL translator.
-# All tests are skipped with reason strings explaining the gap.
+# Covers: variable substitution, directives (@skip/@include), multiple root
+# fields, aggregation, deep nesting, variable defaults, and mutation rejection.
 
 meta:
   language: graphql

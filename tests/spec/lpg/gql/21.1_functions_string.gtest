@@ -104,3 +104,60 @@ tests:
     expect:
       rows:
         - [a-b-c]
+
+  # ---------------------------------------------------------------------------
+  # LIKE pattern matching
+  # ---------------------------------------------------------------------------
+
+  - name: like_prefix_match
+    setup:
+      - "INSERT (:Person {name: 'Alix'})"
+      - "INSERT (:Person {name: 'Gus'})"
+      - "INSERT (:Person {name: 'Amsterdam'})"
+    query: "MATCH (n:Person) WHERE n.name LIKE 'A%' RETURN n.name ORDER BY n.name"
+    expect:
+      ordered: true
+      rows:
+        - [Alix]
+        - [Amsterdam]
+
+  - name: like_suffix_match
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Rotterdam'})"
+    query: "MATCH (n:City) WHERE n.name LIKE '%dam' RETURN n.name ORDER BY n.name"
+    expect:
+      ordered: true
+      rows:
+        - [Amsterdam]
+        - [Rotterdam]
+
+  - name: like_single_char_wildcard
+    setup:
+      - "INSERT (:N {v: 'bat'})"
+      - "INSERT (:N {v: 'bit'})"
+      - "INSERT (:N {v: 'bot'})"
+      - "INSERT (:N {v: 'boot'})"
+    query: "MATCH (n:N) WHERE n.v LIKE 'b_t' RETURN n.v ORDER BY n.v"
+    expect:
+      ordered: true
+      rows:
+        - [bat]
+        - [bit]
+        - [bot]
+
+  # ---------------------------------------------------------------------------
+  # LIKE with contains pattern
+  # ---------------------------------------------------------------------------
+
+  - name: like_contains_match
+    setup:
+      - "INSERT (:City {name: 'Amsterdam'})"
+      - "INSERT (:City {name: 'Berlin'})"
+      - "INSERT (:City {name: 'Barcelona'})"
+    query: "MATCH (n:City) WHERE n.name LIKE '%er%' RETURN n.name"
+    expect:
+      rows:
+        - [Amsterdam]
+        - [Berlin]

@@ -90,3 +90,80 @@ tests:
     query: RETURN rand() AS r
     expect:
       count: 1
+
+  # ---------------------------------------------------------------------------
+  # Trigonometric functions (ISO/IEC 39075:2024 Section 21.2)
+  # ---------------------------------------------------------------------------
+
+  - name: sin_returns_result
+    query: RETURN sin(1.5) AS r
+    expect:
+      count: 1
+
+  - name: cos_returns_result
+    query: RETURN cos(1.5) AS r
+    expect:
+      count: 1
+
+  - name: tan_returns_result
+    query: RETURN tan(0.5) AS r
+    expect:
+      count: 1
+
+  - name: asin_returns_result
+    query: RETURN asin(0.5) AS r
+    expect:
+      count: 1
+
+  - name: acos_returns_result
+    query: RETURN acos(0.5) AS r
+    expect:
+      count: 1
+
+  - name: atan_returns_result
+    query: RETURN atan(1.0) AS r
+    expect:
+      count: 1
+
+  - name: atan2_returns_result
+    query: RETURN atan2(1.0, 1.0) AS r
+    expect:
+      count: 1
+
+  - name: degrees_returns_result
+    query: RETURN degrees(1.5) AS r
+    expect:
+      count: 1
+
+  - name: radians_returns_result
+    query: RETURN radians(90.0) AS r
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Logarithmic functions
+  # ---------------------------------------------------------------------------
+
+  - name: log10_returns_result
+    query: RETURN log10(100.0) AS r
+    expect:
+      count: 1
+
+  - name: log2_returns_result
+    query: RETURN log2(8.0) AS r
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Power / exponentiation
+  # ---------------------------------------------------------------------------
+
+  - name: power_returns_result
+    query: RETURN 2.0 ^ 10.0 AS r
+    expect:
+      count: 1
+
+  - name: power_square_root
+    query: RETURN 9.0 ^ 0.5 AS r
+    expect:
+      count: 1

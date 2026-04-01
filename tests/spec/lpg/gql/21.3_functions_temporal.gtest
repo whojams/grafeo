@@ -122,3 +122,41 @@ tests:
     query: "MATCH (n:N) RETURN DURATION 'P2Y6M' AS d"
     expect:
       count: 1
+
+  # ---------------------------------------------------------------------------
+  # Map-based temporal construction (Section 21.3)
+  # ---------------------------------------------------------------------------
+
+  - name: date_from_map
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN date({year: 2024, month: 3, day: 31}) AS d"
+    expect:
+      rows:
+        - [2024-03-31]
+
+  - name: time_from_map
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN time({hour: 14, minute: 30, second: 0}) AS t"
+    expect:
+      count: 1
+
+  - name: datetime_from_map
+    setup:
+      - "INSERT (:N {v: 1})"
+    query: "MATCH (n:N) RETURN datetime({year: 2024, month: 3, day: 31, hour: 15, minute: 0}) AS dt"
+    expect:
+      count: 1
+
+  # ---------------------------------------------------------------------------
+  # Component extraction from stored temporal values
+  # ---------------------------------------------------------------------------
+
+  - name: year_month_day_extraction
+    setup:
+      - "INSERT (:Event {date: DATE '2024-07-20'})"
+    query: "MATCH (e:Event) RETURN year(e.date) AS y, month(e.date) AS m, day(e.date) AS d"
+    expect:
+      rows:
+        - [2024, 7, 20]

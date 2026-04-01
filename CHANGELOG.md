@@ -2,6 +2,12 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.32] - Unreleased
+
+### Fixed
+
+- **Sibling CALL block scope collision**: same-named variables in sibling `CALL` blocks no longer clobber each other; the first block's aliased output was incorrectly resolved as a node ID instead of a scalar value, returning `NULL` ([#213](https://github.com/GrafeoDB/grafeo/issues/213))
+
 ## [0.5.31] - 2026-04-01
 
 CompactStore: a read-optimized columnar graph store for memory-constrained environments. Thanks to [@temporaryfix](https://github.com/temporaryfix) for the design, prototype and implementation ([#199](https://github.com/GrafeoDB/grafeo/issues/199), [#204](https://github.com/GrafeoDB/grafeo/pull/204)). Also, all remaining syntax gaps covered by the gtest suite are now fully implemented!

@@ -943,6 +943,7 @@ impl super::GrafeoDB {
             >,
         >,
     ) -> Vec<grafeo_common::types::NodeId> {
+        #[cfg(any(feature = "vector-index", feature = "text-index"))]
         use grafeo_common::types::Value;
 
         let labels: &[&str] = &[label];

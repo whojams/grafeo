@@ -921,14 +921,9 @@ mod call_block_scope {
              CALL { MATCH (b:Person {name: 'Gus'}) RETURN b.age AS age_b } \
              RETURN age_a, age_b",
         );
-        assert!(
-            result.is_ok(),
-            "sibling CALL outputs should be accessible in outer RETURN, got: {result:?}"
-        );
-        // TODO: sibling CALL block outputs currently return Null instead of
-        // the actual values. Once the binder propagates outputs correctly:
-        //   assert_eq!(result.rows[0][0], Value::Int64(30));  // age_a
-        //   assert_eq!(result.rows[0][1], Value::Int64(25));  // age_b
+        let result = result.expect("sibling CALL outputs should be accessible in outer RETURN");
+        assert_eq!(result.rows[0][0], Value::Int64(30)); // age_a
+        assert_eq!(result.rows[0][1], Value::Int64(25)); // age_b
     }
 
     /// Internal variable `a` from CALL block 1 must not be visible in CALL block 2.
@@ -955,12 +950,7 @@ mod call_block_scope {
 
     /// Same-named variables in sibling CALL blocks should not conflict.
     /// Each block defines its own `n`, but exports under different aliases.
-    ///
-    /// Known issue: the second CALL block's internal `n` overwrites the binding
-    /// context from the first, causing person_name to resolve to NULL. This is
-    /// tracked as a binder scope isolation bug.
     #[test]
-    #[ignore = "known binder scope collision with same-named variables across sibling CALL blocks"]
     fn same_variable_name_in_sibling_calls_is_independent() {
         let db = db();
         let s = db.session();

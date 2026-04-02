@@ -41,6 +41,10 @@ Correctness hardening, Jepsen readiness, and Hybrid Logical Clock for causal con
 - **Pull-based `GroupKeyPart` catch-all**: added `Date`, `Time`, `Timestamp`, `Duration`, `ZonedDatetime`, `Bytes`, and `Map` variants so GROUP BY on temporal and map values produces correct distinct groups instead of falling through to Debug-string comparison
 - **Cypher ORDER BY zeros with relationship traversal**: `ORDER BY` on a property that duplicates a RETURN item (e.g., `RETURN caller.name AS caller ORDER BY caller.name`) no longer returns zeros; the planner now resolves to the existing projected column and uses correct types for sort pass-through columns ([#218](https://github.com/GrafeoDB/grafeo/issues/218))
 
+### Changed
+
+- **CompactStore property scans use native codec operations**: `ColumnCodec::find_eq()` and `find_in_range()` push equality and range checks into the codec's native domain (dictionary code comparison, raw u64 comparison) instead of decoding to `Value` per row. Thanks to [@temporaryfix](https://github.com/temporaryfix) for the pr/implementation ([#216](https://github.com/GrafeoDB/grafeo/pull/216))
+
 ### Internal
 
 - **SPARQL ORDER BY STR() tests tightened**: removed error-accepting fallback from tests; `NullGraphStore` is correct for SPARQL expression evaluation since RDF values are already bound in columns

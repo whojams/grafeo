@@ -3397,6 +3397,115 @@ mod order_by_aliased_property {
 }
 
 // ============================================================================
+// #218: Cypher ORDER BY returns zeros in MATCH with relationship traversal
+// ORDER BY on a property expression that duplicates a RETURN item should
+// resolve to the existing projected column, not create a broken extra
+// PropertyAccess on a non-entity column.
+// ============================================================================
+
+mod order_by_relationship_traversal_218 {
+    use super::*;
+
+    #[test]
+    fn order_by_property_matching_return_item() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (:Method {name: 'foo', qn: 'java://A:foo()'})")
+            .unwrap();
+        s.execute_cypher("CREATE (:Method {name: 'bar', qn: 'java://B:bar()'})")
+            .unwrap();
+        s.execute_cypher("CREATE (:Method {name: 'baz', qn: 'java://C:baz()'})")
+            .unwrap();
+        s.execute_cypher(
+            "MATCH (a:Method {name: 'foo'}), (b:Method {name: 'bar'}) CREATE (a)-[:CALLS]->(b)",
+        )
+        .unwrap();
+        s.execute_cypher(
+            "MATCH (a:Method {name: 'baz'}), (b:Method {name: 'bar'}) CREATE (a)-[:CALLS]->(b)",
+        )
+        .unwrap();
+
+        // Without ORDER BY: should return correct values
+        let r = s
+            .execute_cypher(
+                "MATCH (caller)-[:CALLS]->(target) \
+                 WHERE target.name = 'bar' \
+                 RETURN caller.name AS caller, caller.qn AS caller_qn",
+            )
+            .unwrap();
+        assert_eq!(r.row_count(), 2);
+        for row in &r.rows {
+            assert!(
+                matches!(&row[0], Value::String(s) if s == "foo" || s == "baz"),
+                "caller should be a string, got {:?}",
+                row[0]
+            );
+            assert!(
+                matches!(&row[1], Value::String(_)),
+                "caller_qn should be a string, got {:?}",
+                row[1]
+            );
+        }
+
+        // With ORDER BY on a property that matches a RETURN item expression:
+        // values must NOT become 0 and no extra spurious column should appear.
+        let r = s
+            .execute_cypher(
+                "MATCH (caller)-[:CALLS]->(target) \
+                 WHERE target.name = 'bar' \
+                 RETURN caller.name AS caller, caller.qn AS caller_qn \
+                 ORDER BY caller.name",
+            )
+            .unwrap();
+        assert_eq!(r.row_count(), 2);
+        assert_eq!(
+            r.columns.len(),
+            2,
+            "should have exactly 2 columns, got {:?}",
+            r.columns
+        );
+        // Sorted ascending by name: baz < foo
+        assert_eq!(r.rows[0][0], Value::String("baz".into()));
+        assert_eq!(r.rows[0][1], Value::String("java://C:baz()".into()));
+        assert_eq!(r.rows[1][0], Value::String("foo".into()));
+        assert_eq!(r.rows[1][1], Value::String("java://A:foo()".into()));
+    }
+
+    #[test]
+    fn order_by_desc_with_relationship_traversal() {
+        let db = db();
+        let s = db.session();
+        s.execute_cypher("CREATE (:Method {name: 'foo', qn: 'java://A:foo()'})")
+            .unwrap();
+        s.execute_cypher("CREATE (:Method {name: 'bar', qn: 'java://B:bar()'})")
+            .unwrap();
+        s.execute_cypher("CREATE (:Method {name: 'baz', qn: 'java://C:baz()'})")
+            .unwrap();
+        s.execute_cypher(
+            "MATCH (a:Method {name: 'foo'}), (b:Method {name: 'bar'}) CREATE (a)-[:CALLS]->(b)",
+        )
+        .unwrap();
+        s.execute_cypher(
+            "MATCH (a:Method {name: 'baz'}), (b:Method {name: 'bar'}) CREATE (a)-[:CALLS]->(b)",
+        )
+        .unwrap();
+
+        let r = s
+            .execute_cypher(
+                "MATCH (caller)-[:CALLS]->(target) \
+                 WHERE target.name = 'bar' \
+                 RETURN caller.name AS caller, caller.qn AS caller_qn \
+                 ORDER BY caller.name DESC",
+            )
+            .unwrap();
+        assert_eq!(r.row_count(), 2);
+        // Sorted descending: foo > baz
+        assert_eq!(r.rows[0][0], Value::String("foo".into()));
+        assert_eq!(r.rows[1][0], Value::String("baz".into()));
+    }
+}
+
+// ============================================================================
 // CALL subquery scope isolation
 // Inspired by Neo4j #13656 and Memgraph #3955: outer variables lost in CALL.
 // ============================================================================

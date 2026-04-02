@@ -38,6 +38,7 @@ Correctness hardening, Jepsen readiness, and Hybrid Logical Clock for causal con
 - **Sibling CALL block scope collision**: same-named variables in sibling `CALL` blocks no longer clobber each other; the first block's aliased output was incorrectly resolved as a node ID instead of a scalar value, returning `NULL` ([#213](https://github.com/GrafeoDB/grafeo/issues/213))
 - **Push-based aggregator hash collisions**: `hash_value()` now uses discriminant tags for all `Value` variants, preventing cross-type collisions in GROUP BY (e.g., `Value::Map` and `Value::Null` no longer hash identically)
 - **Pull-based `GroupKeyPart` catch-all**: added `Date`, `Time`, `Timestamp`, `Duration`, `ZonedDatetime`, `Bytes`, and `Map` variants so GROUP BY on temporal and map values produces correct distinct groups instead of falling through to Debug-string comparison
+- **Cypher ORDER BY zeros with relationship traversal**: `ORDER BY` on a property that duplicates a RETURN item (e.g., `RETURN caller.name AS caller ORDER BY caller.name`) no longer returns zeros; the planner now resolves to the existing projected column and uses correct types for sort pass-through columns ([#218](https://github.com/GrafeoDB/grafeo/issues/218))
 
 ### Internal
 

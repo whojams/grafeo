@@ -622,6 +622,30 @@ impl super::Planner {
             .map(|(i, name)| (name.clone(), i))
             .collect();
 
+        // When the sort input is a Return, some sort key expressions may
+        // already be computed by the Return under an alias. For example,
+        // RETURN caller.name AS caller ORDER BY caller.name: the property
+        // access is already materialized in column "caller". Register the
+        // sort-style name ("caller_name") so the loop below resolves to the
+        // existing column instead of adding a broken extra PropertyAccess
+        // on a non-entity column.
+        if let LogicalOperator::Return(ret) = sort.input.as_ref() {
+            for item in &ret.items {
+                if let LogicalExpression::Property { variable, property } = &item.expression {
+                    let sort_col_name = format!("{variable}_{property}");
+                    if !variable_columns.contains_key(&sort_col_name) {
+                        let output_name = item
+                            .alias
+                            .clone()
+                            .unwrap_or_else(|| expression_to_string(&item.expression));
+                        if let Some(&col_idx) = variable_columns.get(&output_name) {
+                            variable_columns.insert(sort_col_name, col_idx);
+                        }
+                    }
+                }
+            }
+        }
+
         // Collect extra projections in a single ordered list so that column
         // index assignment matches the order they are added to the ProjectOperator.
         enum SortExtraProjection {
@@ -681,11 +705,14 @@ impl super::Planner {
             let mut projections = Vec::new();
             let mut output_types = Vec::new();
 
-            // First, pass through all existing columns (use Node type to preserve node IDs
-            // for subsequent property access - nodes need VectorData::NodeId for get_node_id())
+            // Pass through existing columns with correct types. Using Any
+            // (Generic vectors) preserves all value kinds: strings, maps,
+            // node IDs, edge IDs. PropertyAccess handles Generic vectors
+            // via get_node_id()/get_edge_id() fallback paths.
+            let pass_through_types = self.derive_schema_from_columns(&input_columns);
             for (i, _) in input_columns.iter().enumerate() {
                 projections.push(ProjectExpr::Column(i));
-                output_types.push(LogicalType::Node);
+                output_types.push(pass_through_types[i].clone());
             }
 
             // Add extra projections in the same order as index assignment

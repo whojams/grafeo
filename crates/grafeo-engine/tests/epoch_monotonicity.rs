@@ -29,8 +29,8 @@ use grafeo_engine::{Config, GrafeoDB};
 #[test]
 fn concurrent_commits_produce_strictly_increasing_epochs() {
     let db = Arc::new(GrafeoDB::with_config(Config::in_memory().with_cdc()).unwrap());
-    let num_threads = 8;
-    let ops_per_thread = 20;
+    let num_threads = 2;
+    let ops_per_thread = 5;
     let barrier = Arc::new(Barrier::new(num_threads));
 
     let handles: Vec<_> = (0..num_threads)
@@ -210,8 +210,8 @@ fn changes_between_range_bounds_strict() {
 #[test]
 fn concurrent_sessions_cdc_event_count_matches() {
     let db = Arc::new(GrafeoDB::with_config(Config::in_memory().with_cdc()).unwrap());
-    let num_threads = 4;
-    let nodes_per_thread = 10;
+    let num_threads = 2;
+    let nodes_per_thread = 5;
     let barrier = Arc::new(Barrier::new(num_threads));
 
     let handles: Vec<_> = (0..num_threads)

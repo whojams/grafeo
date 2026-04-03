@@ -390,4 +390,132 @@ mod tests {
         let ts = HlcTimestamp::new(1000, 42);
         assert_eq!(format!("{ts}"), "1000.42");
     }
+
+    #[test]
+    fn debug_format() {
+        let ts = HlcTimestamp::new(500, 7);
+        let dbg = format!("{ts:?}");
+        assert!(dbg.contains("500"), "Debug should contain physical_ms");
+        assert!(dbg.contains('7'), "Debug should contain logical");
+    }
+
+    #[test]
+    fn from_u64_roundtrip() {
+        let raw: u64 = 0xDEAD_BEEF_0042;
+        let ts: HlcTimestamp = raw.into();
+        let back: u64 = ts.into();
+        assert_eq!(raw, back);
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "requires wall clock (SystemTime::now) unavailable under Miri isolation"
+    )]
+    fn update_local_wall_clock_is_newest() {
+        // Scenario: both last and received are far in the past, so wall clock wins
+        let clock = HlcClock {
+            last: AtomicU64::new(HlcTimestamp::new(1, 0).as_u64()),
+        };
+        let remote = HlcTimestamp::new(2, 3);
+        let merged = clock.update(remote);
+        // Wall clock (current time) is much larger than 2ms, so it should dominate
+        let now_ms = wall_clock_ms();
+        assert!(
+            merged.physical_ms() >= now_ms - 1,
+            "When wall clock is newest, physical should match current time"
+        );
+        assert_eq!(
+            merged.logical(),
+            0,
+            "When wall clock advances past both, logical resets to 0"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "requires wall clock (SystemTime::now) unavailable under Miri isolation"
+    )]
+    fn update_all_three_equal() {
+        // Force last and received to have the same physical time as wall clock
+        let pt = wall_clock_ms();
+        let clock = HlcClock {
+            last: AtomicU64::new(HlcTimestamp::new(pt, 5).as_u64()),
+        };
+        let remote = HlcTimestamp::new(pt, 10);
+        let merged = clock.update(remote);
+        // max(5, 10) + 1 = 11
+        assert_eq!(merged.physical_ms(), pt);
+        assert_eq!(merged.logical(), 11);
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "requires wall clock (SystemTime::now) unavailable under Miri isolation"
+    )]
+    fn update_local_hlc_ahead() {
+        // last is far in the future compared to both wall clock and remote
+        let future_pt = wall_clock_ms() + 100_000;
+        let clock = HlcClock {
+            last: AtomicU64::new(HlcTimestamp::new(future_pt, 3).as_u64()),
+        };
+        let remote = HlcTimestamp::new(1, 0); // far in the past
+        let merged = clock.update(remote);
+        assert_eq!(
+            merged.physical_ms(),
+            future_pt,
+            "Local HLC physical should dominate"
+        );
+        assert_eq!(merged.logical(), 4, "Should increment local logical by 1");
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "requires wall clock (SystemTime::now) unavailable under Miri isolation"
+    )]
+    fn update_remote_ahead() {
+        // remote is far in the future, local is current
+        let clock = HlcClock::new();
+        let future_pt = wall_clock_ms() + 200_000;
+        let remote = HlcTimestamp::new(future_pt, 7);
+        let merged = clock.update(remote);
+        assert_eq!(
+            merged.physical_ms(),
+            future_pt,
+            "Remote physical should dominate"
+        );
+        assert_eq!(merged.logical(), 8, "Should increment remote logical by 1");
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "requires wall clock (SystemTime::now) unavailable under Miri isolation"
+    )]
+    fn clock_debug_format() {
+        let clock = HlcClock::new();
+        let dbg = format!("{clock:?}");
+        assert!(dbg.starts_with("HlcClock(last="));
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "requires wall clock (SystemTime::now) unavailable under Miri isolation"
+    )]
+    fn peek_does_not_advance() {
+        let clock = HlcClock::new();
+        let a = clock.peek();
+        let b = clock.peek();
+        assert_eq!(a, b, "peek() should not advance the clock");
+    }
+
+    #[test]
+    fn default_clock() {
+        // HlcClock::default() should work (it calls new())
+        let _clock = HlcClock::default();
+    }
 }

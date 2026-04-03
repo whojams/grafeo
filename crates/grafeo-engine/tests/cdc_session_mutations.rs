@@ -298,3 +298,218 @@ fn auto_commit_insert_generates_cdc() {
         "Should contain a Create event"
     );
 }
+
+// ============================================================================
+// Edge deletion through session generates CDC
+// ============================================================================
+
+#[test]
+fn edge_deletion_through_session_generates_cdc() {
+    let db = db();
+    let session = db.session();
+    session
+        .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+        .unwrap();
+
+    // Delete the edge
+    session
+        .execute("MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) DELETE r")
+        .unwrap();
+
+    let changes = db
+        .changes_between(
+            grafeo_common::types::EpochId::new(0),
+            grafeo_common::types::EpochId::new(u64::MAX),
+        )
+        .unwrap();
+
+    let edge_deletes = changes
+        .iter()
+        .filter(|e| e.kind == ChangeKind::Delete && matches!(e.entity_id, EntityId::Edge(_)))
+        .count();
+    assert!(
+        edge_deletes >= 1,
+        "Should have at least 1 edge Delete event, got {edge_deletes}"
+    );
+}
+
+// ============================================================================
+// Property removal through session generates CDC
+// ============================================================================
+
+#[test]
+fn remove_property_through_session_generates_cdc() {
+    let db = db();
+    let session = db.session();
+    session
+        .execute("INSERT (:Person {name: 'Alix', city: 'Amsterdam'})")
+        .unwrap();
+
+    // Remove a property
+    session
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n.city = NULL")
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN id(n)")
+        .unwrap();
+    let node_id = match &result.rows[0][0] {
+        grafeo_common::types::Value::Int64(id) => grafeo_common::types::NodeId::new(*id as u64),
+        other => panic!("Expected Int64, got: {other:?}"),
+    };
+
+    let history = db.history(node_id).unwrap();
+    let update_count = history
+        .iter()
+        .filter(|e| e.kind == ChangeKind::Update)
+        .count();
+    assert!(
+        update_count >= 1,
+        "Should have at least 1 Update event for property removal, got {update_count}"
+    );
+}
+
+// ============================================================================
+// Label mutation through session generates CDC
+// ============================================================================
+
+#[test]
+fn set_label_through_session_generates_cdc() {
+    let db = db();
+    let session = db.session();
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alix'}) RETURN id(n)")
+        .unwrap();
+    let node_id = match &result.rows[0][0] {
+        grafeo_common::types::Value::Int64(id) => grafeo_common::types::NodeId::new(*id as u64),
+        other => panic!("Expected Int64, got: {other:?}"),
+    };
+
+    // Add a label
+    session
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n:Employee")
+        .unwrap();
+
+    let history = db.history(node_id).unwrap();
+    // Should have Create + at least one Update (for label and possibly SET)
+    assert!(
+        history.len() >= 2,
+        "Should have at least 2 events after label SET, got {}",
+        history.len()
+    );
+}
+
+// ============================================================================
+// Edge property mutation through session generates CDC
+// ============================================================================
+
+#[test]
+fn set_edge_property_through_session_generates_cdc() {
+    let db = db();
+    let session = db.session();
+    session
+        .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS {since: 2020}]->(:Person {name: 'Gus'})")
+        .unwrap();
+
+    // Update edge property
+    session
+        .execute(
+            "MATCH (:Person {name: 'Alix'})-[r:KNOWS]->(:Person {name: 'Gus'}) SET r.since = 2025",
+        )
+        .unwrap();
+
+    let changes = db
+        .changes_between(
+            grafeo_common::types::EpochId::new(0),
+            grafeo_common::types::EpochId::new(u64::MAX),
+        )
+        .unwrap();
+
+    let edge_updates = changes
+        .iter()
+        .filter(|e| e.kind == ChangeKind::Update && matches!(e.entity_id, EntityId::Edge(_)))
+        .count();
+    assert!(
+        edge_updates >= 1,
+        "Should have at least 1 edge Update event, got {edge_updates}"
+    );
+}
+
+// ============================================================================
+// Node deletion with edges through session
+// ============================================================================
+
+#[test]
+fn detach_delete_through_session_generates_cdc() {
+    let db = db();
+    let session = db.session();
+    session
+        .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
+        .unwrap();
+
+    // DETACH DELETE removes node and its edges
+    session
+        .execute("MATCH (n:Person {name: 'Alix'}) DETACH DELETE n")
+        .unwrap();
+
+    let changes = db
+        .changes_between(
+            grafeo_common::types::EpochId::new(0),
+            grafeo_common::types::EpochId::new(u64::MAX),
+        )
+        .unwrap();
+
+    let node_deletes = changes
+        .iter()
+        .filter(|e| e.kind == ChangeKind::Delete && matches!(e.entity_id, EntityId::Node(_)))
+        .count();
+    let edge_deletes = changes
+        .iter()
+        .filter(|e| e.kind == ChangeKind::Delete && matches!(e.entity_id, EntityId::Edge(_)))
+        .count();
+    assert!(
+        node_deletes >= 1,
+        "Should have at least 1 node Delete from DETACH DELETE, got {node_deletes}"
+    );
+    assert!(
+        edge_deletes >= 1,
+        "Should have at least 1 edge Delete from DETACH DELETE, got {edge_deletes}"
+    );
+}
+
+// ============================================================================
+// Multiple property updates in single transaction
+// ============================================================================
+
+#[test]
+fn multiple_property_updates_in_transaction_generate_cdc() {
+    let db = db();
+    let mut session = db.session();
+
+    session.begin_transaction().unwrap();
+    session
+        .execute("INSERT (:Person {name: 'Alix', age: 30})")
+        .unwrap();
+    session
+        .execute("MATCH (n:Person {name: 'Alix'}) SET n.age = 31, n.city = 'Amsterdam'")
+        .unwrap();
+    session.commit().unwrap();
+
+    let changes = db
+        .changes_between(
+            grafeo_common::types::EpochId::new(0),
+            grafeo_common::types::EpochId::new(u64::MAX),
+        )
+        .unwrap();
+
+    let update_count = changes
+        .iter()
+        .filter(|e| e.kind == ChangeKind::Update)
+        .count();
+    assert!(
+        update_count >= 1,
+        "Should have Update events for property changes, got {update_count}"
+    );
+}

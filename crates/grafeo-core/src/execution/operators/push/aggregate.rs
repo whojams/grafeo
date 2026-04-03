@@ -1023,4 +1023,231 @@ mod tests {
             }
         }
     }
+
+    // ---------------------------------------------------------------
+    // hash_value coverage for all Value variants
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn hash_value_null() {
+        let h = hash_value(&Value::Null);
+        assert_ne!(h, 0); // hasher produces non-zero for Null discriminant
+    }
+
+    #[test]
+    fn hash_value_bool() {
+        let t = hash_value(&Value::Bool(true));
+        let f = hash_value(&Value::Bool(false));
+        assert_ne!(t, f);
+    }
+
+    #[test]
+    fn hash_value_int64() {
+        let a = hash_value(&Value::Int64(42));
+        let b = hash_value(&Value::Int64(43));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_value_float64() {
+        let a = hash_value(&Value::Float64(19.88));
+        let b = hash_value(&Value::Float64(3.19));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_value_string() {
+        let a = hash_value(&Value::String("hello".into()));
+        let b = hash_value(&Value::String("world".into()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_value_bytes() {
+        let a = hash_value(&Value::Bytes(vec![1, 2, 3].into()));
+        let b = hash_value(&Value::Bytes(vec![4, 5, 6].into()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_value_list() {
+        let a = hash_value(&Value::List(vec![Value::Int64(1), Value::Int64(2)].into()));
+        let b = hash_value(&Value::List(vec![Value::Int64(3)].into()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_value_map() {
+        use grafeo_common::types::PropertyKey;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+        let mut map = BTreeMap::new();
+        map.insert(PropertyKey::new("key"), Value::Int64(42));
+        let h = hash_value(&Value::Map(Arc::new(map)));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_vector() {
+        let h = hash_value(&Value::Vector(vec![1.0, 2.0, 3.0].into()));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_path() {
+        let h = hash_value(&Value::Path {
+            nodes: vec![Value::Int64(1), Value::Int64(2)].into(),
+            edges: vec![Value::Int64(10)].into(),
+        });
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_gcounter() {
+        use std::sync::Arc;
+        let mut map = std::collections::HashMap::new();
+        map.insert("replica1".to_string(), 10u64);
+        let h = hash_value(&Value::GCounter(Arc::new(map)));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_on_counter() {
+        use std::sync::Arc;
+        let mut pos = std::collections::HashMap::new();
+        pos.insert("replica1".to_string(), 10u64);
+        let neg = std::collections::HashMap::new();
+        let h = hash_value(&Value::OnCounter {
+            pos: Arc::new(pos),
+            neg: Arc::new(neg),
+        });
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_timestamp() {
+        use grafeo_common::types::Timestamp;
+        let h = hash_value(&Value::Timestamp(Timestamp::from_micros(1_700_000_000_000)));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_date() {
+        use grafeo_common::types::Date;
+        let h = hash_value(&Value::Date(Date::from_days(19000)));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_time() {
+        use grafeo_common::types::Time;
+        let h = hash_value(&Value::Time(Time::from_hms(12, 0, 0).unwrap()));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_duration() {
+        use grafeo_common::types::Duration;
+        let h = hash_value(&Value::Duration(Duration::from_days(1)));
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_value_zoned_datetime() {
+        use grafeo_common::types::{Timestamp, ZonedDatetime};
+        let zdt =
+            ZonedDatetime::from_timestamp_offset(Timestamp::from_micros(1_700_000_000_000), 3600);
+        let h = hash_value(&Value::ZonedDatetime(zdt));
+        assert_ne!(h, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // Accumulator finalize for advanced functions (fallback to Null)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn finalize_advanced_functions_return_null() {
+        let advanced = [
+            AggregateFunction::Last,
+            AggregateFunction::Collect,
+            AggregateFunction::StdDev,
+            AggregateFunction::StdDevPop,
+            AggregateFunction::Variance,
+            AggregateFunction::VariancePop,
+            AggregateFunction::PercentileDisc,
+            AggregateFunction::PercentileCont,
+            AggregateFunction::GroupConcat,
+            AggregateFunction::Sample,
+            AggregateFunction::CovarSamp,
+            AggregateFunction::CovarPop,
+            AggregateFunction::Corr,
+            AggregateFunction::RegrSlope,
+            AggregateFunction::RegrIntercept,
+            AggregateFunction::RegrR2,
+            AggregateFunction::RegrCount,
+            AggregateFunction::RegrSxx,
+            AggregateFunction::RegrSyy,
+            AggregateFunction::RegrSxy,
+            AggregateFunction::RegrAvgx,
+            AggregateFunction::RegrAvgy,
+        ];
+
+        for func in advanced {
+            let mut acc = Accumulator::new();
+            acc.add(&Value::Int64(42));
+            let result = acc.finalize(func);
+            assert_eq!(
+                result,
+                Value::Null,
+                "Advanced function {func:?} should return Null in push accumulator"
+            );
+        }
+    }
+
+    #[test]
+    fn finalize_first_returns_first_value() {
+        let mut acc = Accumulator::new();
+        acc.add(&Value::Int64(10));
+        acc.add(&Value::Int64(20));
+        assert_eq!(acc.finalize(AggregateFunction::First), Value::Int64(10));
+    }
+
+    #[test]
+    fn finalize_avg_empty_returns_null() {
+        let mut acc = Accumulator::new();
+        assert_eq!(acc.finalize(AggregateFunction::Avg), Value::Null);
+    }
+
+    #[test]
+    fn finalize_sum_empty_returns_null() {
+        let mut acc = Accumulator::new();
+        assert_eq!(acc.finalize(AggregateFunction::Sum), Value::Null);
+    }
+
+    #[test]
+    fn finalize_min_max_empty_returns_null() {
+        let mut acc_min = Accumulator::new();
+        let mut acc_max = Accumulator::new();
+        assert_eq!(acc_min.finalize(AggregateFunction::Min), Value::Null);
+        assert_eq!(acc_max.finalize(AggregateFunction::Max), Value::Null);
+    }
+
+    #[test]
+    fn accumulator_skips_nulls() {
+        let mut acc = Accumulator::new();
+        acc.add(&Value::Null);
+        acc.add(&Value::Int64(5));
+        acc.add(&Value::Null);
+        assert_eq!(acc.count, 1);
+        assert_eq!(acc.finalize(AggregateFunction::Count), Value::Int64(1));
+    }
+
+    #[test]
+    fn test_empty_chunk_returns_ok() {
+        let mut agg = AggregatePushOperator::global(vec![AggregateExpr::count_star()]);
+        let mut sink = CollectorSink::new();
+        let empty = DataChunk::new(vec![ValueVector::new()]);
+        let result = agg.push(empty, &mut sink).unwrap();
+        assert!(result);
+    }
 }

@@ -27,7 +27,6 @@ use grafeo_engine::{Config, GrafeoDB};
 // ============================================================================
 
 #[test]
-#[ignore = "deadlock under concurrent session commits with CDC logging"]
 fn concurrent_commits_produce_strictly_increasing_epochs() {
     let db = Arc::new(GrafeoDB::with_config(Config::in_memory().with_cdc()).unwrap());
     let num_threads = 8;

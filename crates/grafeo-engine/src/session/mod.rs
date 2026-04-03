@@ -3375,13 +3375,14 @@ impl Session {
 
         // Flush buffered CDC events now that the transaction is committed.
         // All buffered events have PENDING epoch; assign the real commit_epoch.
+        // Uses record_batch to acquire the write lock once per commit.
         #[cfg(feature = "cdc")]
         if let Some(ref pending) = self.cdc_pending_events {
             let events: Vec<crate::cdc::ChangeEvent> = pending.lock().drain(..).collect();
-            for mut event in events {
-                event.epoch = commit_epoch;
-                self.cdc_log.record(event);
-            }
+            self.cdc_log.record_batch(events.into_iter().map(|mut e| {
+                e.epoch = commit_epoch;
+                e
+            }));
         }
 
         // Sync epoch for all touched graphs so that convenience lookups

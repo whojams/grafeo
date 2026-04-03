@@ -175,6 +175,14 @@ impl CdcLog {
             .push(event);
     }
 
+    /// Records a batch of change events with a single write-lock acquisition.
+    pub fn record_batch(&self, events: impl IntoIterator<Item = ChangeEvent>) {
+        let mut guard = self.events.write();
+        for event in events {
+            guard.entry(event.entity_id).or_default().push(event);
+        }
+    }
+
     /// Records a node creation.
     pub fn record_create_node(
         &self,

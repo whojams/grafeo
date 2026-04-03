@@ -275,11 +275,12 @@ jobs:
           npm install
           npx vitest run
 
-  # ── Full test matrices (gated by spec tests) ────────────────────
+  # ── Full test matrices (gated by rust-check) ────────────────────
 
-  # Rust tests
+  # Rust tests (debug, all platforms)
   rust-test:
     name: Rust Test (${{ matrix.os }})
+    needs: [rust-check]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -290,6 +291,12 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -305,13 +312,57 @@ jobs:
       # Full profile: --all-features tests every language parser, AI index,
       # RDF store, algorithms, CDC, and other optional modules together.
       # This catches integration issues across feature combinations.
+      # Spec tests are excluded here as they run in the dedicated rust-spec job.
       - name: Run tests
-        run: cargo test --all-features --workspace
+        run: cargo nextest run --all-features --workspace --exclude grafeo-spec-tests
+        env:
+          RUSTC_WRAPPER: sccache
 
-      # Full profile (release): re-runs with optimizations enabled to catch
-      # issues that only surface under release-mode inlining or overflow checks.
+      # nextest does not run doc-tests, so run them separately
+      - name: Run doc-tests
+        run: cargo test --all-features --workspace --doc
+        env:
+          RUSTC_WRAPPER: sccache
+
+  # Rust tests (release, ubuntu only)
+  # Release-mode catches issues from inlining and overflow checks.
+  # These bugs are platform-independent, so one OS is sufficient.
+  rust-test-release:
+    name: Rust Test (release)
+    needs: [rust-check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
       - name: Run tests (release)
-        run: cargo test --all-features --workspace --release
+        run: cargo nextest run --all-features --workspace --exclude grafeo-spec-tests --release
+        env:
+          RUSTC_WRAPPER: sccache
+
+      - name: Run doc-tests (release)
+        run: cargo test --all-features --workspace --doc --release
+        env:
+          RUSTC_WRAPPER: sccache
 
   # Miri undefined behavior check
   miri:

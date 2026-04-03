@@ -177,7 +177,7 @@ dotnet add package Grafeo
 ```yaml
 # pubspec.yaml
 dependencies:
-  grafeo: ^0.5.30
+  grafeo: ^0.5.32
 ```
 
 ### Python

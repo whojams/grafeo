@@ -2015,3 +2015,29 @@ fn test_order_by_desc_with_limit_multi_label() {
     assert_eq!(result.rows[1][0], Value::String("The Heist".into()));
     assert_eq!(result.rows[2][0], Value::String("The Algorithm".into()));
 }
+
+/// Test min/max on float properties.
+#[test]
+fn test_min_max_float_properties() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("INSERT (:Product {name: 'A', price: 39.99})")
+        .unwrap();
+    session
+        .execute("INSERT (:Product {name: 'B', price: 1299.99})")
+        .unwrap();
+    session
+        .execute("INSERT (:Product {name: 'C', price: 89.99})")
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (p:Product) RETURN min(p.price) AS cheapest, max(p.price) AS expensive")
+        .unwrap();
+
+    eprintln!("min/max result: {:?}", result.rows);
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Float64(39.99));
+    assert_eq!(result.rows[0][1], Value::Float64(1299.99));
+}

@@ -214,7 +214,6 @@ tests:
         - [Wireless Headphones, 89.99]
 
   - name: category_price_statistics
-    skip: "aggregate precision mismatch"
     query: |
       MATCH (p:Product)-[:IN_CATEGORY]->(c:Category)
       RETURN c.name, count(p) AS cnt, min(p.price) AS cheapest, max(p.price) AS most_expensive, avg(p.price) AS avg_price

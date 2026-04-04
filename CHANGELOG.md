@@ -31,6 +31,8 @@ GraphChallenge benchmark suite and RDF-to-LPG bridge: all five DARPA/MIT IEEE HP
 - **List `+` concatenation**: `[1, 2] + [3, 4]` returns `[1, 2, 3, 4]`
 - **Parameter substitution in multi-statement queries**: `$param` variables in `INSERT`/`SET` statements now receive values when used with `statements:` in spec tests
 - **ORDER BY + LIMIT/SKIP ordering**: SKIP and LIMIT now apply after ORDER BY in the GQL translator, fixing queries like `ORDER BY x DESC LIMIT 3` that previously truncated input before sorting
+- **MIN/MAX aggregate output type**: output schema uses `LogicalType::Any` instead of `Int64`, fixing silent type coercion that returned `0` for Float64 and Date values
+- **Cypher ORDER BY after aggregation**: entity property references (e.g. `ORDER BY o.status`) now resolve correctly after GROUP BY, matching GQL behavior
 
 ### Performance
 

@@ -97,7 +97,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: min_max_price_gql
-    skip: "min/max returns 0 for float properties"
     variants:
       gql: MATCH (p:Product) RETURN min(p.price) AS cheapest, max(p.price) AS expensive
     expect:
@@ -105,7 +104,6 @@ tests:
         - [39.99, 1299.99]
 
   - name: min_max_price_cypher
-    skip: "min/max returns 0 for float properties"
     variants:
       cypher: MATCH (p:Product) RETURN min(p.price) AS cheapest, max(p.price) AS expensive
     expect:

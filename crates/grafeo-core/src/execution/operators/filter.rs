@@ -1315,6 +1315,12 @@ impl ExpressionPredicate {
                         Some(Value::Timestamp(ts.add_duration(dur)))
                     }
                     (Value::Duration(a), Value::Duration(b)) => Some(Value::Duration(a.add(*b))),
+                    (Value::List(a), Value::List(b)) => {
+                        let mut combined = Vec::with_capacity(a.len() + b.len());
+                        combined.extend_from_slice(a);
+                        combined.extend_from_slice(b);
+                        Some(Value::List(combined.into()))
+                    }
                     _ => self.eval_arithmetic(left, right, i64::checked_add, |a, b| a + b),
                 }
             }

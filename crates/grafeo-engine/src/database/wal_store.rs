@@ -458,21 +458,23 @@ impl GraphStoreMut for WalGraphStore {
     }
 
     fn set_node_property(&self, id: NodeId, key: &str, value: Value) {
+        // Store first, WAL second: consistent lock ordering with create/delete
+        // methods to prevent ABBA deadlock between store locks and WAL locks.
+        self.inner.set_node_property(id, key, value.clone());
         self.log_with_context(&WalRecord::SetNodeProperty {
             id,
             key: key.to_string(),
-            value: value.clone(),
+            value,
         });
-        self.inner.set_node_property(id, key, value);
     }
 
     fn set_edge_property(&self, id: EdgeId, key: &str, value: Value) {
+        self.inner.set_edge_property(id, key, value.clone());
         self.log_with_context(&WalRecord::SetEdgeProperty {
             id,
             key: key.to_string(),
-            value: value.clone(),
+            value,
         });
-        self.inner.set_edge_property(id, key, value);
     }
 
     fn remove_node_property(&self, id: NodeId, key: &str) -> Option<Value> {

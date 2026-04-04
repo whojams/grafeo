@@ -1433,3 +1433,24 @@ fn test_builder_same_edge_type_different_labels_ok() {
     let outgoing = store.edges_from(a_ids[0], Direction::Outgoing);
     assert_eq!(outgoing.len(), 2);
 }
+
+/// Statistics for an edge type spanning multiple rel tables are aggregated.
+#[test]
+fn test_statistics_aggregate_multi_table_edge_type() {
+    let store = CompactStoreBuilder::new()
+        .node_table("A", |t| t.column_dict("name", &["a1", "a2"]))
+        .node_table("B", |t| t.column_dict("name", &["b1"]))
+        .node_table("C", |t| t.column_dict("name", &["c1", "c2", "c3"]))
+        .rel_table("LINK", "A", "B", |r| r.edges([(0, 0), (1, 0)]))
+        .rel_table("LINK", "A", "C", |r| r.edges([(0, 0), (0, 1), (1, 2)]))
+        .build()
+        .unwrap();
+
+    let stats = store.statistics();
+    let link_stats = stats
+        .get_edge_type("LINK")
+        .expect("LINK stats should exist");
+    // 2 edges (A->B) + 3 edges (A->C) = 5 total
+    assert_eq!(link_stats.edge_count, 5);
+    assert_eq!(stats.total_edges, 5);
+}

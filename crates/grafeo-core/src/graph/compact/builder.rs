@@ -483,11 +483,15 @@ impl CompactStoreBuilder {
             stats.update_label(label.as_str(), LabelStatistics::new(count));
         }
 
+        let mut edge_type_counts: FxHashMap<&str, u64> = FxHashMap::default();
         for (idx, rt) in rel_tables_by_id.iter().enumerate() {
             let count = rt.num_edges() as u64;
             total_edges += count;
             let edge_type = &rel_table_id_to_type[idx];
-            stats.update_edge_type(edge_type.as_str(), EdgeTypeStatistics::new(count, 0.0, 0.0));
+            *edge_type_counts.entry(edge_type.as_str()).or_default() += count;
+        }
+        for (edge_type, count) in edge_type_counts {
+            stats.update_edge_type(edge_type, EdgeTypeStatistics::new(count, 0.0, 0.0));
         }
 
         stats.total_nodes = total_nodes;

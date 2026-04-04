@@ -50,8 +50,9 @@ pub struct CompactStore {
     label_to_table_id: FxHashMap<ArcStr, u16>,
     /// Relationship tables indexed by rel_table_id for O(1) lookup from EdgeId.
     rel_tables_by_id: Vec<RelTable>,
-    /// rel_table_id lookup from edge type string.
-    edge_type_to_rel_id: FxHashMap<ArcStr, u16>,
+    /// rel_table_id lookup from edge type string (one edge type may span
+    /// multiple src/dst label combinations, so the value is a Vec).
+    edge_type_to_rel_id: FxHashMap<ArcStr, Vec<u16>>,
     /// Lookup: table ID -> label.
     table_id_to_label: Vec<ArcStr>,
     /// Lookup: rel table ID -> edge type.
@@ -86,7 +87,7 @@ impl CompactStore {
         node_tables_by_id: Vec<NodeTable>,
         label_to_table_id: FxHashMap<ArcStr, u16>,
         rel_tables_by_id: Vec<RelTable>,
-        edge_type_to_rel_id: FxHashMap<ArcStr, u16>,
+        edge_type_to_rel_id: FxHashMap<ArcStr, Vec<u16>>,
         table_id_to_label: Vec<ArcStr>,
         rel_table_id_to_type: Vec<ArcStr>,
         statistics: Statistics,
@@ -140,11 +141,28 @@ impl CompactStore {
         self.node_tables_by_id.get(tid as usize)
     }
 
-    /// Returns a reference to the relationship table for the given edge type.
+    /// Returns a reference to the first relationship table for the given edge type.
+    ///
+    /// When an edge type spans multiple label pairs, use [`rel_tables_for_type`]
+    /// to get all matching tables.
     #[must_use]
     pub fn rel_table(&self, edge_type: &str) -> Option<&RelTable> {
-        let &rid = self.edge_type_to_rel_id.get(edge_type)?;
+        let rids = self.edge_type_to_rel_id.get(edge_type)?;
+        let &rid = rids.first()?;
         self.rel_tables_by_id.get(rid as usize)
+    }
+
+    /// Returns all relationship tables for the given edge type.
+    #[must_use]
+    pub fn rel_tables_for_type(&self, edge_type: &str) -> Vec<&RelTable> {
+        self.edge_type_to_rel_id
+            .get(edge_type)
+            .map(|rids| {
+                rids.iter()
+                    .filter_map(|&rid| self.rel_tables_by_id.get(rid as usize))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Returns the label for a given table ID, if valid.

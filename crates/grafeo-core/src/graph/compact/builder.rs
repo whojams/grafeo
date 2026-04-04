@@ -330,11 +330,11 @@ impl CompactStoreBuilder {
             }
         }
 
-        // Step 2b: Validate no duplicate edge types.
+        // Step 2b: Validate no duplicate (edge_type, src_label, dst_label) triples.
         {
-            let mut seen_types = FxHashSet::default();
+            let mut seen_triples = FxHashSet::default();
             for rtb in &self.rel_table_builders {
-                if !seen_types.insert(&rtb.edge_type) {
+                if !seen_triples.insert((&rtb.edge_type, &rtb.src_label, &rtb.dst_label)) {
                     return Err(CompactStoreError::DuplicateEdgeType(
                         rtb.edge_type.to_string(),
                     ));
@@ -382,7 +382,7 @@ impl CompactStoreBuilder {
 
         // Step 5: Build each RelTable.
         let mut rel_tables_by_id: Vec<RelTable> = Vec::with_capacity(self.rel_table_builders.len());
-        let mut edge_type_to_rel_id: FxHashMap<ArcStr, u16> = FxHashMap::default();
+        let mut edge_type_to_rel_id: FxHashMap<ArcStr, Vec<u16>> = FxHashMap::default();
         let mut rel_table_id_to_type: Vec<ArcStr> = Vec::new();
 
         for (idx, rtb) in self.rel_table_builders.into_iter().enumerate() {
@@ -463,7 +463,10 @@ impl CompactStoreBuilder {
                 rtb.properties.into_iter().collect();
 
             let table = RelTable::new(schema, fwd, bwd, properties, src_table_id, dst_table_id);
-            edge_type_to_rel_id.insert(rtb.edge_type.clone(), rel_table_id);
+            edge_type_to_rel_id
+                .entry(rtb.edge_type.clone())
+                .or_default()
+                .push(rel_table_id);
             rel_tables_by_id.push(table);
         }
 

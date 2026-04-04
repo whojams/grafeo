@@ -357,26 +357,29 @@ impl GraphStore for CompactStore {
     }
 
     fn estimate_avg_degree(&self, edge_type: &str, outgoing: bool) -> f64 {
-        if let Some(rt) = self
-            .edge_type_to_rel_id
-            .get(edge_type)
-            .and_then(|&rid| self.rel_tables_by_id.get(rid as usize))
-        {
-            let num_edges = rt.num_edges();
-            if num_edges == 0 {
-                return 0.0;
-            }
-            let num_nodes = if outgoing {
+        let Some(rids) = self.edge_type_to_rel_id.get(edge_type) else {
+            return 0.0;
+        };
+        let mut total_edges: usize = 0;
+        let mut total_nodes: usize = 0;
+        for &rid in rids {
+            let Some(rt) = self.rel_tables_by_id.get(rid as usize) else {
+                continue;
+            };
+            total_edges += rt.num_edges();
+            let nodes = if outgoing {
                 self.resolve_node_table(rt.src_table_id())
                     .map_or(1, |nt| nt.len().max(1))
             } else {
                 self.resolve_node_table(rt.dst_table_id())
                     .map_or(1, |nt| nt.len().max(1))
             };
-            num_edges as f64 / num_nodes as f64
-        } else {
-            0.0
+            total_nodes += nodes;
         }
+        if total_nodes == 0 {
+            return 0.0;
+        }
+        total_edges as f64 / total_nodes as f64
     }
 
     fn current_epoch(&self) -> EpochId {

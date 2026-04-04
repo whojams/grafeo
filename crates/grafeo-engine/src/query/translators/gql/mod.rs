@@ -230,6 +230,9 @@ impl GqlTranslator {
                     .iter()
                     .any(|item| contains_aggregate(&item.expression));
 
+            let mut agg_output_columns: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
             if has_aggregates {
                 let (aggregates, auto_group_by, post_return) =
                     self.extract_aggregates_and_groups(&return_clause.items)?;
@@ -240,6 +243,24 @@ impl GqlTranslator {
                     input: Box::new(plan),
                     having: None,
                 });
+
+                agg_output_columns = post_return
+                    .as_ref()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|ri| {
+                                ri.alias.clone().or_else(|| {
+                                    if let LogicalExpression::Variable(v) = &ri.expression {
+                                        Some(v.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
                 if let Some(return_items) = post_return {
                     plan = wrap_return(plan, return_items, return_clause.distinct);
@@ -265,8 +286,16 @@ impl GqlTranslator {
                     .items
                     .iter()
                     .map(|item| {
+                        let mut expression = self.translate_expression(&item.expression)?;
+                        if let LogicalExpression::Property { .. } = &expression {
+                            let col_name =
+                                crate::query::planner::common::expression_to_string(&expression);
+                            if agg_output_columns.contains(&col_name) {
+                                expression = LogicalExpression::Variable(col_name);
+                            }
+                        }
                         Ok(SortKey {
-                            expression: self.translate_expression(&item.expression)?,
+                            expression,
                             order: match item.order {
                                 ast::SortOrder::Asc => SortOrder::Ascending,
                                 ast::SortOrder::Desc => SortOrder::Descending,

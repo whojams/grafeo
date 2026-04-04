@@ -143,6 +143,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: labels_empty_database
+    skip: "per-test dataset override not supported in Rust runner"
     dataset: empty
     query: "CALL db.labels() YIELD label RETURN count(label) AS cnt"
     expect:
@@ -150,6 +151,7 @@ tests:
         - [0]
 
   - name: relationship_types_empty_database
+    skip: "per-test dataset override not supported in Rust runner"
     dataset: empty
     query: "CALL db.relationshipTypes() YIELD relationshipType RETURN count(relationshipType) AS cnt"
     expect:
@@ -157,6 +159,7 @@ tests:
         - [0]
 
   - name: property_keys_empty_database
+    skip: "per-test dataset override not supported in Rust runner"
     dataset: empty
     query: "CALL db.propertyKeys() YIELD propertyKey RETURN count(propertyKey) AS cnt"
     expect:

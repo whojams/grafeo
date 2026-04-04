@@ -1013,7 +1013,7 @@ fn generate_execute_and_assert(
         .unwrap();
         writeln!(
             output,
-            "        let err_msg = format!(\"{{:?}}\", result.unwrap_err());",
+            "        let err_msg = format!(\"{{}}\", result.unwrap_err());",
         )
         .unwrap();
         writeln!(

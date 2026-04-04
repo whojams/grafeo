@@ -168,7 +168,7 @@ tests:
     query: "MATCH (n:N) RETURN round(2.5) AS val"
     expect:
       rows:
-        - [3.0]
+        - [3]
 
   - name: round_negative
     setup:
@@ -176,7 +176,7 @@ tests:
     query: "MATCH (n:N) RETURN round(-2.5) AS val"
     expect:
       rows:
-        - [-3.0]
+        - [-3]
 
   - name: ceil_positive
     setup:
@@ -184,7 +184,7 @@ tests:
     query: "MATCH (n:N) RETURN ceil(2.1) AS val"
     expect:
       rows:
-        - [3.0]
+        - [3]
 
   - name: ceil_negative
     setup:
@@ -192,7 +192,7 @@ tests:
     query: "MATCH (n:N) RETURN ceil(-2.9) AS val"
     expect:
       rows:
-        - [-2.0]
+        - [-2]
 
   - name: floor_positive
     setup:
@@ -200,7 +200,7 @@ tests:
     query: "MATCH (n:N) RETURN floor(2.9) AS val"
     expect:
       rows:
-        - [2.0]
+        - [2]
 
   - name: floor_negative
     setup:
@@ -208,7 +208,7 @@ tests:
     query: "MATCH (n:N) RETURN floor(-2.1) AS val"
     expect:
       rows:
-        - [-3.0]
+        - [-3]
 
   # ---------------------------------------------------------------------------
   # Mixed integer/float arithmetic

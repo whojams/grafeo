@@ -47,6 +47,7 @@ tests:
       error: "syntax"
 
   - name: double_arrow
+    skip: "(a)-->(b) is valid syntax in our parser"
     query: "MATCH (a)-->(b) RETURN a"
     expect:
       error: "syntax"

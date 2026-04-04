@@ -10,8 +10,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::common::{
     build_left_join_with_predicates, combine_with_and, is_aggregate_function,
-    is_binary_set_function, to_aggregate_function, wrap_distinct, wrap_filter, wrap_limit,
-    wrap_return, wrap_skip, wrap_sort,
+    is_binary_set_function, references_any, to_aggregate_function, wrap_distinct, wrap_filter,
+    wrap_limit, wrap_return, wrap_skip, wrap_sort,
 };
 use crate::query::plan::{
     self as plan, AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp,
@@ -241,8 +241,76 @@ impl GqlTranslator {
                     having: None,
                 });
 
+                // Collect aggregate output column names for ORDER BY rewriting.
+                // After aggregation the original entity variable no longer exists,
+                // so property references like `n.prop` must become flat variable
+                // references when they match an output column.
+                let agg_output_columns: HashSet<String> = post_return
+                    .as_ref()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|ri| {
+                                ri.alias.clone().or_else(|| {
+                                    if let LogicalExpression::Variable(v) = &ri.expression {
+                                        Some(v.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 if let Some(return_items) = post_return {
                     plan = wrap_return(plan, return_items, return_clause.distinct);
+                }
+
+                // Apply ORDER BY with aggregate-aware rewriting
+                if let Some(order_by) = &return_clause.order_by {
+                    let keys = order_by
+                        .items
+                        .iter()
+                        .map(|item| {
+                            let mut expression = self.translate_expression(&item.expression)?;
+                            if let LogicalExpression::Property { .. } = &expression {
+                                let col_name = crate::query::planner::common::expression_to_string(
+                                    &expression,
+                                );
+                                if agg_output_columns.contains(&col_name) {
+                                    expression = LogicalExpression::Variable(col_name);
+                                }
+                            }
+                            Ok(SortKey {
+                                expression,
+                                order: match item.order {
+                                    ast::SortOrder::Asc => SortOrder::Ascending,
+                                    ast::SortOrder::Desc => SortOrder::Descending,
+                                },
+                                nulls: item.nulls.map(|n| match n {
+                                    ast::NullsOrdering::First => NullsOrdering::First,
+                                    ast::NullsOrdering::Last => NullsOrdering::Last,
+                                }),
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+
+                    plan = wrap_sort(plan, keys);
+                }
+
+                // Apply SKIP
+                if let Some(skip_expr) = &return_clause.skip
+                    && let ast::Expression::Literal(ast::Literal::Integer(n)) = skip_expr
+                {
+                    plan = wrap_skip(plan, *n as usize);
+                }
+
+                // Apply LIMIT
+                if let Some(limit_expr) = &return_clause.limit
+                    && let ast::Expression::Literal(ast::Literal::Integer(n)) = limit_expr
+                {
+                    plan = wrap_limit(plan, *n as usize);
                 }
             } else if !return_clause.items.is_empty() {
                 let return_items = return_clause
@@ -259,38 +327,42 @@ impl GqlTranslator {
                 plan = wrap_return(plan, return_items, return_clause.distinct);
             }
 
-            // Apply ORDER BY (wraps Return so aliases are visible)
-            if let Some(order_by) = &return_clause.order_by {
-                let keys = order_by
-                    .items
-                    .iter()
-                    .map(|item| {
-                        Ok(SortKey {
-                            expression: self.translate_expression(&item.expression)?,
-                            order: match item.order {
-                                ast::SortOrder::Asc => SortOrder::Ascending,
-                                ast::SortOrder::Desc => SortOrder::Descending,
-                            },
-                            nulls: item.nulls.map(|n| match n {
-                                ast::NullsOrdering::First => NullsOrdering::First,
-                                ast::NullsOrdering::Last => NullsOrdering::Last,
-                            }),
+            // Apply ORDER BY/SKIP/LIMIT for non-aggregate CALL queries.
+            // Aggregate CALL queries handle these inside their own branch
+            // with aggregate-aware ORDER BY rewriting.
+            if !has_aggregates {
+                if let Some(order_by) = &return_clause.order_by {
+                    let keys = order_by
+                        .items
+                        .iter()
+                        .map(|item| {
+                            Ok(SortKey {
+                                expression: self.translate_expression(&item.expression)?,
+                                order: match item.order {
+                                    ast::SortOrder::Asc => SortOrder::Ascending,
+                                    ast::SortOrder::Desc => SortOrder::Descending,
+                                },
+                                nulls: item.nulls.map(|n| match n {
+                                    ast::NullsOrdering::First => NullsOrdering::First,
+                                    ast::NullsOrdering::Last => NullsOrdering::Last,
+                                }),
+                            })
                         })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                        .collect::<Result<Vec<_>>>()?;
 
-                plan = wrap_sort(plan, keys);
+                    plan = wrap_sort(plan, keys);
+                }
+
+                if let Some(skip_expr) = &return_clause.skip
+                    && let ast::Expression::Literal(ast::Literal::Integer(n)) = skip_expr
+                {
+                    plan = wrap_skip(plan, *n as usize);
+                }
             }
 
-            // Apply SKIP
-            if let Some(skip_expr) = &return_clause.skip
-                && let ast::Expression::Literal(ast::Literal::Integer(n)) = skip_expr
-            {
-                plan = wrap_skip(plan, *n as usize);
-            }
-
-            // Apply LIMIT
-            if let Some(limit_expr) = &return_clause.limit
+            // Apply LIMIT (non-aggregate path)
+            if !has_aggregates
+                && let Some(limit_expr) = &return_clause.limit
                 && let ast::Expression::Literal(ast::Literal::Integer(n)) = limit_expr
             {
                 plan = wrap_limit(plan, *n as usize);
@@ -600,11 +672,27 @@ impl GqlTranslator {
                     let (aggregates, auto_group_by, post_return) =
                         self.extract_aggregates_and_groups(&with_clause.items)?;
 
+                    // If the WITH clause has a WHERE that references an
+                    // aggregate alias, promote it to HAVING so the filter
+                    // is applied during aggregation instead of after.
+                    let aggregate_aliases: Vec<String> =
+                        aggregates.iter().filter_map(|a| a.alias.clone()).collect();
+                    let having = if let Some(where_clause) = &with_clause.where_clause {
+                        let pred = self.translate_expression(&where_clause.expression)?;
+                        if references_any(&pred, &aggregate_aliases) {
+                            Some(pred)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     plan = LogicalOperator::Aggregate(AggregateOp {
                         group_by: auto_group_by,
                         aggregates,
                         input: Box::new(plan),
-                        having: None,
+                        having,
                     });
 
                     // Apply post-aggregate projection if aggregates were wrapped
@@ -662,10 +750,31 @@ impl GqlTranslator {
                 });
             }
 
-            // Apply WHERE filter if present in WITH clause
+            // Apply WHERE filter if present in WITH clause.
+            // Skip if the WHERE was already consumed as HAVING for an aggregate.
             if let Some(where_clause) = &with_clause.where_clause {
+                let has_agg = with_clause
+                    .items
+                    .iter()
+                    .any(|item| contains_aggregate(&item.expression));
                 let predicate = self.translate_expression(&where_clause.expression)?;
-                plan = wrap_filter(plan, predicate);
+                if has_agg {
+                    // Collect aggregate aliases to check if WHERE references them
+                    let agg_aliases: Vec<String> = with_clause
+                        .items
+                        .iter()
+                        .filter(|item| contains_aggregate(&item.expression))
+                        .filter_map(|item| item.alias.clone())
+                        .collect();
+                    if !references_any(&predicate, &agg_aliases) {
+                        // Non-aggregate WHERE: apply as normal filter
+                        plan = wrap_filter(plan, predicate);
+                    }
+                    // If it references aggregate aliases, it was already
+                    // consumed as HAVING above.
+                } else {
+                    plan = wrap_filter(plan, predicate);
+                }
             }
 
             // Handle DISTINCT

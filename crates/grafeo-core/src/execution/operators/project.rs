@@ -44,6 +44,13 @@ pub enum ProjectExpr {
         /// The column containing the edge ID.
         column: usize,
     },
+    /// Returns the first non-null value from two columns (used for RIGHT/FULL join dedup).
+    Coalesce {
+        /// Primary column index.
+        first: usize,
+        /// Fallback column index.
+        second: usize,
+    },
 }
 
 /// A project operator that selects and transforms columns.
@@ -355,6 +362,28 @@ impl Operator for ProjectOperator {
                             edge.map_or(Value::Null, |e| edge_to_map(&e))
                         } else {
                             Value::Null
+                        };
+                        output_col.push_value(value);
+                    }
+                }
+                ProjectExpr::Coalesce { first, second } => {
+                    let first_col = input
+                        .column(*first)
+                        .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {first}")))?;
+                    let second_col = input
+                        .column(*second)
+                        .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {second}")))?;
+
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
+
+                    for row in input.selected_indices() {
+                        let value = match first_col.get_value(row) {
+                            Some(Value::Null) | None => {
+                                second_col.get_value(row).unwrap_or(Value::Null)
+                            }
+                            Some(v) => v,
                         };
                         output_col.push_value(value);
                     }

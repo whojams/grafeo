@@ -689,6 +689,22 @@ pub(crate) fn wrap_distinct(input: LogicalOperator) -> LogicalOperator {
     })
 }
 
+/// Checks if a logical expression references any variable in the given set.
+pub(crate) fn references_any(expr: &LogicalExpression, names: &[String]) -> bool {
+    match expr {
+        LogicalExpression::Variable(v) => names.iter().any(|n| n == v),
+        LogicalExpression::Binary { left, right, .. } => {
+            references_any(left, names) || references_any(right, names)
+        }
+        LogicalExpression::Unary { operand, .. } => references_any(operand, names),
+        LogicalExpression::Property { variable, .. } => names.iter().any(|n| n == variable),
+        LogicalExpression::FunctionCall { args, .. } => {
+            args.iter().any(|a| references_any(a, names))
+        }
+        _ => false,
+    }
+}
+
 /// Wraps an operator with RETURN.
 pub(crate) fn wrap_return(
     input: LogicalOperator,

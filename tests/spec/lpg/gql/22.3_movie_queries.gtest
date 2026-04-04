@@ -185,7 +185,6 @@ tests:
         - [Hans, 2]
 
   - name: director_actor_repeated_collaborations
-    skip: "WITH aggregation WHERE filter returns wrong count"
     query: |
       MATCH (d:Director)-[:DIRECTED]->(m:Movie)<-[:ACTED_IN]-(a:Actor)
       WITH d, a, count(m) AS collabs

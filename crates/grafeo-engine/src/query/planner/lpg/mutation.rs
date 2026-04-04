@@ -1068,33 +1068,76 @@ impl super::Planner {
                 ))
             })?;
 
-        // Convert properties to PropertySource (supports both constants and variables)
-        let properties: Vec<(String, PropertySource)> = set_prop
-            .properties
-            .iter()
-            .map(|(name, expr)| {
-                let source = match self.expression_to_property_source(expr, &columns) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        // Fallback: try constant folding for complex expressions
-                        // (e.g., vector([1,2,3]), date('2024-01-01')).
-                        Self::try_fold_expression(expr).map_or_else(
-                            || {
-                                // Expression references a variable not in scope or is
-                                // otherwise unsupported. Return error instead of silently
-                                // writing NULL.
-                                Err(Error::Internal(format!(
+        // Convert properties to PropertySource (supports constants, variables, and
+        // complex expressions like `c.value + 1`). Expressions that cannot be resolved
+        // to a simple PropertySource are pre-computed via a projection operator.
+        let mut properties: Vec<(String, PropertySource)> = Vec::new();
+        let mut projection_exprs: Vec<ProjectExpr> = Vec::new();
+        let mut projection_columns: Vec<String> = columns.clone();
+
+        // Start with pass-through for all existing columns
+        for i in 0..columns.len() {
+            projection_exprs.push(ProjectExpr::Column(i));
+        }
+
+        let mut needs_projection = false;
+
+        for (name, expr) in &set_prop.properties {
+            let source = match self.expression_to_property_source(expr, &columns) {
+                Ok(s) => s,
+                Err(_) => {
+                    // Fallback: try constant folding for complex expressions
+                    // (e.g., vector([1,2,3]), date('2024-01-01')).
+                    if let Some(v) = Self::try_fold_expression(expr) {
+                        PropertySource::Constant(v)
+                    } else {
+                        // Complex runtime expression (e.g., c.value + 1): add a
+                        // projection column that evaluates it, then SET from that column.
+                        match self.convert_expression(expr) {
+                            Ok(filter_expr) => {
+                                let col_idx = projection_columns.len();
+                                let col_name = format!("__set_expr_{name}");
+                                let variable_columns: HashMap<String, usize> = columns
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, c)| (c.clone(), i))
+                                    .collect();
+                                projection_exprs.push(ProjectExpr::Expression {
+                                    expr: filter_expr,
+                                    variable_columns,
+                                });
+                                projection_columns.push(col_name);
+                                needs_projection = true;
+                                PropertySource::Column(col_idx)
+                            }
+                            Err(_) => {
+                                return Err(Error::Internal(format!(
                                     "Cannot resolve SET expression for property '{name}': \
                                      variable not in scope or unsupported expression"
-                                )))
-                            },
-                            |v| Ok(PropertySource::Constant(v)),
-                        )?
+                                )));
+                            }
+                        }
                     }
-                };
-                Ok((name.clone(), source))
-            })
-            .collect::<Result<Vec<_>>>()?;
+                }
+            };
+            properties.push((name.clone(), source));
+        }
+
+        // If any SET expression needed runtime evaluation, wrap input in a projection.
+        let actual_input: Box<dyn Operator> = if needs_projection {
+            let proj_schema = self.derive_schema_from_columns(&projection_columns);
+            Box::new(
+                ProjectOperator::with_store(
+                    input_op,
+                    projection_exprs,
+                    proj_schema,
+                    Arc::clone(&self.store),
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
+            )
+        } else {
+            input_op
+        };
 
         // Output schema: type-aware pass-through for input columns.
         let output_schema = self.derive_schema_from_columns(&columns);
@@ -1105,7 +1148,7 @@ impl super::Planner {
         let operator: Box<dyn Operator> = if is_edge {
             let mut op = SetPropertyOperator::new_for_edge(
                 self.write_store()?,
-                input_op,
+                actual_input,
                 entity_column,
                 properties,
                 output_schema,
@@ -1122,7 +1165,7 @@ impl super::Planner {
         } else {
             let mut op = SetPropertyOperator::new_for_node(
                 self.write_store()?,
-                input_op,
+                actual_input,
                 entity_column,
                 properties,
                 output_schema,

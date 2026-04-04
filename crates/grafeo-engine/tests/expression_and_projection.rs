@@ -2103,3 +2103,48 @@ fn test_multi_pattern_match_join() {
     assert_eq!(result.rows[0][1], Value::String("Laptop".into()));
     assert_eq!(result.rows[0][2], Value::Int64(5));
 }
+
+#[test]
+fn test_with_aggregate_having_filter() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Harm'})").unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+             INSERT (a)-[:MSG]->(b)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+             INSERT (a)-[:MSG]->(b)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Harm'}) \
+             INSERT (a)-[:MSG]->(b)",
+        )
+        .unwrap();
+
+    // WITH aggregation + WHERE on aggregate alias
+    let result = session
+        .execute(
+            "MATCH (a:Person)-[m:MSG]->(b:Person) \
+             WITH a, b, count(m) AS msgs \
+             WHERE msgs >= 2 \
+             RETURN a.name, b.name, msgs",
+        )
+        .unwrap();
+
+    eprintln!("WITH HAVING result: {:?}", result.rows);
+    // Only Alix->Gus has 2 messages
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("Gus".into()));
+    assert_eq!(result.rows[0][2], Value::Int64(2));
+}

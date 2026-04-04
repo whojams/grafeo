@@ -60,29 +60,43 @@ impl super::Planner {
             output_schema,
         ));
 
-        // Deduplicate shared variable columns: right-side columns that also
-        // appear on the left are redundant (the join guarantees equality).
-        // Build a projection that keeps all left columns plus only the
-        // non-duplicate right columns.
+        let needs_coalesce = matches!(join.join_type, JoinType::Right | JoinType::Full);
+
         let left_count = left_columns.len();
-        let mut keep_indices: Vec<usize> = (0..left_count).collect();
-        let mut deduped_columns: Vec<String> = left_columns;
+        let mut proj_exprs: Vec<ProjectExpr> = Vec::new();
+        let mut deduped_columns: Vec<String> = Vec::new();
+        let mut has_duplicates = false;
+
+        for (li, col_name) in left_columns.iter().enumerate() {
+            if needs_coalesce {
+                if let Some(ri) = right_columns.iter().position(|c| c == col_name) {
+                    proj_exprs.push(ProjectExpr::Coalesce {
+                        first: li,
+                        second: left_count + ri,
+                    });
+                    has_duplicates = true;
+                } else {
+                    proj_exprs.push(ProjectExpr::Column(li));
+                }
+            } else {
+                proj_exprs.push(ProjectExpr::Column(li));
+            }
+            deduped_columns.push(col_name.clone());
+        }
+
         for (ri, col_name) in right_columns.iter().enumerate() {
             if !deduped_columns.contains(col_name) {
-                keep_indices.push(left_count + ri);
+                proj_exprs.push(ProjectExpr::Column(left_count + ri));
                 deduped_columns.push(col_name.clone());
+            } else {
+                has_duplicates = true;
             }
         }
 
-        // If no columns were removed, skip the projection wrapper.
-        if keep_indices.len() == all_columns.len() {
+        if !has_duplicates {
             return Ok((join_op, deduped_columns));
         }
 
-        let proj_exprs: Vec<ProjectExpr> = keep_indices
-            .iter()
-            .map(|&i| ProjectExpr::Column(i))
-            .collect();
         let proj_schema = self.derive_schema_from_columns(&deduped_columns);
         let operator: Box<dyn Operator> =
             Box::new(ProjectOperator::new(join_op, proj_exprs, proj_schema));

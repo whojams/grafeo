@@ -309,7 +309,6 @@ tests:
       count: 1
 
   - name: collect_then_size
-    skip: "size(collect()) not supported"
     setup:
       - "INSERT (:Person {name: 'Alix'})"
       - "INSERT (:Person {name: 'Gus'})"

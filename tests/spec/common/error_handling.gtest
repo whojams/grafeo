@@ -137,7 +137,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: unknown_function
-    skip: "error message format"
+    skip: "unknown functions return NULL instead of erroring"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN nonexistent_function(n.v)"
@@ -145,7 +145,7 @@ tests:
       error: ""
 
   - name: wrong_argument_count
-    skip: "error message format"
+    skip: "extra arguments ignored instead of erroring"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN abs(1, 2)"

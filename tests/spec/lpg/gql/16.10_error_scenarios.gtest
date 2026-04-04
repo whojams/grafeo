@@ -128,7 +128,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: cast_string_to_int_invalid
-    skip: "error message format mismatch"
+    skip: "invalid CAST returns NULL instead of erroring"
     setup:
       - "INSERT (:N {v: 'hello'})"
     query: "MATCH (n:N) RETURN CAST(n.v AS INT) AS result"

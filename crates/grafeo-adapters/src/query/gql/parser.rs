@@ -4687,11 +4687,14 @@ impl<'a> Parser<'a> {
         name: String,
         if_not_exists: bool,
     ) -> Result<SchemaStatement> {
-        // Expect FOR
-        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("FOR") {
+        // Expect FOR (may be lexed as keyword TokenKind::For or as an identifier)
+        if self.current.kind == TokenKind::For
+            || (self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("FOR"))
+        {
+            self.advance();
+        } else {
             return Err(self.error("Expected FOR after index name"));
         }
-        self.advance();
 
         // Parse (n:Label)
         self.expect(TokenKind::LParen)?;

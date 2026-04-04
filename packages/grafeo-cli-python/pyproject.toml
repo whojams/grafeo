@@ -33,8 +33,9 @@ Issues = "https://github.com/GrafeoDB/grafeo/issues"
 [project.scripts]
 grafeo = "grafeo_cli:main"
 
+[tool.hatch.build]
+# Include pre-built binaries even though they're not tracked by git
+artifacts = ["grafeo_cli/grafeo", "grafeo_cli/grafeo.exe"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["grafeo_cli"]
-
-[tool.hatch.build.targets.wheel.shared-data]
-# Binary is placed alongside the Python package during wheel build

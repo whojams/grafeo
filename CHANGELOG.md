@@ -23,11 +23,23 @@ GraphChallenge benchmark suite and RDF-to-LPG bridge: all five DARPA/MIT IEEE HP
 - **CompactStore multi-table edge types**: edge types spanning multiple src/dst label combinations now correctly produce multiple `RelTable`s instead of silently overwriting. Added `rel_tables_for_type()` for querying all matching tables ([#221](https://github.com/GrafeoDB/grafeo/issues/221))
 - **WAL deadlock on property mutations**: `set_node_property()` and `set_edge_property()` now apply the store mutation before WAL logging, matching the lock ordering of create/delete methods and preventing ABBA deadlock under concurrent writes
 - **GQL `CREATE INDEX ... FOR` parsing**: `FOR` is now accepted whether lexed as keyword or identifier, fixing index creation in certain tokenizer contexts
+- **`round()`/`floor()`/`ceil()` return `Float64`**: float inputs now return `Float64` instead of truncating to `Int64`
+- **`CALL ... YIELD` with aggregation**: `count()`, `sum()`, etc. now work over `CALL` procedure results (e.g. `CALL db.labels() YIELD label RETURN count(label)`)
+- **Cypher keyword-as-label collision**: `Order`, `By`, `Skip`, `Limit` can now be used as node labels in Cypher queries
+- **CompactStore edge type statistics**: `update_edge_type()` now aggregates counts when an edge type spans multiple rel tables instead of silently overwriting
+- **`CAST(bool AS INT)`**: `true` casts to `1`, `false` to `0`
+- **List `+` concatenation**: `[1, 2] + [3, 4]` returns `[1, 2, 3, 4]`
+- **Parameter substitution in multi-statement queries**: `$param` variables in `INSERT`/`SET` statements now receive values when used with `statements:` in spec tests
 
 ### Performance
 
 - **Triangle counting**: `total_triangles()` and `total_triangles_parallel()` build oriented adjacency directly from `GraphStore` without intermediate hash sets, improving cache efficiency on CSR-backed stores
 - **WAL `sync_all()` outside lock**: file sync is performed after releasing the active-log mutex, reducing lock contention under concurrent writes
+- **Kahan compensated summation**: `sum()` aggregate uses Kahan algorithm to reduce floating-point rounding errors
+
+### Internal
+
+- **Spec test runner**: per-test `dataset:` override, error assertions use Display format, parameter substitution for all multi-statement queries
 
 ## [0.5.32] - 2026-04-03
 

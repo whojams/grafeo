@@ -217,9 +217,10 @@ class GtestItem(pytest.Item):
             self._run_error_test(db, language, queries, expect.error, params)
             return
 
-        # Execute all-but-last as fire-and-forget
+        # Execute all-but-last as fire-and-forget (with params, so
+        # INSERT/SET statements can reference $param variables).
         for q in queries[:-1]:
-            _execute(db, language, q)
+            _execute(db, language, q, params)
 
         # Last query: capture result (with params if present)
         result = _execute(db, language, queries[-1], params)

@@ -907,26 +907,88 @@ fn generate_single_test(
 
     // Execute queries (all but last are fire-and-forget, last captures result)
     if queries.len() == 1 {
-        generate_execute_and_assert(output, &queries[0], language, model, tc);
+        generate_execute_and_assert(output, &queries[0], language, model, tc, false);
     } else {
-        // Execute all but last
+        let has_params = !tc.params.is_empty();
+
+        // Build params once before the loop so fire-and-forget statements
+        // can use them too (e.g. INSERT/SET with $param).
+        if has_params {
+            generate_params_hashmap(output, &tc.params);
+        }
+
+        // Execute all but last (with params so $param in INSERT/SET works)
         for q in &queries[..queries.len() - 1] {
-            writeln!(
-                output,
-                "        execute_query_with_model(&db, \"{}\", \"{}\", \"{}\");",
-                escape_rust_string(language),
-                escape_rust_string(model),
-                escape_rust_string(q)
-            )
-            .unwrap();
+            if has_params {
+                writeln!(
+                    output,
+                    "        execute_query_result_with_params(&db, \"{}\", \"{}\", \"{}\", params.clone()).ok();",
+                    escape_rust_string(language),
+                    escape_rust_string(model),
+                    escape_rust_string(q)
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    output,
+                    "        execute_query_with_model(&db, \"{}\", \"{}\", \"{}\");",
+                    escape_rust_string(language),
+                    escape_rust_string(model),
+                    escape_rust_string(q)
+                )
+                .unwrap();
+            }
         }
         // Last query: capture result and assert
         let last = &queries[queries.len() - 1];
-        generate_execute_and_assert(output, last, language, model, tc);
+        generate_execute_and_assert(output, last, language, model, tc, has_params);
     }
 
     writeln!(output, "    }}").unwrap();
     writeln!(output).unwrap();
+}
+
+fn generate_params_hashmap(output: &mut String, params: &HashMap<String, String>) {
+    writeln!(output, "        let params = {{").unwrap();
+    writeln!(
+        output,
+        "            let mut m = std::collections::HashMap::new();"
+    )
+    .unwrap();
+    for (key, value) in params {
+        if let Ok(n) = value.parse::<i64>() {
+            writeln!(
+                output,
+                "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::Int64({n}));",
+                escape_rust_string(key)
+            )
+            .unwrap();
+        } else if let Ok(f) = value.parse::<f64>() {
+            writeln!(
+                output,
+                "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::Float64({f}_f64));",
+                escape_rust_string(key)
+            )
+            .unwrap();
+        } else if value == "true" || value == "false" {
+            writeln!(
+                output,
+                "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::Bool({value}));",
+                escape_rust_string(key)
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::String(\"{}\".into()));",
+                escape_rust_string(key),
+                escape_rust_string(value)
+            )
+            .unwrap();
+        }
+    }
+    writeln!(output, "            m").unwrap();
+    writeln!(output, "        }};").unwrap();
 }
 
 fn generate_execute_and_assert(
@@ -935,53 +997,15 @@ fn generate_execute_and_assert(
     language: &str,
     model: &str,
     tc: &TestCase,
+    params_already_emitted: bool,
 ) {
     let expect = &tc.expect;
     let has_params = !tc.params.is_empty();
 
-    // Build params HashMap if test has parameters
-    if has_params {
-        writeln!(output, "        let params = {{").unwrap();
-        writeln!(
-            output,
-            "            let mut m = std::collections::HashMap::new();"
-        )
-        .unwrap();
-        for (key, value) in &tc.params {
-            // Try to parse as integer first, then float, then treat as string
-            if let Ok(n) = value.parse::<i64>() {
-                writeln!(
-                    output,
-                    "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::Int64({n}));",
-                    escape_rust_string(key)
-                )
-                .unwrap();
-            } else if let Ok(f) = value.parse::<f64>() {
-                writeln!(
-                    output,
-                    "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::Float64({f}_f64));",
-                    escape_rust_string(key)
-                )
-                .unwrap();
-            } else if value == "true" || value == "false" {
-                writeln!(
-                    output,
-                    "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::Bool({value}));",
-                    escape_rust_string(key)
-                )
-                .unwrap();
-            } else {
-                writeln!(
-                    output,
-                    "            m.insert(\"{}\".to_string(), grafeo_common::types::Value::String(\"{}\".into()));",
-                    escape_rust_string(key),
-                    escape_rust_string(value)
-                )
-                .unwrap();
-            }
-        }
-        writeln!(output, "            m").unwrap();
-        writeln!(output, "        }};").unwrap();
+    // Build params HashMap if test has parameters and not already emitted
+    // (multi-statement tests emit params before the fire-and-forget loop).
+    if has_params && !params_already_emitted {
+        generate_params_hashmap(output, &tc.params);
     }
 
     // Error case

@@ -130,7 +130,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: gql_param_in_insert
-    skip: "$param in INSERT stores literal string, not substituted"
     statements:
       - "INSERT (:Person {name: $name, age: $age})"
       - "MATCH (p:Person) RETURN p.name, p.age"
@@ -146,7 +145,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: gql_param_in_set
-    skip: "$param in SET not substituted"
     statements:
       - "INSERT (:Person {name: 'Alix', age: 30})"
       - "MATCH (p:Person {name: 'Alix'}) SET p.age = $new_age"

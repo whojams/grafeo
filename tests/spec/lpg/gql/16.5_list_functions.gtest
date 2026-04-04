@@ -221,7 +221,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: list_concatenation
-    skip: "list + operator not implemented"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN [1, 2] + [3, 4] AS combined"
@@ -230,7 +229,6 @@ tests:
         - ["[1, 2, 3, 4]"]
 
   - name: list_concat_with_empty
-    skip: "list + operator not implemented"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN [1, 2] + [] AS combined"

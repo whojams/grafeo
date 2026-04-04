@@ -193,7 +193,9 @@ tests:
       ORDER BY collabs DESC, d.name
     expect:
       ordered: true
-      count: 0
+      rows:
+        - [Django, Jules, 2]
+        - [Shosanna, Alix, 2]
 
   # ---------------------------------------------------------------------------
   # Box office analysis

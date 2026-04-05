@@ -62,7 +62,11 @@ impl super::Planner {
 
         // Deduplicate shared variable columns: right-side columns that also
         // appear on the left are redundant (the join guarantees equality).
+        // Skip deduplication for CROSS joins (no equality guarantee).
         // For RIGHT/FULL joins, use COALESCE to prefer the non-NULL side.
+        if matches!(join.join_type, JoinType::Cross) || join.conditions.is_empty() {
+            return Ok((join_op, all_columns));
+        }
         let needs_coalesce = matches!(join.join_type, JoinType::Right | JoinType::Full);
 
         let left_count = left_columns.len();

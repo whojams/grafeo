@@ -40,6 +40,7 @@ public sealed class TestCase
     public List<string> Requires { get; set; } = [];
     public string? Skip { get; set; }
     public string? Language { get; set; }
+    public string? Dataset { get; set; }
     public Expect Expect { get; set; } = new();
     public Dictionary<string, string> Variants { get; set; } = new();
 }

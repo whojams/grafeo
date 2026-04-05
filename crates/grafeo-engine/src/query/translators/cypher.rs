@@ -1297,6 +1297,22 @@ impl CypherTranslator {
                 post_return = Some(return_items);
             }
 
+            // Register aggregate output column names so ORDER BY can
+            // reference them. Group-by columns use expression_to_string
+            // format (e.g. "o.status"), aggregate columns use their alias.
+            {
+                let mut aliases = self.return_aliases.borrow_mut();
+                for gb in &group_by {
+                    let col = crate::query::planner::common::expression_to_string(gb);
+                    aliases.insert(col.clone(), col);
+                }
+                for agg in &aggregates {
+                    if let Some(ref alias) = agg.alias {
+                        aliases.insert(alias.clone(), alias.clone());
+                    }
+                }
+            }
+
             let agg_op = LogicalOperator::Aggregate(AggregateOp {
                 group_by,
                 aggregates,
@@ -1666,6 +1682,21 @@ impl CypherTranslator {
                 let expression = if let ast::Expression::Variable(name) = &item.expression {
                     if let Some(col_name) = aliases.get(name) {
                         LogicalExpression::Variable(col_name.clone())
+                    } else {
+                        self.translate_expression(&item.expression)?
+                    }
+                } else if let ast::Expression::PropertyAccess { base, property } = &item.expression
+                {
+                    // After aggregation, entity variables (o, c, d) no longer
+                    // exist. Rewrite o.status to Variable("o.status") which
+                    // matches the aggregate output column name.
+                    if let ast::Expression::Variable(var) = base.as_ref() {
+                        let col_dot = format!("{var}.{property}");
+                        if aliases.get(&col_dot).is_some() {
+                            LogicalExpression::Variable(col_dot)
+                        } else {
+                            self.translate_expression(&item.expression)?
+                        }
                     } else {
                         self.translate_expression(&item.expression)?
                     }

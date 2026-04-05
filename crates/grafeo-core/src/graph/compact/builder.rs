@@ -40,7 +40,7 @@ pub enum CompactStoreError {
     /// Two node tables were defined with the same label.
     #[error("duplicate node label: {0:?}")]
     DuplicateLabel(String),
-    /// Two relationship tables were defined with the same edge type.
+    /// Two relationship tables were defined with the same (edge type, src, dst) triple.
     #[error("duplicate edge type: {0:?}")]
     DuplicateEdgeType(String),
     /// A backward edge has no corresponding forward edge (data inconsistency).
@@ -331,14 +331,12 @@ impl CompactStoreBuilder {
         }
 
         // Step 2b: Validate no duplicate (edge_type, src_label, dst_label) triples.
-        // The same edge type can span multiple label pairs (e.g., CALLS between
-        // Method→Method and Class→Method) — this is normal in LPGs.
         {
             let mut seen_triples = FxHashSet::default();
             for rtb in &self.rel_table_builders {
                 if !seen_triples.insert((&rtb.edge_type, &rtb.src_label, &rtb.dst_label)) {
                     return Err(CompactStoreError::DuplicateEdgeType(format!(
-                        "{}({} -> {})",
+                        "{} ({} -> {})",
                         rtb.edge_type, rtb.src_label, rtb.dst_label
                     )));
                 }
@@ -485,19 +483,15 @@ impl CompactStoreBuilder {
             stats.update_label(label.as_str(), LabelStatistics::new(count));
         }
 
-        // Aggregate edge counts per edge type before inserting into stats,
-        // since the same edge type can span multiple rel tables.
-        {
-            let mut edge_type_counts: FxHashMap<&str, u64> = FxHashMap::default();
-            for (idx, rt) in rel_tables_by_id.iter().enumerate() {
-                let count = rt.num_edges() as u64;
-                total_edges += count;
-                let edge_type = rel_table_id_to_type[idx].as_str();
-                *edge_type_counts.entry(edge_type).or_default() += count;
-            }
-            for (edge_type, count) in &edge_type_counts {
-                stats.update_edge_type(edge_type, EdgeTypeStatistics::new(*count, 0.0, 0.0));
-            }
+        let mut edge_type_counts: FxHashMap<&str, u64> = FxHashMap::default();
+        for (idx, rt) in rel_tables_by_id.iter().enumerate() {
+            let count = rt.num_edges() as u64;
+            total_edges += count;
+            let edge_type = &rel_table_id_to_type[idx];
+            *edge_type_counts.entry(edge_type.as_str()).or_default() += count;
+        }
+        for (edge_type, count) in edge_type_counts {
+            stats.update_edge_type(edge_type, EdgeTypeStatistics::new(count, 0.0, 0.0));
         }
 
         stats.total_nodes = total_nodes;

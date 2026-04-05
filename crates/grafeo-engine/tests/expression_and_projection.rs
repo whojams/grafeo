@@ -1872,3 +1872,279 @@ fn test_start_node_equals_source_id() {
     assert_eq!(r.rows[0][0], Value::Bool(true), "startNode(r) != id(s)");
     assert_eq!(r.rows[0][1], Value::Bool(true), "endNode(r) != id(t)");
 }
+
+// ============================================================================
+// ORDER BY DESC with sort key in RETURN (regression)
+// ============================================================================
+
+/// ORDER BY DESC on a float property that is also in the RETURN clause.
+/// This reproduces the spec test `top_rated_movies` failure where DESC
+/// returns values in wrong order.
+#[test]
+fn test_order_by_desc_sort_key_in_return() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("INSERT (:Item {name: 'A', score: 7.5})")
+        .unwrap();
+    session
+        .execute("INSERT (:Item {name: 'B', score: 8.7})")
+        .unwrap();
+    session
+        .execute("INSERT (:Item {name: 'C', score: 8.0})")
+        .unwrap();
+    session
+        .execute("INSERT (:Item {name: 'D', score: 6.9})")
+        .unwrap();
+    session
+        .execute("INSERT (:Item {name: 'E', score: 9.1})")
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (i:Item) RETURN i.name, i.score ORDER BY i.score DESC LIMIT 3")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    for (i, row) in result.rows.iter().enumerate() {
+        eprintln!("row {i}: {:?}", row);
+    }
+    // Descending top 3: E(9.1), B(8.7), C(8.0)
+    assert_eq!(result.rows[0][0], Value::String("E".into()));
+    assert_eq!(result.rows[1][0], Value::String("B".into()));
+    assert_eq!(result.rows[2][0], Value::String("C".into()));
+}
+
+/// ORDER BY DESC on an integer property that is in the RETURN clause.
+#[test]
+fn test_order_by_desc_integer_in_return() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("INSERT (:City {name: 'Amsterdam', pop: 905234})")
+        .unwrap();
+    session
+        .execute("INSERT (:City {name: 'Berlin', pop: 3748148})")
+        .unwrap();
+    session
+        .execute("INSERT (:City {name: 'Paris', pop: 2161000})")
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (c:City) RETURN c.name, c.pop ORDER BY c.pop DESC")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    // Descending: Berlin, Paris, Amsterdam
+    assert_eq!(result.rows[0][0], Value::String("Berlin".into()));
+    assert_eq!(result.rows[1][0], Value::String("Paris".into()));
+    assert_eq!(result.rows[2][0], Value::String("Amsterdam".into()));
+}
+
+/// Secondary sort: ORDER BY count DESC, name ASC to break ties.
+#[test]
+fn test_order_by_secondary_sort_after_aggregation() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session.execute("INSERT (:T {grp: 'X', val: 1})").unwrap();
+    session.execute("INSERT (:T {grp: 'X', val: 2})").unwrap();
+    session.execute("INSERT (:T {grp: 'Y', val: 3})").unwrap();
+    session.execute("INSERT (:T {grp: 'Y', val: 4})").unwrap();
+    session.execute("INSERT (:T {grp: 'Z', val: 5})").unwrap();
+
+    let result = session
+        .execute("MATCH (t:T) RETURN t.grp, count(t) AS cnt ORDER BY cnt DESC, t.grp")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 3);
+    // X(2) and Y(2) tied on cnt DESC, broken by grp ASC: X before Y
+    assert_eq!(result.rows[0][0], Value::String("X".into()));
+    assert_eq!(result.rows[1][0], Value::String("Y".into()));
+    assert_eq!(result.rows[2][0], Value::String("Z".into()));
+}
+
+/// Exact reproduction of movie_database scenario with 5 items, LIMIT 3.
+/// Multiple labels in the database (Genre, Director, Actor, Movie) so
+/// NodeScan may interact differently.
+#[test]
+fn test_order_by_desc_with_limit_multi_label() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    // The actual movies (5 movies, no noise nodes)
+    session
+        .execute("INSERT (:Movie {title: 'The Heist', rating: 8.2})")
+        .unwrap();
+    session
+        .execute("INSERT (:Movie {title: 'Midnight Code', rating: 7.5})")
+        .unwrap();
+    session
+        .execute("INSERT (:Movie {title: 'Berlin Express', rating: 8.7})")
+        .unwrap();
+    session
+        .execute("INSERT (:Movie {title: 'Prague Nights', rating: 6.9})")
+        .unwrap();
+    session
+        .execute("INSERT (:Movie {title: 'The Algorithm', rating: 8.0})")
+        .unwrap();
+
+    // First test without LIMIT to see all rows
+    let result = session
+        .execute("MATCH (m:Movie) RETURN m.title, m.rating ORDER BY m.rating DESC")
+        .unwrap();
+
+    eprintln!("All movies sorted DESC:");
+    for (i, row) in result.rows.iter().enumerate() {
+        eprintln!("  row {i}: {:?}", row);
+    }
+    assert_eq!(result.rows.len(), 5, "Should have 5 movies");
+
+    // Now test with LIMIT
+    let result = session
+        .execute("MATCH (m:Movie) RETURN m.title, m.rating ORDER BY m.rating DESC LIMIT 3")
+        .unwrap();
+
+    eprintln!("Top 3 movies sorted DESC:");
+    for (i, row) in result.rows.iter().enumerate() {
+        eprintln!("  row {i}: {:?}", row);
+    }
+    assert_eq!(result.rows.len(), 3);
+    assert_eq!(result.rows[0][0], Value::String("Berlin Express".into()));
+    assert_eq!(result.rows[1][0], Value::String("The Heist".into()));
+    assert_eq!(result.rows[2][0], Value::String("The Algorithm".into()));
+}
+
+/// Test min/max on float properties.
+#[test]
+fn test_min_max_float_properties() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("INSERT (:Product {name: 'A', price: 39.99})")
+        .unwrap();
+    session
+        .execute("INSERT (:Product {name: 'B', price: 1299.99})")
+        .unwrap();
+    session
+        .execute("INSERT (:Product {name: 'C', price: 89.99})")
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (p:Product) RETURN min(p.price) AS cheapest, max(p.price) AS expensive")
+        .unwrap();
+
+    eprintln!("min/max result: {:?}", result.rows);
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Float64(39.99));
+    assert_eq!(result.rows[0][1], Value::Float64(1299.99));
+}
+
+#[test]
+fn test_multi_pattern_match_join() {
+    // Two comma-separated patterns sharing variables c and p
+    // should produce an equi-join, not a cross product.
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    // Customer -> PLACED -> Order -> CONTAINS -> Product
+    // Customer -> REVIEWED -> Product
+    session
+        .execute("INSERT (:Customer {name: 'Alix'})")
+        .unwrap();
+    session
+        .execute("INSERT (:Product {name: 'Laptop'})")
+        .unwrap();
+    session
+        .execute("INSERT (:Product {name: 'Phone'})")
+        .unwrap();
+    session.execute("INSERT (:Order {id: 'O1'})").unwrap();
+
+    session
+        .execute(
+            "MATCH (c:Customer {name: 'Alix'}), (o:Order {id: 'O1'}) \
+             INSERT (c)-[:PLACED]->(o)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (o:Order {id: 'O1'}), (p:Product {name: 'Laptop'}) \
+             INSERT (o)-[:CONTAINS]->(p)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (o:Order {id: 'O1'}), (p:Product {name: 'Phone'}) \
+             INSERT (o)-[:CONTAINS]->(p)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (c:Customer {name: 'Alix'}), (p:Product {name: 'Laptop'}) \
+             INSERT (c)-[:REVIEWED {rating: 5}]->(p)",
+        )
+        .unwrap();
+
+    // Multi-pattern: c ordered p AND c reviewed p
+    let result = session
+        .execute(
+            "MATCH (c:Customer)-[:PLACED]->(o:Order)-[:CONTAINS]->(p:Product), \
+                   (c)-[r:REVIEWED]->(p) \
+             RETURN c.name, p.name, r.rating ORDER BY c.name, p.name",
+        )
+        .unwrap();
+
+    eprintln!("multi-pattern result: {:?}", result.rows);
+    // Should only match (Alix, Laptop, 5) because Alix reviewed only Laptop
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("Laptop".into()));
+    assert_eq!(result.rows[0][2], Value::Int64(5));
+}
+
+#[test]
+fn test_with_aggregate_having_filter() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
+    session.execute("INSERT (:Person {name: 'Harm'})").unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+             INSERT (a)-[:MSG]->(b)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) \
+             INSERT (a)-[:MSG]->(b)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Harm'}) \
+             INSERT (a)-[:MSG]->(b)",
+        )
+        .unwrap();
+
+    // WITH aggregation + WHERE on aggregate alias
+    let result = session
+        .execute(
+            "MATCH (a:Person)-[m:MSG]->(b:Person) \
+             WITH a, b, count(m) AS msgs \
+             WHERE msgs >= 2 \
+             RETURN a.name, b.name, msgs",
+        )
+        .unwrap();
+
+    eprintln!("WITH HAVING result: {:?}", result.rows);
+    // Only Alix->Gus has 2 messages
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    assert_eq!(result.rows[0][1], Value::String("Gus".into()));
+    assert_eq!(result.rows[0][2], Value::Int64(2));
+}

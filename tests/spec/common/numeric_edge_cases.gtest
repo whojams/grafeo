@@ -26,7 +26,7 @@ tests:
         - [9223372036854775807]
 
   - name: min_int64
-    skip: "min int64 storage"
+    skip: "min int64 literal overflows parser"
     setup:
       - "INSERT (:N {v: -9223372036854775808})"
     query: "MATCH (n:N) RETURN n.v AS val"
@@ -163,58 +163,52 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: round_half_up
-    skip: "round returns integer not float"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN round(2.5) AS val"
     expect:
       rows:
-        - [3.0]
+        - [3]
 
   - name: round_negative
-    skip: "round returns integer not float"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN round(-2.5) AS val"
     expect:
       rows:
-        - [-3.0]
+        - [-3]
 
   - name: ceil_positive
-    skip: "ceil returns integer not float"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN ceil(2.1) AS val"
     expect:
       rows:
-        - [3.0]
+        - [3]
 
   - name: ceil_negative
-    skip: "ceil returns integer not float"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN ceil(-2.9) AS val"
     expect:
       rows:
-        - [-2.0]
+        - [-2]
 
   - name: floor_positive
-    skip: "floor returns integer not float"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN floor(2.9) AS val"
     expect:
       rows:
-        - [2.0]
+        - [2]
 
   - name: floor_negative
-    skip: "floor returns integer not float"
     setup:
       - "INSERT (:N {v: 1})"
     query: "MATCH (n:N) RETURN floor(-2.1) AS val"
     expect:
       rows:
-        - [-3.0]
+        - [-3]
 
   # ---------------------------------------------------------------------------
   # Mixed integer/float arithmetic

@@ -81,12 +81,47 @@ impl GqlTranslator {
         synthetic_alias: &str,
     ) -> Result<(AggregateExpr, LogicalExpression)> {
         match expr {
-            ast::Expression::FunctionCall { .. } => {
-                let agg = self
-                    .try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
-                    .expect("contains_aggregate was true but try_extract_aggregate returned None");
-                let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
-                Ok((agg, substitute))
+            ast::Expression::FunctionCall {
+                name,
+                args,
+                distinct,
+            } => {
+                // If this function IS an aggregate, extract it directly.
+                if let Some(agg) =
+                    self.try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
+                {
+                    let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
+                    return Ok((agg, substitute));
+                }
+                // Non-aggregate function wrapping an aggregate argument
+                // (e.g., size(collect(...))):  find the aggregate inside the
+                // arguments, extract it, and rebuild the outer function call
+                // with the substituted variable.
+                for (i, arg) in args.iter().enumerate() {
+                    if contains_aggregate(arg) {
+                        let (agg, sub) = self.extract_wrapped_aggregate(arg, synthetic_alias)?;
+                        let mut translated_args: Vec<LogicalExpression> =
+                            Vec::with_capacity(args.len());
+                        for (j, a) in args.iter().enumerate() {
+                            if j == i {
+                                translated_args.push(sub.clone());
+                            } else {
+                                translated_args.push(self.translate_expression(a)?);
+                            }
+                        }
+                        return Ok((
+                            agg,
+                            LogicalExpression::FunctionCall {
+                                name: name.clone(),
+                                args: translated_args,
+                                distinct: *distinct,
+                            },
+                        ));
+                    }
+                }
+                unreachable!(
+                    "contains_aggregate was true but no aggregate found in FunctionCall args"
+                );
             }
             ast::Expression::Binary { left, op, right } => {
                 let binary_op = self.translate_binary_op(*op);

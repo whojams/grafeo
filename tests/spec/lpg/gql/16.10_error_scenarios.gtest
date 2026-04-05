@@ -128,7 +128,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: cast_string_to_int_invalid
-    skip: "error message format mismatch"
+    skip: "invalid CAST returns NULL instead of erroring"
     setup:
       - "INSERT (:N {v: 'hello'})"
     query: "MATCH (n:N) RETURN CAST(n.v AS INT) AS result"
@@ -136,7 +136,6 @@ tests:
       error: "cast"
 
   - name: cast_bool_to_int
-    skip: "bool-to-int cast not supported"
     setup:
       - "INSERT (:N {v: true})"
     query: "MATCH (n:N) RETURN CAST(n.v AS INT) AS result"
@@ -200,11 +199,10 @@ tests:
         - [0]
 
   - name: aggregation_on_empty_result
-    skip: "sum on empty returns 0 not null for some aggregates"
     query: "MATCH (n:NonExistent) RETURN sum(n.value) AS total"
     expect:
       rows:
-        - [0]
+        - [null]
 
   - name: avg_on_empty_result
     query: "MATCH (n:NonExistent) RETURN avg(n.value) AS average"

@@ -1875,6 +1875,10 @@ impl<'a> Parser<'a> {
                 | TokenKind::Call
                 | TokenKind::Yield
                 | TokenKind::Exists
+                | TokenKind::Order
+                | TokenKind::By
+                | TokenKind::Skip
+                | TokenKind::Limit
         )
     }
 

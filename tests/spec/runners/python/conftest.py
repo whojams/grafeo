@@ -186,9 +186,10 @@ class GtestItem(pytest.Item):
         # Fresh database per test
         db = grafeo.GrafeoDB()
 
-        # Load dataset
-        if meta.dataset and meta.dataset != "empty":
-            _load_dataset(db, meta.dataset)
+        # Load dataset (per-test override takes priority over file-level)
+        effective_dataset = tc.dataset or meta.dataset
+        if effective_dataset and effective_dataset != "empty":
+            _load_dataset(db, effective_dataset)
 
         # Run setup queries in the file's declared language
         setup_language = meta.language or "gql"
@@ -217,9 +218,10 @@ class GtestItem(pytest.Item):
             self._run_error_test(db, language, queries, expect.error, params)
             return
 
-        # Execute all-but-last as fire-and-forget
+        # Execute all-but-last as fire-and-forget (with params, so
+        # INSERT/SET statements can reference $param variables).
         for q in queries[:-1]:
-            _execute(db, language, q)
+            _execute(db, language, q, params)
 
         # Last query: capture result (with params if present)
         result = _execute(db, language, queries[-1], params)
@@ -253,9 +255,8 @@ class GtestItem(pytest.Item):
         params=None,
     ) -> None:
         """Execute queries expecting the last one to raise an error."""
-        # Execute all-but-last normally
         for q in queries[:-1]:
-            _execute(db, language, q)
+            _execute(db, language, q, params)
 
         # Last query should fail (with params if present)
         try:

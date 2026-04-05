@@ -1315,6 +1315,12 @@ impl ExpressionPredicate {
                         Some(Value::Timestamp(ts.add_duration(dur)))
                     }
                     (Value::Duration(a), Value::Duration(b)) => Some(Value::Duration(a.add(*b))),
+                    (Value::List(a), Value::List(b)) => {
+                        let mut combined = Vec::with_capacity(a.len() + b.len());
+                        combined.extend_from_slice(a);
+                        combined.extend_from_slice(b);
+                        Some(Value::List(combined.into()))
+                    }
                     _ => self.eval_arithmetic(left, right, i64::checked_add, |a, b| a + b),
                 }
             }
@@ -1822,6 +1828,7 @@ impl ExpressionPredicate {
                 match val {
                     Value::Int64(i) => Some(Value::Int64(i)),
                     Value::Float64(f) => Some(Value::Int64(f as i64)),
+                    Value::Bool(b) => Some(Value::Int64(i64::from(b))),
                     Value::String(s) => s.parse::<i64>().ok().map(Value::Int64),
                     _ => None,
                 }
@@ -2563,7 +2570,7 @@ impl ExpressionPredicate {
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::Int64(i) => Some(Value::Int64(i)),
-                    Value::Float64(f) => Some(Value::Int64(f.ceil() as i64)),
+                    Value::Float64(f) => Some(Value::Float64(f.ceil())),
                     _ => None,
                 }
             }
@@ -2574,7 +2581,7 @@ impl ExpressionPredicate {
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::Int64(i) => Some(Value::Int64(i)),
-                    Value::Float64(f) => Some(Value::Int64(f.floor() as i64)),
+                    Value::Float64(f) => Some(Value::Float64(f.floor())),
                     _ => None,
                 }
             }
@@ -2585,7 +2592,7 @@ impl ExpressionPredicate {
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::Int64(i) => Some(Value::Int64(i)),
-                    Value::Float64(f) => Some(Value::Int64(f.round() as i64)),
+                    Value::Float64(f) => Some(Value::Float64(f.round())),
                     _ => None,
                 }
             }

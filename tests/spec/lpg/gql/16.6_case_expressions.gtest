@@ -90,7 +90,6 @@ tests:
         - [Wireless Headphones, affordable]
 
   - name: searched_case_multiple_conditions
-    skip: "compound CASE condition evaluation order"
     query: |
       MATCH (p:Product)
       RETURN p.name,
@@ -106,7 +105,7 @@ tests:
       rows:
         - [Graph Databases, best value]
         - [Laptop Pro, premium quality]
-        - [Rust Programming, budget pick]
+        - [Rust Programming, best value]
         - [Tablet Mini, standard]
         - [Winter Jacket, standard]
         - [Wireless Headphones, standard]

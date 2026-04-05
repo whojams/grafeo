@@ -89,7 +89,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: cities_with_most_connections
-    skip: "outgoing edge count ordering"
     query: |
       MATCH (c:City)-[r:ROUTE]->(:City)
       RETURN c.name, count(r) AS outgoing_routes
@@ -98,7 +97,7 @@ tests:
       ordered: true
       rows:
         - [Amsterdam, 4]
-        - [Paris, 4]
+        - [Paris, 3]
         - [Barcelona, 2]
         - [Berlin, 2]
         - [Brussels, 2]
@@ -176,7 +175,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: largest_cities
-    skip: "integer ordering"
     query: |
       MATCH (c:City)
       RETURN c.name, c.population

@@ -192,6 +192,48 @@ mod wal_directory {
         }
     }
 
+    /// Regression test for GrafeoDB/grafeo#221 (WAL deadlock on second batch).
+    ///
+    /// Direct CRUD calls on a persistent database with WAL would deadlock on
+    /// the second batch of writes because `sync_all()` was called while holding
+    /// the `active_log` mutex, and Batch mode triggers sync when >100ms have
+    /// elapsed since the last sync (i.e., the first write of the second batch).
+    #[test]
+    fn second_batch_crud_does_not_deadlock() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("deadlock_test");
+
+        let config = Config::persistent(&path).with_storage_format(StorageFormat::WalDirectory);
+        let db = GrafeoDB::with_config(config).expect("open");
+
+        // First batch: create nodes with properties
+        for i in 0..10 {
+            let id = db.create_node(&["Person"]);
+            db.set_node_property(id, "name", Value::from(format!("Node{i}")));
+            db.set_node_property(id, "index", Value::Int64(i));
+        }
+
+        // Sleep long enough to trigger Batch mode sync threshold (default 100ms)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Second batch: this would deadlock before the fix because the first
+        // write_frame triggers sync_all() while holding active_log.
+        for i in 10..20 {
+            let id = db.create_node(&["Person"]);
+            db.set_node_property(id, "name", Value::from(format!("Node{i}")));
+            db.set_node_property(id, "index", Value::Int64(i));
+        }
+
+        assert_eq!(db.node_count(), 20);
+        db.close().expect("close");
+
+        // Verify data survives reopen
+        let config = Config::persistent(&path).with_storage_format(StorageFormat::WalDirectory);
+        let db = GrafeoDB::with_config(config).expect("reopen");
+        assert_eq!(db.node_count(), 20, "all nodes should survive reopen");
+        db.close().expect("close");
+    }
+
     /// Verify that no checkpoint.meta file is written for directory format.
     /// Its presence would cause recovery to skip WAL files.
     #[test]

@@ -130,6 +130,12 @@ impl<'a> Parser<'a> {
                 | TokenKind::Rows   // ROWS ONLY
                 | TokenKind::Row    // ROW ONLY
                 | TokenKind::Only // ROWS ONLY
+                | TokenKind::Asc  // ASC/DESC as alias
+                | TokenKind::Desc
+                | TokenKind::Order
+                | TokenKind::By
+                | TokenKind::Skip
+                | TokenKind::Limit
         )
     }
 

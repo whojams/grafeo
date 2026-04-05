@@ -261,7 +261,6 @@ tests:
         - [Alix van Berg]
 
   - name: concat_with_number_cast
-    skip: "CAST in string concatenation"
     setup:
       - "INSERT (:N {name: 'Alix', age: 30})"
     query: "MATCH (n:N) RETURN n.name + ' is ' + CAST(n.age AS STRING) AS desc"

@@ -122,13 +122,12 @@ tests:
         - [Tablet Mini]
 
   - name: ends_with_sku_suffix
-    skip: "wrong sort order in expected results"
     query: "MATCH (p:Product) WHERE p.sku ENDS WITH '001' RETURN p.name ORDER BY p.name"
     expect:
       ordered: true
       rows:
-        - [Laptop Pro]
         - [Graph Databases]
+        - [Laptop Pro]
         - [Winter Jacket]
 
   # ---------------------------------------------------------------------------

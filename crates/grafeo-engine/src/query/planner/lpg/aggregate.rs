@@ -226,10 +226,10 @@ impl super::Planner {
                 LogicalAggregateFunction::Sum => LogicalType::Any,
                 LogicalAggregateFunction::Avg => LogicalType::Float64,
                 LogicalAggregateFunction::Min | LogicalAggregateFunction::Max => {
-                    // MIN/MAX preserve input type; use Int64 as default for numeric comparisons
-                    // since the aggregate can return any Value type, but the most common case
-                    // is numeric values from property expressions
-                    LogicalType::Int64
+                    // MIN/MAX preserve input type: the result can be any type
+                    // (Int64, Float64, String, Date, etc.), so use Any/Generic
+                    // to avoid type mismatch when pushing the finalized value.
+                    LogicalType::Any
                 }
                 LogicalAggregateFunction::Collect => LogicalType::Any, // List type (using Any since List is a complex type)
                 LogicalAggregateFunction::GroupConcat => LogicalType::String,

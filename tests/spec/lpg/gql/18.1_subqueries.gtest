@@ -63,7 +63,6 @@ tests:
         - [3]
 
   - name: sibling_call_same_variable_name
-    skip: "sibling CALL blocks lose first block output in some bindings"
     description: >
       Same-named variables in sibling CALL blocks must not collide.
       Each block's internal 'n' is independent; only the aliased outputs
@@ -80,7 +79,6 @@ tests:
         - [Alix, TechCorp]
 
   - name: sibling_call_outputs_both_visible
-    skip: "sibling CALL blocks lose first block output in some bindings"
     description: >
       Two sibling CALL blocks with different variables should both produce
       their aliased outputs in the outer RETURN.
@@ -96,7 +94,6 @@ tests:
         - [30, 25]
 
   - name: three_sibling_calls_same_variable
-    skip: "sibling CALL blocks lose first block output in some bindings"
     description: >
       Three sibling CALL blocks all using 'n' internally should each
       resolve independently.

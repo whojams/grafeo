@@ -184,8 +184,9 @@ for (const filePath of gtestFiles) {
               for (const req of (tc.requires || [])) {
                 if (!isAvailable(db, req)) return ctx.skip()
               }
-              if (meta.dataset && meta.dataset !== 'empty') {
-                await loadDataset(db, meta.dataset)
+              const effectiveDataset = tc.dataset || meta.dataset
+              if (effectiveDataset && effectiveDataset !== 'empty') {
+                await loadDataset(db, effectiveDataset)
               }
               await runTestCase(db, { ...tc, query }, lang, meta.language || 'gql')
             } finally {
@@ -218,9 +219,10 @@ for (const filePath of gtestFiles) {
             if (!isAvailable(db, req)) return ctx.skip()
           }
 
-          // Load dataset
-          if (meta.dataset && meta.dataset !== 'empty') {
-            await loadDataset(db, meta.dataset)
+          // Load dataset (per-test override takes priority)
+          const effectiveDataset = tc.dataset || meta.dataset
+          if (effectiveDataset && effectiveDataset !== 'empty') {
+            await loadDataset(db, effectiveDataset)
           }
 
           await runTestCase(db, tc, tc.language || meta.language, meta.language || 'gql')
@@ -251,7 +253,7 @@ async function runTestCase(db, tc, language, setupLanguage) {
   // Error case: execute all-but-last normally, only last should fail
   if (exp.error != null) {
     for (let i = 0; i < queries.length - 1; i++) {
-      await executeQuery(db, language, queries[i])
+      await executeQuery(db, language, queries[i], params)
     }
     try {
       await executeQuery(db, language, queries[queries.length - 1], params)
@@ -267,7 +269,7 @@ async function runTestCase(db, tc, language, setupLanguage) {
   let result
   for (let i = 0; i < queries.length; i++) {
     const isLast = i === queries.length - 1
-    result = await executeQuery(db, language, queries[i], isLast ? params : undefined)
+    result = await executeQuery(db, language, queries[i], params)
   }
 
   // Column assertion (checked before value assertions)

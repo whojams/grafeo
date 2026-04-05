@@ -188,7 +188,6 @@ tests:
         - [Shosanna, 2]
 
   - name: movies_per_director_cypher
-    skip: "Cypher ORDER BY after aggregation"
     variants:
       cypher: |
         MATCH (d:Director)-[:DIRECTED]->(m:Movie)

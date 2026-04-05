@@ -151,6 +151,8 @@ function parseSingleTest(ctx) {
         ctx.idx++; tc.statements = parseStringList(ctx); break
       case 'language':
         tc.language = unquote(value); ctx.idx++; break
+      case 'dataset':
+        tc.dataset = unquote(value); ctx.idx++; break
       case 'tags':
         tc.tags = parseYamlList(value); ctx.idx++; break
       case 'requires':

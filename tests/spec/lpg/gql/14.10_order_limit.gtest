@@ -81,14 +81,14 @@ tests:
     expect:
       ordered: true
       rows:
-        - [Alix]
+        - [Gus]
 
   - name: skip_rows
     query: MATCH (n:Person) RETURN n.name ORDER BY n.age ASC SKIP 1
     expect:
       ordered: true
       rows:
-        - [Gus]
+        - [Alix]
         - [Vincent]
 
   - name: skip_all
@@ -108,7 +108,7 @@ tests:
     expect:
       ordered: true
       rows:
-        - [Gus]
+        - [Alix]
 
   - name: fetch_first_n_rows_only
     query: MATCH (n:Person) RETURN n.name FETCH FIRST 2 ROWS ONLY

@@ -209,8 +209,9 @@ for (const filePath of gtestFiles) {
             for (const req of (tc.requires || [])) {
               if (!isAvailable(db, req)) return ctx.skip()
             }
-            if (meta.dataset && meta.dataset !== 'empty') {
-              loadDataset(db, meta.dataset)
+            const effectiveDataset = tc.dataset || meta.dataset
+            if (effectiveDataset && effectiveDataset !== 'empty') {
+              loadDataset(db, effectiveDataset)
             }
             try {
               runTestCase(db, { ...tc, query }, lang, meta.language || 'gql')
@@ -248,9 +249,10 @@ for (const filePath of gtestFiles) {
         // WASM executeRaw does not support params yet
         if (tc.params && Object.keys(tc.params).length > 0) return ctx.skip()
 
-        // Load dataset
-        if (meta.dataset && meta.dataset !== 'empty') {
-          loadDataset(db, meta.dataset)
+        // Load dataset (per-test override takes priority)
+        const effectiveDataset = tc.dataset || meta.dataset
+        if (effectiveDataset && effectiveDataset !== 'empty') {
+          loadDataset(db, effectiveDataset)
         }
 
         try {

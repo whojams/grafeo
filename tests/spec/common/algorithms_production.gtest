@@ -121,16 +121,16 @@ tests:
     dataset: movie_database
     query: "CALL grafeo.pagerank()"
     expect:
-      count: 9
+      count: 19
 
   - name: connected_components_movie
     dataset: movie_database
     query: "CALL grafeo.connected_components()"
     expect:
-      count: 9
+      count: 19
 
   - name: degree_centrality_movie
     dataset: movie_database
     query: "CALL grafeo.degree_centrality()"
     expect:
-      count: 9
+      count: 19

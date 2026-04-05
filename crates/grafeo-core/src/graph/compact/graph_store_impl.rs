@@ -360,11 +360,8 @@ impl GraphStore for CompactStore {
         let Some(rids) = self.edge_type_to_rel_id.get(edge_type) else {
             return 0.0;
         };
-        let mut total_edges = 0usize;
-        // Deduplicate node tables to avoid double-counting when multiple
-        // rel tables share the same source/destination label.
-        let mut seen_table_ids = FxHashSet::default();
-        let mut total_nodes = 0usize;
+        let mut total_edges: usize = 0;
+        let mut seen_tables = FxHashSet::default();
         for &rid in rids {
             let Some(rt) = self.rel_tables_by_id.get(rid as usize) else {
                 continue;
@@ -375,12 +372,12 @@ impl GraphStore for CompactStore {
             } else {
                 rt.dst_table_id()
             };
-            if seen_table_ids.insert(table_id) {
-                total_nodes += self
-                    .resolve_node_table(table_id)
-                    .map_or(1, |nt| nt.len().max(1));
-            }
+            seen_tables.insert(table_id);
         }
+        let total_nodes: usize = seen_tables
+            .iter()
+            .map(|&tid| self.resolve_node_table(tid).map_or(1, |nt| nt.len().max(1)))
+            .sum();
         if total_nodes == 0 {
             return 0.0;
         }

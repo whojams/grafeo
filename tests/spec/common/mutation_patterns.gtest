@@ -19,7 +19,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: counter_increment_three_times
-    skip: "SET self-reference (c.value = c.value + 1) not supported"
     statements:
       - "INSERT (:Counter {name: 'hits', value: 0})"
       - "MATCH (c:Counter {name: 'hits'}) SET c.value = c.value + 1"

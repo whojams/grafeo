@@ -57,7 +57,7 @@ tests:
         - [Mia]
 
   - name: exists_multi_hop
-    skip: "multi-hop pattern in EXISTS subquery"
+    skip: "multi-hop EXISTS returns incomplete results"
     query: |
       MATCH (c:Customer)
       WHERE EXISTS {

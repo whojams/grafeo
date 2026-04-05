@@ -50,31 +50,28 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: sum_order_totals_gql
-    skip: "float precision mismatch in sum"
     variants:
       gql: MATCH (o:Order) RETURN sum(o.total) AS total_revenue
     expect:
       precision: 2
       rows:
-        - [3639.91]
+        - [3639.89]
 
   - name: sum_order_totals_cypher
-    skip: "float precision mismatch in sum"
     variants:
       cypher: MATCH (o:Order) RETURN sum(o.total) AS total_revenue
     expect:
       precision: 2
       rows:
-        - [3639.91]
+        - [3639.89]
 
   - name: sum_order_totals_gremlin
-    skip: "float precision mismatch in sum"
     variants:
       gremlin: "g.V().hasLabel('Order').values('total').sum()"
     expect:
       precision: 2
       rows:
-        - [3639.91]
+        - [3639.89]
 
   # ---------------------------------------------------------------------------
   # AVG
@@ -100,7 +97,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: min_max_price_gql
-    skip: "min/max returns 0 for float properties"
     variants:
       gql: MATCH (p:Product) RETURN min(p.price) AS cheapest, max(p.price) AS expensive
     expect:
@@ -108,7 +104,6 @@ tests:
         - [39.99, 1299.99]
 
   - name: min_max_price_cypher
-    skip: "min/max returns 0 for float properties"
     variants:
       cypher: MATCH (p:Product) RETURN min(p.price) AS cheapest, max(p.price) AS expensive
     expect:
@@ -150,7 +145,6 @@ tests:
         - [shipped, 1]
 
   - name: count_by_status_cypher
-    skip: "Cypher ORDER BY after aggregation"
     variants:
       cypher: |
         MATCH (o:Order)
@@ -208,7 +202,6 @@ tests:
         - [Vincent, 2]
 
   - name: orders_per_customer_cypher
-    skip: "Cypher ORDER BY after aggregation"
     variants:
       cypher: |
         MATCH (c:Customer)-[:PLACED]->(o:Order)
@@ -241,7 +234,6 @@ tests:
         - [Jules, 49.99]
 
   - name: total_spend_per_customer_cypher
-    skip: "Cypher <> operator parsing"
     variants:
       cypher: |
         MATCH (c:Customer)-[:PLACED]->(o:Order)
@@ -277,7 +269,6 @@ tests:
         - [Vincent]
 
   - name: customers_with_multiple_orders_cypher
-    skip: "Cypher WITH aggregation filter"
     variants:
       cypher: |
         MATCH (c:Customer)-[:PLACED]->(o:Order)

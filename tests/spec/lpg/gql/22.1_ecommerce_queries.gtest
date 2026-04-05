@@ -63,7 +63,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: products_ordered_most
-    skip: "secondary sort order mismatch"
     query: |
       MATCH (o:Order)-[:CONTAINS]->(p:Product)
       RETURN p.name, count(o) AS times_ordered
@@ -73,8 +72,8 @@ tests:
       rows:
         - [Graph Databases, 3]
         - [Laptop Pro, 2]
-        - [Wireless Headphones, 2]
         - [Rust Programming, 2]
+        - [Wireless Headphones, 2]
         - [Tablet Mini, 1]
         - [Winter Jacket, 1]
 
@@ -176,7 +175,7 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: customer_reviewed_what_they_ordered
-    skip: "multi-pattern MATCH ordering"
+    skip: "multi-pattern MATCH produces duplicate rows from path multiplicity"
     query: |
       MATCH (c:Customer)-[:PLACED]->(o:Order)-[:CONTAINS]->(p:Product),
             (c)-[r:REVIEWED]->(p)
@@ -215,7 +214,6 @@ tests:
         - [Wireless Headphones, 89.99]
 
   - name: category_price_statistics
-    skip: "aggregate precision mismatch"
     query: |
       MATCH (p:Product)-[:IN_CATEGORY]->(c:Category)
       RETURN c.name, count(p) AS cnt, min(p.price) AS cheapest, max(p.price) AS most_expensive, avg(p.price) AS avg_price

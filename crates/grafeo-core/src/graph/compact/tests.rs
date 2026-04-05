@@ -178,7 +178,7 @@ fn test_builder_duplicate_edge_type_error() {
 
     assert!(matches!(
         result,
-        Err(CompactStoreError::DuplicateEdgeType(ref s)) if s.contains("LIVES_IN")
+        Err(CompactStoreError::DuplicateEdgeType(ref s)) if s == "LIVES_IN (Person -> City)"
     ));
 }
 
@@ -1338,4 +1338,119 @@ fn test_from_graph_store_nodes_without_edges() {
     assert_eq!(ids.len(), 1);
     assert_eq!(compact.edge_count(), 0);
     assert!(compact.edges_from(ids[0], Direction::Outgoing).is_empty());
+}
+
+/// Regression test for GrafeoDB/grafeo#221: `compact()` fails with
+/// "duplicate edge type" when the same edge type spans multiple label pairs.
+#[test]
+fn test_from_graph_store_multiple_label_pairs_same_edge_type() {
+    use crate::graph::compact::builder::from_graph_store;
+    use crate::graph::lpg::LpgStore;
+
+    let store = LpgStore::new().unwrap();
+
+    let a = store.create_node(&["A"]);
+    store.set_node_property(a, "name", Value::from("a"));
+    let b = store.create_node(&["B"]);
+    store.set_node_property(b, "name", Value::from("b"));
+    let c = store.create_node(&["C"]);
+    store.set_node_property(c, "name", Value::from("c"));
+
+    store.create_edge(a, b, "CALLS");
+    store.create_edge(a, c, "USES_TYPE");
+
+    // This used to fail with DuplicateEdgeType because the validation
+    // checked only edge_type, not the full (edge_type, src, dst) triple.
+    let compact = from_graph_store(&store).unwrap();
+
+    // Verify both edge types survived.
+    let a_ids = compact.nodes_by_label("A");
+    assert_eq!(a_ids.len(), 1);
+
+    let outgoing = compact.edges_from(a_ids[0], Direction::Outgoing);
+    assert_eq!(outgoing.len(), 2);
+}
+
+/// Same edge type between different label pairs (e.g. code dependency graph).
+#[test]
+fn test_from_graph_store_same_edge_type_different_label_pairs() {
+    use crate::graph::compact::builder::from_graph_store;
+    use crate::graph::lpg::LpgStore;
+
+    let store = LpgStore::new().unwrap();
+
+    let method = store.create_node(&["Method"]);
+    store.set_node_property(method, "name", Value::from("main"));
+    let class = store.create_node(&["Class"]);
+    store.set_node_property(class, "name", Value::from("App"));
+    let other_method = store.create_node(&["Method"]);
+    store.set_node_property(other_method, "name", Value::from("helper"));
+
+    // CALLS from Method->Method and Method->Class (same edge type, different dst labels)
+    store.create_edge(method, other_method, "CALLS");
+    store.create_edge(method, class, "CALLS");
+
+    let compact = from_graph_store(&store).unwrap();
+
+    let method_ids = compact.nodes_by_label("Method");
+    assert_eq!(method_ids.len(), 2);
+
+    // Find the "main" method node and verify it has 2 outgoing CALLS edges.
+    let main_id = method_ids
+        .iter()
+        .find(|&&id| {
+            compact.get_node(id).is_some_and(|n| {
+                n.properties.get(&PropertyKey::from("name")) == Some(&Value::from("main"))
+            })
+        })
+        .unwrap();
+
+    let outgoing = compact.edges_from(*main_id, Direction::Outgoing);
+    assert_eq!(outgoing.len(), 2);
+    for (_target, eid) in &outgoing {
+        let edge = compact.get_edge(*eid).unwrap();
+        assert_eq!(edge.edge_type.as_str(), "CALLS");
+    }
+}
+
+/// Builder allows same edge type with different label pairs.
+#[test]
+fn test_builder_same_edge_type_different_labels_ok() {
+    let store = CompactStoreBuilder::new()
+        .node_table("A", |t| t.column_dict("name", &["a"]))
+        .node_table("B", |t| t.column_dict("name", &["b"]))
+        .node_table("C", |t| t.column_dict("name", &["c"]))
+        .rel_table("CALLS", "A", "B", |r| r.edges([(0, 0)]))
+        .rel_table("CALLS", "A", "C", |r| r.edges([(0, 0)]))
+        .build();
+
+    assert!(store.is_ok());
+    let store = store.unwrap();
+
+    let a_ids = store.nodes_by_label("A");
+    assert_eq!(a_ids.len(), 1);
+
+    let outgoing = store.edges_from(a_ids[0], Direction::Outgoing);
+    assert_eq!(outgoing.len(), 2);
+}
+
+/// Statistics for an edge type spanning multiple rel tables are aggregated.
+#[test]
+fn test_statistics_aggregate_multi_table_edge_type() {
+    let store = CompactStoreBuilder::new()
+        .node_table("A", |t| t.column_dict("name", &["a1", "a2"]))
+        .node_table("B", |t| t.column_dict("name", &["b1"]))
+        .node_table("C", |t| t.column_dict("name", &["c1", "c2", "c3"]))
+        .rel_table("LINK", "A", "B", |r| r.edges([(0, 0), (1, 0)]))
+        .rel_table("LINK", "A", "C", |r| r.edges([(0, 0), (0, 1), (1, 2)]))
+        .build()
+        .unwrap();
+
+    let stats = store.statistics();
+    let link_stats = stats
+        .get_edge_type("LINK")
+        .expect("LINK stats should exist");
+    // 2 edges (A->B) + 3 edges (A->C) = 5 total
+    assert_eq!(link_stats.edge_count, 5);
+    assert_eq!(stats.total_edges, 5);
 }

@@ -92,6 +92,7 @@ type TestCase struct {
 	Requires   []string
 	Skip       string
 	Language   string
+	Dataset    string
 	Expect     Expect
 	Variants   map[string]string
 }
@@ -730,6 +731,9 @@ func parseSingleTest(ctx *parseContext) TestCase {
 		case "language":
 			tc.Language = unquote(value)
 			ctx.idx++
+		case "dataset":
+			tc.Dataset = unquote(value)
+			ctx.idx++
 		case "setup":
 			ctx.idx++
 			tc.Setup = parseStringList(ctx)
@@ -1169,9 +1173,13 @@ func runSingleTest(t *testing.T, gf *GtestFile, tc TestCase, variantLang, varian
 	}
 	defer db.Close()
 
-	// Load dataset
-	if gf.Meta.Dataset != "" && gf.Meta.Dataset != "empty" {
-		loadDataset(t, db, gf.Meta.Dataset, datasetsDir)
+	// Load dataset (per-test override takes priority)
+	effectiveDataset := gf.Meta.Dataset
+	if tc.Dataset != "" {
+		effectiveDataset = tc.Dataset
+	}
+	if effectiveDataset != "" && effectiveDataset != "empty" {
+		loadDataset(t, db, effectiveDataset, datasetsDir)
 	}
 
 	// Run setup queries in the file's declared language
@@ -1211,14 +1219,19 @@ func runSingleTest(t *testing.T, gf *GtestFile, tc TestCase, variantLang, varian
 		return
 	}
 
-	// Execute all-but-last as fire-and-forget
+	// Execute all-but-last as fire-and-forget (with params so $param works)
 	for _, q := range queries[:len(queries)-1] {
-		if _, err := executeQuery(db, language, q); err != nil {
-			// If the language is not supported, skip rather than fail
-			if isUnsupportedLanguageError(err) {
-				t.Skipf("Language %q not available: %v", language, err)
+		var fireErr error
+		if paramsJSON != "" {
+			_, fireErr = executeQueryWithParams(db, language, q, paramsJSON)
+		} else {
+			_, fireErr = executeQuery(db, language, q)
+		}
+		if fireErr != nil {
+			if isUnsupportedLanguageError(fireErr) {
+				t.Skipf("Language %q not available: %v", language, fireErr)
 			}
-			t.Fatalf("Statement failed: %v\nQuery: %s", err, q)
+			t.Fatalf("Statement failed: %v\nQuery: %s", fireErr, q)
 		}
 	}
 
@@ -1267,13 +1280,19 @@ func runSingleTest(t *testing.T, gf *GtestFile, tc TestCase, variantLang, varian
 func runErrorTest(t *testing.T, db *grafeo.Database, language string, queries []string, expectedSubstr string, paramsJSON string) {
 	t.Helper()
 
-	// Execute all-but-last normally
+	// Execute all-but-last normally (with params so $param works)
 	for _, q := range queries[:len(queries)-1] {
-		if _, err := executeQuery(db, language, q); err != nil {
-			if isUnsupportedLanguageError(err) {
-				t.Skipf("Language %q not available: %v", language, err)
+		var setupErr error
+		if paramsJSON != "" {
+			_, setupErr = executeQueryWithParams(db, language, q, paramsJSON)
+		} else {
+			_, setupErr = executeQuery(db, language, q)
+		}
+		if setupErr != nil {
+			if isUnsupportedLanguageError(setupErr) {
+				t.Skipf("Language %q not available: %v", language, setupErr)
 			}
-			t.Fatalf("Pre-error statement failed unexpectedly: %v\nQuery: %s", err, q)
+			t.Fatalf("Pre-error statement failed unexpectedly: %v\nQuery: %s", setupErr, q)
 		}
 	}
 

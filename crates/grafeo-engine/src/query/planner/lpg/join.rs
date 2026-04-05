@@ -3,7 +3,7 @@
 use super::{
     ApplyOp, ApplyOperator, DistinctOp, Error, ExceptOp, HashJoinOperator, IntersectOp, JoinOp,
     JoinType, LeapfrogJoinOperator, LogicalExpression, MultiWayJoinOp, Operator, OtherwiseOp,
-    PhysicalJoinType, Result, UnionOp, common,
+    PhysicalJoinType, ProjectExpr, ProjectOperator, Result, UnionOp, common,
 };
 
 impl super::Planner {
@@ -51,7 +51,7 @@ impl super::Planner {
 
         let output_schema = self.derive_schema_from_columns(&all_columns);
 
-        let operator: Box<dyn Operator> = Box::new(HashJoinOperator::new(
+        let join_op: Box<dyn Operator> = Box::new(HashJoinOperator::new(
             left_op,
             right_op,
             probe_keys,
@@ -60,7 +60,55 @@ impl super::Planner {
             output_schema,
         ));
 
-        Ok((operator, all_columns))
+        // Deduplicate shared variable columns: right-side columns that also
+        // appear on the left are redundant (the join guarantees equality).
+        // Skip deduplication for CROSS joins (no equality guarantee).
+        // For RIGHT/FULL joins, use COALESCE to prefer the non-NULL side.
+        if matches!(join.join_type, JoinType::Cross) || join.conditions.is_empty() {
+            return Ok((join_op, all_columns));
+        }
+        let needs_coalesce = matches!(join.join_type, JoinType::Right | JoinType::Full);
+
+        let left_count = left_columns.len();
+        let mut proj_exprs: Vec<ProjectExpr> = Vec::new();
+        let mut deduped_columns: Vec<String> = Vec::new();
+        let mut has_duplicates = false;
+
+        for (li, col_name) in left_columns.iter().enumerate() {
+            if needs_coalesce {
+                if let Some(ri) = right_columns.iter().position(|c| c == col_name) {
+                    proj_exprs.push(ProjectExpr::Coalesce {
+                        first: li,
+                        second: left_count + ri,
+                    });
+                    has_duplicates = true;
+                } else {
+                    proj_exprs.push(ProjectExpr::Column(li));
+                }
+            } else {
+                proj_exprs.push(ProjectExpr::Column(li));
+            }
+            deduped_columns.push(col_name.clone());
+        }
+
+        for (ri, col_name) in right_columns.iter().enumerate() {
+            if !deduped_columns.contains(col_name) {
+                proj_exprs.push(ProjectExpr::Column(left_count + ri));
+                deduped_columns.push(col_name.clone());
+            } else {
+                has_duplicates = true;
+            }
+        }
+
+        if !has_duplicates {
+            return Ok((join_op, deduped_columns));
+        }
+
+        let proj_schema = self.derive_schema_from_columns(&deduped_columns);
+        let operator: Box<dyn Operator> =
+            Box::new(ProjectOperator::new(join_op, proj_exprs, proj_schema));
+
+        Ok((operator, deduped_columns))
     }
 
     /// Plans a multi-way leapfrog join (WCOJ) operator.

@@ -62,6 +62,7 @@ class TestCase:
     expect: Expect = field(default_factory=Expect)
     variants: Dict[str, str] = field(default_factory=dict)
     language: Optional[str] = None
+    dataset: Optional[str] = None
 
 
 @dataclass
@@ -153,6 +154,11 @@ def _parse_test_dict(d: dict) -> TestCase:
     lang = d.get("language")
     if lang is not None:
         tc.language = str(lang)
+
+    # per-test dataset override
+    ds = d.get("dataset")
+    if ds is not None:
+        tc.dataset = str(ds)
 
     # variants
     raw_variants = d.get("variants", {})

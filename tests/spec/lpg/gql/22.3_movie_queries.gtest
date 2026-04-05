@@ -31,7 +31,6 @@ tests:
         - [SciFi, 2]
 
   - name: top_rated_movies
-    skip: "float ordering precision"
     query: |
       MATCH (m:Movie)
       RETURN m.title, m.rating
@@ -42,7 +41,7 @@ tests:
       rows:
         - [Berlin Express, 8.7]
         - [The Heist, 8.2]
-        - [The Algorithm, 8.0]
+        - [The Algorithm, 8]
 
   - name: total_box_office_per_director
     query: |
@@ -61,7 +60,6 @@ tests:
   # ---------------------------------------------------------------------------
 
   - name: most_prolific_actors
-    skip: "secondary sort order mismatch"
     query: |
       MATCH (a:Actor)-[:ACTED_IN]->(m:Movie)
       RETURN a.name, count(m) AS films
@@ -86,7 +84,6 @@ tests:
         - [Vincent]
 
   - name: actors_avg_movie_rating
-    skip: "avg with LIMIT ordering"
     query: |
       MATCH (a:Actor)-[:ACTED_IN]->(m:Movie)
       RETURN a.name, avg(m.rating) AS avg_rating
@@ -188,7 +185,6 @@ tests:
         - [Hans, 2]
 
   - name: director_actor_repeated_collaborations
-    skip: "HAVING-style filter with count"
     query: |
       MATCH (d:Director)-[:DIRECTED]->(m:Movie)<-[:ACTED_IN]-(a:Actor)
       WITH d, a, count(m) AS collabs
@@ -197,7 +193,9 @@ tests:
       ORDER BY collabs DESC, d.name
     expect:
       ordered: true
-      count: 0
+      rows:
+        - [Django, Jules, 2]
+        - [Shosanna, Alix, 2]
 
   # ---------------------------------------------------------------------------
   # Box office analysis

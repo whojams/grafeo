@@ -4,6 +4,8 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.34] - Unreleased
 
+Deferred breaking changes before moving to rc.
+
 ### Fixed
 
 - **WAL sync counter race**: snapshot record count inside the lock, `fetch_sub` after sync instead of `store(0)`, preserving concurrent increments

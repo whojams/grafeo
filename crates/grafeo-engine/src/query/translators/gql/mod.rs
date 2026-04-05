@@ -9,9 +9,10 @@ mod pattern;
 use std::collections::{HashMap, HashSet};
 
 use super::common::{
-    build_left_join_with_predicates, combine_with_and, is_aggregate_function,
-    is_binary_set_function, references_any, to_aggregate_function, wrap_distinct, wrap_filter,
-    wrap_limit, wrap_return, wrap_skip, wrap_sort,
+    build_left_join_with_predicates, combine_with_and, flatten_and_conjuncts,
+    is_aggregate_function, is_binary_set_function, join_and_conjuncts, references_any,
+    to_aggregate_function, wrap_distinct, wrap_filter, wrap_limit, wrap_return, wrap_skip,
+    wrap_sort,
 };
 use crate::query::plan::{
     self as plan, AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp,
@@ -672,21 +673,26 @@ impl GqlTranslator {
                     let (aggregates, auto_group_by, post_return) =
                         self.extract_aggregates_and_groups(&with_clause.items)?;
 
-                    // If the WITH clause has a WHERE that references an
-                    // aggregate alias, promote it to HAVING so the filter
-                    // is applied during aggregation instead of after.
+                    // Split the WHERE into HAVING (aggregate-referencing
+                    // conjuncts) and a post-aggregate filter (the rest).
+                    // This handles mixed predicates like
+                    // `WHERE a.name = 'Alix' AND cnt > 2` correctly.
                     let aggregate_aliases: Vec<String> =
                         aggregates.iter().filter_map(|a| a.alias.clone()).collect();
-                    let having = if let Some(where_clause) = &with_clause.where_clause {
-                        let pred = self.translate_expression(&where_clause.expression)?;
-                        if references_any(&pred, &aggregate_aliases) {
-                            Some(pred)
+                    let (having, post_agg_filter) =
+                        if let Some(where_clause) = &with_clause.where_clause {
+                            let pred = self.translate_expression(&where_clause.expression)?;
+                            let conjuncts = flatten_and_conjuncts(&pred);
+                            let (having_parts, filter_parts): (Vec<_>, Vec<_>) = conjuncts
+                                .into_iter()
+                                .partition(|c| references_any(c, &aggregate_aliases));
+                            (
+                                join_and_conjuncts(having_parts.into_iter().cloned().collect()),
+                                join_and_conjuncts(filter_parts.into_iter().cloned().collect()),
+                            )
                         } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+                            (None, None)
+                        };
 
                     plan = LogicalOperator::Aggregate(AggregateOp {
                         group_by: auto_group_by,
@@ -710,6 +716,11 @@ impl GqlTranslator {
                             input: Box::new(plan),
                             pass_through_input: false,
                         });
+                    }
+
+                    // Apply non-aggregate WHERE conjuncts as a post-aggregate filter.
+                    if let Some(filter_pred) = post_agg_filter {
+                        plan = wrap_filter(plan, filter_pred);
                     }
                 } else {
                     let projections: Vec<Projection> = with_clause
@@ -751,28 +762,15 @@ impl GqlTranslator {
             }
 
             // Apply WHERE filter if present in WITH clause.
-            // Skip if the WHERE was already consumed as HAVING for an aggregate.
+            // For aggregate WITH clauses, the WHERE was already split into
+            // HAVING + post-aggregate filter above, so skip here.
             if let Some(where_clause) = &with_clause.where_clause {
                 let has_agg = with_clause
                     .items
                     .iter()
                     .any(|item| contains_aggregate(&item.expression));
-                let predicate = self.translate_expression(&where_clause.expression)?;
-                if has_agg {
-                    // Collect aggregate aliases to check if WHERE references them
-                    let agg_aliases: Vec<String> = with_clause
-                        .items
-                        .iter()
-                        .filter(|item| contains_aggregate(&item.expression))
-                        .filter_map(|item| item.alias.clone())
-                        .collect();
-                    if !references_any(&predicate, &agg_aliases) {
-                        // Non-aggregate WHERE: apply as normal filter
-                        plan = wrap_filter(plan, predicate);
-                    }
-                    // If it references aggregate aliases, it was already
-                    // consumed as HAVING above.
-                } else {
+                if !has_agg {
+                    let predicate = self.translate_expression(&where_clause.expression)?;
                     plan = wrap_filter(plan, predicate);
                 }
             }

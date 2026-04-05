@@ -692,12 +692,16 @@ pub(crate) fn wrap_distinct(input: LogicalOperator) -> LogicalOperator {
 /// Checks if a logical expression references any variable in the given set.
 pub(crate) fn references_any(expr: &LogicalExpression, names: &[String]) -> bool {
     match expr {
+        LogicalExpression::Literal(_) | LogicalExpression::Parameter(_) => false,
         LogicalExpression::Variable(v) => names.iter().any(|n| n == v),
+        LogicalExpression::Property { variable, .. }
+        | LogicalExpression::Labels(variable)
+        | LogicalExpression::Type(variable)
+        | LogicalExpression::Id(variable) => names.iter().any(|n| n == variable),
         LogicalExpression::Binary { left, right, .. } => {
             references_any(left, names) || references_any(right, names)
         }
         LogicalExpression::Unary { operand, .. } => references_any(operand, names),
-        LogicalExpression::Property { variable, .. } => names.iter().any(|n| n == variable),
         LogicalExpression::FunctionCall { args, .. } => {
             args.iter().any(|a| references_any(a, names))
         }
@@ -715,8 +719,78 @@ pub(crate) fn references_any(expr: &LogicalExpression, names: &[String]) -> bool
                     .is_some_and(|e| references_any(e, names))
         }
         LogicalExpression::List(items) => items.iter().any(|i| references_any(i, names)),
-        _ => false,
+        LogicalExpression::Map(entries) => entries.iter().any(|(_, v)| references_any(v, names)),
+        LogicalExpression::IndexAccess { base, index } => {
+            references_any(base, names) || references_any(index, names)
+        }
+        LogicalExpression::SliceAccess { base, start, end } => {
+            references_any(base, names)
+                || start.as_ref().is_some_and(|s| references_any(s, names))
+                || end.as_ref().is_some_and(|e| references_any(e, names))
+        }
+        LogicalExpression::ListComprehension {
+            list_expr,
+            filter_expr,
+            map_expr,
+            ..
+        } => {
+            references_any(list_expr, names)
+                || filter_expr
+                    .as_ref()
+                    .is_some_and(|f| references_any(f, names))
+                || references_any(map_expr, names)
+        }
+        LogicalExpression::ListPredicate {
+            list_expr,
+            predicate,
+            ..
+        } => references_any(list_expr, names) || references_any(predicate, names),
+        LogicalExpression::Reduce {
+            initial,
+            list,
+            expression,
+            ..
+        } => {
+            references_any(initial, names)
+                || references_any(list, names)
+                || references_any(expression, names)
+        }
+        LogicalExpression::PatternComprehension { projection, .. } => {
+            references_any(projection, names)
+        }
+        LogicalExpression::MapProjection { base, .. } => names.iter().any(|n| n == base),
+        // Subqueries have their own scope; outer names are not referenced.
+        LogicalExpression::ExistsSubquery(_)
+        | LogicalExpression::CountSubquery(_)
+        | LogicalExpression::ValueSubquery(_) => false,
     }
+}
+
+/// Flattens a tree of AND-joined expressions into a list of conjuncts.
+pub(crate) fn flatten_and_conjuncts(expr: &LogicalExpression) -> Vec<&LogicalExpression> {
+    match expr {
+        LogicalExpression::Binary {
+            left,
+            op: BinaryOp::And,
+            right,
+        } => {
+            let mut parts = flatten_and_conjuncts(left);
+            parts.extend(flatten_and_conjuncts(right));
+            parts
+        }
+        other => vec![other],
+    }
+}
+
+/// Joins a list of expressions with AND. Returns `None` for an empty list.
+pub(crate) fn join_and_conjuncts(parts: Vec<LogicalExpression>) -> Option<LogicalExpression> {
+    parts
+        .into_iter()
+        .reduce(|acc, part| LogicalExpression::Binary {
+            left: Box::new(acc),
+            op: BinaryOp::And,
+            right: Box::new(part),
+        })
 }
 
 /// Wraps an operator with RETURN.

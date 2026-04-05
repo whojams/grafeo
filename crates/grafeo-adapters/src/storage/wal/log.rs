@@ -200,7 +200,7 @@ impl WalManager {
         // Phase 1: write frame data and flush buffer while holding the lock.
         // Determine whether an fsync is needed, and if so clone the file handle
         // so we can release the lock before the (potentially slow) sync_all().
-        let (needs_rotation, sync_file) = {
+        let (needs_rotation, sync_file, synced_records) = {
             let mut guard = self.active_log.lock();
             let log_file = guard
                 .as_mut()
@@ -253,6 +253,15 @@ impl WalManager {
             // Flush the BufWriter while holding the lock (pushes data to OS).
             log_file.writer.flush()?;
 
+            // Snapshot the record count while holding the lock so we can
+            // subtract exactly this amount after sync, preserving any
+            // concurrent increments that arrive between lock release and sync.
+            let synced_records = if needs_sync {
+                self.records_since_sync.load(Ordering::Relaxed)
+            } else {
+                0
+            };
+
             // Clone the file handle for out-of-lock sync if needed.
             let sync_file = if needs_sync {
                 Some(log_file.writer.get_ref().try_clone()?)
@@ -260,14 +269,15 @@ impl WalManager {
                 None
             };
 
-            (needs_rotation, sync_file)
+            (needs_rotation, sync_file, synced_records)
             // guard dropped here: active_log lock released
         };
 
         // Phase 2: fsync outside the lock so other threads can write concurrently.
         if let Some(file) = sync_file {
             file.sync_all()?;
-            self.records_since_sync.store(0, Ordering::Relaxed);
+            self.records_since_sync
+                .fetch_sub(synced_records, Ordering::Relaxed);
             *self.last_sync.lock() = Instant::now();
         }
 

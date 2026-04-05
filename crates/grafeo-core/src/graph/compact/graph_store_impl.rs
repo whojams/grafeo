@@ -396,8 +396,8 @@ impl GraphStore for CompactStore {
     }
 
     fn all_edge_types(&self) -> Vec<String> {
-        self.rel_table_id_to_type
-            .iter()
+        self.edge_type_to_rel_id
+            .keys()
             .map(|s| s.to_string())
             .collect()
     }

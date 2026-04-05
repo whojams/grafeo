@@ -154,9 +154,9 @@ public class SpecTests : IDisposable
                 return;
             }
 
-            // Execute all-but-last
+            // Execute all-but-last (with params so $param works in INSERT/SET)
             for (var i = 0; i < queries.Count - 1; i++)
-                ExecuteQuery(_db, language, queries[i]);
+                ExecuteQuery(_db, language, queries[i], parameters);
 
             // Last query: capture result (with params if present)
             var result = ExecuteQuery(_db, language, queries[^1], parameters);
@@ -388,9 +388,9 @@ public class SpecTests : IDisposable
         GrafeoDB db, string language, List<string> queries, string expectedSubstring,
         Dictionary<string, object?>? parameters = null)
     {
-        // Execute all-but-last normally
+        // Execute all-but-last normally (with params so $param works)
         for (var i = 0; i < queries.Count - 1; i++)
-            ExecuteQuery(db, language, queries[i]);
+            ExecuteQuery(db, language, queries[i], parameters);
 
         // Last query should fail (with params if present)
         var ex = Assert.ThrowsAny<Exception>(() =>

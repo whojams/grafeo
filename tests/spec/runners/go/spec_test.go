@@ -1219,14 +1219,19 @@ func runSingleTest(t *testing.T, gf *GtestFile, tc TestCase, variantLang, varian
 		return
 	}
 
-	// Execute all-but-last as fire-and-forget
+	// Execute all-but-last as fire-and-forget (with params so $param works)
 	for _, q := range queries[:len(queries)-1] {
-		if _, err := executeQuery(db, language, q); err != nil {
-			// If the language is not supported, skip rather than fail
-			if isUnsupportedLanguageError(err) {
-				t.Skipf("Language %q not available: %v", language, err)
+		var fireErr error
+		if paramsJSON != "" {
+			_, fireErr = executeQueryWithParams(db, language, q, paramsJSON)
+		} else {
+			_, fireErr = executeQuery(db, language, q)
+		}
+		if fireErr != nil {
+			if isUnsupportedLanguageError(fireErr) {
+				t.Skipf("Language %q not available: %v", language, fireErr)
 			}
-			t.Fatalf("Statement failed: %v\nQuery: %s", err, q)
+			t.Fatalf("Statement failed: %v\nQuery: %s", fireErr, q)
 		}
 	}
 
@@ -1275,13 +1280,19 @@ func runSingleTest(t *testing.T, gf *GtestFile, tc TestCase, variantLang, varian
 func runErrorTest(t *testing.T, db *grafeo.Database, language string, queries []string, expectedSubstr string, paramsJSON string) {
 	t.Helper()
 
-	// Execute all-but-last normally
+	// Execute all-but-last normally (with params so $param works)
 	for _, q := range queries[:len(queries)-1] {
-		if _, err := executeQuery(db, language, q); err != nil {
-			if isUnsupportedLanguageError(err) {
-				t.Skipf("Language %q not available: %v", language, err)
+		var setupErr error
+		if paramsJSON != "" {
+			_, setupErr = executeQueryWithParams(db, language, q, paramsJSON)
+		} else {
+			_, setupErr = executeQuery(db, language, q)
+		}
+		if setupErr != nil {
+			if isUnsupportedLanguageError(setupErr) {
+				t.Skipf("Language %q not available: %v", language, setupErr)
 			}
-			t.Fatalf("Pre-error statement failed unexpectedly: %v\nQuery: %s", err, q)
+			t.Fatalf("Pre-error statement failed unexpectedly: %v\nQuery: %s", setupErr, q)
 		}
 	}
 

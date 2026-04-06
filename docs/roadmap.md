@@ -56,16 +56,26 @@ The beta series focuses on correctness, completeness and real-world durability. 
 - **Correctness hardening** (0.5.32): epoch monotonicity guarantees, concurrent stress tests, write-write conflict detection improvements
 - **grafeo-server replication** (0.5.32): atomic sync apply (all-or-nothing transaction visibility on replicas), persistent replica epoch tracking (replicas resume from last position after restart), CDC auto-activation on replication primaries, relaxed replica guard for sync endpoints
 
-### Coming in 0.5.33
+### Delivered in 0.5.33
 
-- **GraphChallenge benchmark suite** (DARPA/MIT IEEE HPEC 2026): k-truss decomposition, parallel triangle counting, subgraph isomorphism (VF2), stochastic block partition with incremental warm-start, partition quality metrics (Rand, ARI, NMI, precision/recall)
-- **TSV/MMIO bulk import**: `import_tsv()`, `import_mmio()`, `import_tsv_rdf()` for fast loading of GraphChallenge datasets
+- **GraphChallenge benchmark suite**: k-truss decomposition, parallel triangle counting, subgraph isomorphism (VF2), stochastic block partitioning
+- **TSV/MMIO bulk import**: `import_tsv()`, `import_mmio()`, `import_tsv_rdf()` for GraphChallenge datasets
+- **RDF streaming Turtle**: TripleSink-based streaming parser for large RDF datasets
 - **`RdfGraphStoreAdapter`**: bridges `RdfStore` to `GraphStore`, giving RDF graphs access to all 25+ graph algorithms
 
-### What's left in 0.5
+### Planned Releases
 
-- Crash recovery testing (failpoint injection), Jepsen testing for grafeo-server replication
-- Bug fixes, stability monitoring, performance regression gates
+| Version    | Focus                                                                    |
+|------------|--------------------------------------------------------------------------|
+| **0.5.34** | Golden fixture tests, format stability, WASM critical fixes              |
+| **0.5.35** | Single-file format completion, encryption at rest, perf regression gates |
+| **0.5.36** | Query language completeness across all 6 parsers, CSV/JSON import        |
+| **0.5.37** | RDF ecosystem: SPARQL HTTP Protocol, SHACL validation, bulk load         |
+| **0.5.38** | Performance: Block-STM parallelism, WASM optimization, observability     |
+| **0.5.39** | API stability markers, streaming results, access control, test coverage  |
+| **0.5.40** | Temporal properties, graph projections, incremental backup, disk storage |
+| **0.5.41** | Disk storage implementation, offline-first sync, 0.6 blocker sweep       |
+| **0.5.42** | Flutter platform support, community request, final audit                 |
 
 ---
 

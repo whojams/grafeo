@@ -90,6 +90,11 @@ impl<'a> BatchInsertSink<'a> {
     /// large enough to amortize lock overhead in `batch_insert`.
     #[must_use]
     pub fn new(store: &'a RdfStore, batch_size: usize) -> Self {
+        debug_assert!(
+            batch_size > 0,
+            "batch_size must be > 0 to amortize flush overhead"
+        );
+        let batch_size = batch_size.max(1);
         Self {
             store,
             buffer: Vec::with_capacity(batch_size),

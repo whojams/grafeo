@@ -974,7 +974,7 @@ fn test_percentile_cont_at_boundary() {
 }
 
 // ===========================================================================
-// T12: Unary positive wrapping aggregate (Pos branch in extract_wrapped_aggregates)
+// T12: Unary negation wrapping aggregate (Neg branch in extract_wrapped_aggregates)
 // ===========================================================================
 
 #[test]

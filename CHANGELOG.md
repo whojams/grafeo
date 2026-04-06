@@ -12,6 +12,7 @@ Pre-RC API hardening: schema hierarchy, `#[non_exhaustive]` on public enums, que
 - **Streaming RDF triple sink**: `TripleSink` trait decouples parsing from storage. `BatchInsertSink` streams triples into the store in configurable batches, keeping memory bounded for large files. `CountSink` enables dry-run validation
 - **Streaming Turtle/N-Triples load**: `load_turtle_streaming()`, `load_turtle_reader()`, `load_ntriples_streaming()` insert incrementally without replacing existing data
 - **`TurtleParser::parse_into()`**: sink-based Turtle parsing, emitting triples as they are parsed instead of collecting all into memory
+- **Golden fixture tests**: snapshot v4 backward-read, round-trip, and version stability checks
 
 ### Changed
 
@@ -23,6 +24,8 @@ Pre-RC API hardening: schema hierarchy, `#[non_exhaustive]` on public enums, que
 - **Multi-aggregate extraction**: `sum(a) + count(b)` now correctly extracts all aggregates instead of only the first
 - **Mixed `WITH ... WHERE`/HAVING**: AND conjuncts are split so only aggregate-referencing parts become HAVING, the rest stay as a post-aggregate filter
 - **`references_any` completeness**: all `LogicalExpression` variants now handled, fixing false negatives in aggregate-vs-WHERE classification
+- **`CREATE SCHEMA` duplicate WAL record**: default graph partition WAL record now only logged when the graph is actually created, avoiding duplicates on repeated schema creation
+- **`BatchInsertSink` zero batch_size**: guard against zero batch size with `debug_assert` and defensive `max(1)` clamp
 
 ## [0.5.33] - 2026-04-05
 

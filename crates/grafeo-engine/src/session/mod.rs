@@ -1472,8 +1472,9 @@ impl Session {
                     // Auto-create the schema's default graph partition so that
                     // SESSION SET SCHEMA + queries work without an explicit graph.
                     let default_key = format!("{name}/{SCHEMA_DEFAULT_GRAPH}");
-                    let _ = self.store.create_graph(&default_key);
-                    wal_log!(self, WalRecord::CreateNamedGraph { name: default_key });
+                    if self.store.create_graph(&default_key).unwrap_or(false) {
+                        wal_log!(self, WalRecord::CreateNamedGraph { name: default_key });
+                    }
                     Ok(QueryResult::status(format!("Created schema '{name}'")))
                 }
                 Err(e) if if_not_exists => {

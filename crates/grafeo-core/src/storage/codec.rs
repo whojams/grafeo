@@ -343,6 +343,10 @@ impl TypeSpecificCompressor {
     }
 
     /// Decompresses u64 values.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the data is corrupt or the codec does not support integer decompression.
     pub fn decompress_integers(data: &CompressedData) -> io::Result<Vec<u64>> {
         match data.codec {
             CompressionCodec::None => {
@@ -376,6 +380,10 @@ impl TypeSpecificCompressor {
     }
 
     /// Decompresses boolean values.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the data is corrupt or the codec does not support boolean decompression.
     pub fn decompress_booleans(data: &CompressedData) -> io::Result<Vec<bool>> {
         match data.codec {
             CompressionCodec::BitVector => {

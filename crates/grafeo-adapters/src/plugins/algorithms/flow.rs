@@ -84,6 +84,10 @@ pub struct MaxFlowResult {
 ///
 /// Maximum flow value and flow assignment on edges.
 ///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping is inconsistent.
+///
 /// # Complexity
 ///
 /// O(V × E²)
@@ -249,6 +253,10 @@ pub struct MinCostFlowResult {
 /// # Returns
 ///
 /// Maximum flow value, total cost, and flow assignment on edges.
+///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping is inconsistent.
 ///
 /// # Complexity
 ///

@@ -32,6 +32,10 @@ use super::traits::{GraphAlgorithm, impl_algorithm};
 ///
 /// Set of node IDs that are articulation points.
 ///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping or DFS stack is inconsistent.
+///
 /// # Complexity
 ///
 /// O(V + E)
@@ -145,6 +149,10 @@ pub fn articulation_points(store: &dyn GraphStore) -> FxHashSet<NodeId> {
 /// # Returns
 ///
 /// List of bridges as (source, target) pairs.
+///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping or DFS stack is inconsistent.
 ///
 /// # Complexity
 ///
@@ -277,6 +285,10 @@ impl KCoreResult {
 /// # Returns
 ///
 /// Core numbers for all nodes and the maximum core number.
+///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping is inconsistent.
 ///
 /// # Complexity
 ///

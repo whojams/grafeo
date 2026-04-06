@@ -227,6 +227,10 @@ impl BitPackedInts {
     }
 
     /// Deserializes from bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the byte slice is too short or contains invalid data.
     pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
         if bytes.len() < 5 {
             return Err(io::Error::new(
@@ -382,6 +386,10 @@ impl DeltaBitPacked {
     }
 
     /// Deserializes from bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the byte slice is too short or contains invalid data.
     pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
         if bytes.len() < 8 {
             return Err(io::Error::new(

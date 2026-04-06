@@ -84,6 +84,10 @@ impl super::GrafeoDB {
     /// # Returns
     ///
     /// Vector of `(NodeId, distance)` pairs sorted by distance ascending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no vector index exists for the given label and property.
     #[cfg(feature = "vector-index")]
     pub fn vector_search(
         &self,
@@ -131,6 +135,10 @@ impl super::GrafeoDB {
     /// * `k` - Number of nearest neighbors per query
     /// * `ef` - Search beam width (uses index default if `None`)
     /// * `filters` - Optional property equality filters
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no vector index exists for the given label and property.
     #[cfg(feature = "vector-index")]
     pub fn batch_vector_search(
         &self,
@@ -188,6 +196,10 @@ impl super::GrafeoDB {
     ///
     /// `(NodeId, distance)` pairs in MMR selection order. The f32 is the original
     /// distance from the query, matching [`vector_search`](Self::vector_search).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no vector index exists for the given label and property.
     #[cfg(feature = "vector-index")]
     #[allow(clippy::too_many_arguments)]
     pub fn mmr_search(

@@ -316,6 +316,14 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
 /// Merges multiple sorted runs into a single sorted output.
 ///
 /// Uses a min-heap for efficient k-way merge.
+///
+/// # Errors
+///
+/// Returns `Err` if the merge encounters an operator error.
+///
+/// # Panics
+///
+/// Panics if a single-element `runs` vector is unexpectedly empty (invariant violation).
 pub fn merge_sorted_runs(
     runs: Vec<Vec<Vec<Value>>>,
     keys: &[SortKey],
@@ -372,6 +380,10 @@ pub fn merge_sorted_runs(
 }
 
 /// Converts sorted rows to DataChunks.
+///
+/// # Errors
+///
+/// Returns `Err` if chunk construction fails.
 pub fn rows_to_chunks(
     rows: Vec<Vec<Value>>,
     chunk_size: usize,
@@ -401,6 +413,10 @@ pub fn rows_to_chunks(
 }
 
 /// Merges multiple sorted DataChunk streams into a single sorted stream.
+///
+/// # Errors
+///
+/// Returns `Err` if the merge or chunk conversion fails.
 pub fn merge_sorted_chunks(
     runs: Vec<Vec<DataChunk>>,
     keys: &[SortKey],
@@ -441,6 +457,10 @@ pub fn concat_parallel_results(results: Vec<Vec<DataChunk>>) -> Vec<DataChunk> {
 }
 
 /// Merges parallel DISTINCT results by deduplication.
+///
+/// # Errors
+///
+/// Returns `Err` if chunk construction fails during deduplication.
 pub fn merge_distinct_results(
     results: Vec<Vec<DataChunk>>,
 ) -> Result<Vec<DataChunk>, OperatorError> {

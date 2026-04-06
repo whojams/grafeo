@@ -111,3 +111,7 @@ workspace = true
 [[bench]]
 name = "query_bench"
 harness = false
+
+[[bench]]
+name = "serialization_bench"
+harness = false

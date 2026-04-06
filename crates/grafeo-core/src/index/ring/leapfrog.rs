@@ -144,6 +144,10 @@ impl<'a> RingIterator<'a> {
     /// Seeks to the next position where the given component's term ID >= target_id.
     ///
     /// Returns true if such a position was found.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bound_id` is confirmed `Some` but the wavelet tree select returns an unexpected state.
     pub fn seek_term(&mut self, component: u8, target_id: u32) -> bool {
         while self.pos < self.end {
             if let Some(current_id) = self.current_term_id(component)
@@ -184,6 +188,10 @@ impl<'a> RingIterator<'a> {
     /// Seeks to the first position >= target.
     ///
     /// For leapfrog join, this is the key operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bound_id` is confirmed `Some` but the wavelet tree select returns an unexpected state.
     pub fn seek(&mut self, target: usize) {
         if self.iterate_all {
             // For iterate-all, just move position

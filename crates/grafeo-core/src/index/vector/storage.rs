@@ -72,6 +72,10 @@ impl Default for StorageBackend {
 /// Trait for vector storage backends.
 pub trait VectorStorage: Send + Sync {
     /// Inserts a vector with the given ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the write to the storage backend fails.
     fn insert(&self, id: NodeId, vector: &[f32]) -> io::Result<()>;
 
     /// Retrieves a vector by ID.
@@ -98,6 +102,10 @@ pub trait VectorStorage: Send + Sync {
     fn memory_usage(&self) -> usize;
 
     /// Flushes any pending writes to disk (for persistent backends).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the flush to the storage backend fails.
     fn flush(&self) -> io::Result<()>;
 }
 
@@ -236,6 +244,10 @@ impl MmapStorage {
     ///
     /// * `path` - Path to the storage file (will be created/overwritten)
     /// * `dimensions` - Number of dimensions per vector
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the file cannot be created or the header cannot be written.
     pub fn create<P: AsRef<Path>>(path: P, dimensions: usize) -> io::Result<Self> {
         let path = path.as_ref().to_path_buf();
 
@@ -267,6 +279,10 @@ impl MmapStorage {
     }
 
     /// Opens an existing memory-mapped storage file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the file cannot be opened, the header is invalid, or the index cannot be read.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let path = path.as_ref().to_path_buf();
 
@@ -337,6 +353,10 @@ impl MmapStorage {
     }
 
     /// Returns the file size in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the file metadata cannot be read.
     pub fn file_size(&self) -> io::Result<u64> {
         self.file.read().metadata().map(|m| m.len())
     }

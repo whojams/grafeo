@@ -82,6 +82,10 @@ impl MstResult {
 ///
 /// The MST edges and total weight.
 ///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping is inconsistent.
+///
 /// # Complexity
 ///
 /// O(E log E) for sorting edges

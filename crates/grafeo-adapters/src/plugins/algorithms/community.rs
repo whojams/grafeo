@@ -34,6 +34,10 @@ use super::traits::{ComponentResultBuilder, impl_algorithm};
 ///
 /// A map from node ID to community (label) ID.
 ///
+/// # Panics
+///
+/// Panics if the internal label map is inconsistent (should not happen with a valid `GraphStore`).
+///
 /// # Complexity
 ///
 /// O(iterations × E)
@@ -154,6 +158,10 @@ pub struct LouvainResult {
 /// # Returns
 ///
 /// Community assignments and modularity score.
+///
+/// # Panics
+///
+/// Panics if the internal node-to-index mapping is inconsistent.
 ///
 /// # Complexity
 ///

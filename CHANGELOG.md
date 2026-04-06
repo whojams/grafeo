@@ -17,10 +17,14 @@ Pre-RC API hardening: schema hierarchy, `#[non_exhaustive]` on public enums, que
 - **`.grafeo` file format golden fixture**: backward-read tests for magic bytes, dual-header layout, CRC-32 validation, and snapshot payload
 - **WAL frame golden fixture**: backward-read tests for frame structure, 9 representative record variants, CRC integrity, and byte-equality
 - **Per-release fixture archive**: `fixtures/archive/` directories for preserving old format fixtures across version bumps
+- **Feature matrix CI**: per-profile test jobs (gql-only, gql+vector, gql+rdf, embedded, browser) to catch per-feature cfg bugs
+- **Serialization benchmarks**: snapshot export/import throughput and `Value` bincode encoding/decoding
 
 ### Changed
 
 - **`#[non_exhaustive]` on 13 public enums**: `GraphModel`, `AccessMode`, `StorageFormat`, `DurabilityMode`, `IndexType`, `ChangeKind`, `DatabaseMode`, `SchemaInfo`, `DumpFormat`, `QueryLanguage`, `IsolationLevel`, `EmbeddingModelConfig`, `LogicalType`. Future variants can be added without breaking semver
+- **`missing_errors_doc` and `missing_panics_doc` lints enabled**: all ~233 public functions now document their error conditions and panic scenarios. Lints promoted from `allow` to `warn`
+- **MVCC types hidden from public API**: `VersionChain` and `VersionInfo` re-exports marked `#[doc(hidden)]`
 
 ### Fixed
 

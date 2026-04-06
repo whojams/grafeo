@@ -13,6 +13,10 @@ Pre-RC API hardening: schema hierarchy, `#[non_exhaustive]` on public enums, que
 - **Streaming Turtle/N-Triples load**: `load_turtle_streaming()`, `load_turtle_reader()`, `load_ntriples_streaming()` insert incrementally without replacing existing data
 - **`TurtleParser::parse_into()`**: sink-based Turtle parsing, emitting triples as they are parsed instead of collecting all into memory
 - **Golden fixture tests**: snapshot v4 backward-read, round-trip, and version stability checks
+- **Deterministic snapshot export**: nodes, edges, labels, and properties sorted by ID/name for byte-for-byte reproducible exports
+- **`.grafeo` file format golden fixture**: backward-read tests for magic bytes, dual-header layout, CRC-32 validation, and snapshot payload
+- **WAL frame golden fixture**: backward-read tests for frame structure, 9 representative record variants, CRC integrity, and byte-equality
+- **Per-release fixture archive**: `fixtures/archive/` directories for preserving old format fixtures across version bumps
 
 ### Changed
 

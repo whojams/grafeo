@@ -50,8 +50,8 @@ grafeo = { features = ["lpg", "ai"] }
 # Semantic data scientist
 grafeo = { features = ["rdf", "analytics"] }
 
-# Full production stack (grafeo-server)
-grafeo = { features = ["lpg", "rdf", "ai", "enterprise"] }
+# Full production stack (grafeo-server only, enterprise is server-scoped)
+# grafeo-server = { features = ["lpg", "rdf", "ai", "enterprise"] }
 
 # Browser app
 grafeo = { features = ["edge"] }

@@ -397,10 +397,24 @@ fn test_delete_node_edges_atomic_batch() {
     // Spawn a reader thread that checks edge count.
     // With batch locking, the reader should never see 1 or 2
     // (partially deleted): it should see either 3 (before) or 0 (after).
+    //
+    // A barrier ensures both threads start at the same time, and an
+    // AtomicBool keeps the reader spinning until deletion finishes,
+    // so the two threads are guaranteed to overlap.
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let barrier = Arc::new(Barrier::new(2));
+    let done = Arc::new(AtomicBool::new(false));
+
     let reader = Arc::clone(&store);
+    let reader_barrier = Arc::clone(&barrier);
+    let reader_done = Arc::clone(&done);
+
     let handle = std::thread::spawn(move || {
         let mut saw_partial = false;
-        for _ in 0..10_000 {
+        reader_barrier.wait();
+        while !reader_done.load(Ordering::Acquire) {
             let count = reader.edge_count();
             if count != 0 && count != 3 {
                 saw_partial = true;
@@ -410,7 +424,9 @@ fn test_delete_node_edges_atomic_batch() {
         saw_partial
     });
 
+    barrier.wait();
     store.delete_node_edges(a);
+    done.store(true, Ordering::Release);
 
     let saw_partial = handle.join().unwrap();
     assert!(

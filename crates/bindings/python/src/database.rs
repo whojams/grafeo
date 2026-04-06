@@ -1851,6 +1851,8 @@ impl PyGrafeoDB {
 
         match schema {
             grafeo_engine::SchemaInfo::Lpg(lpg) => {
+                dict.set_item("mode", "lpg")?;
+
                 let labels = pyo3::types::PyList::empty(py);
                 for label in lpg.labels {
                     let label_dict = pyo3::types::PyDict::new(py);
@@ -1872,6 +1874,8 @@ impl PyGrafeoDB {
                 dict.set_item("property_keys", lpg.property_keys)?;
             }
             grafeo_engine::SchemaInfo::Rdf(rdf) => {
+                dict.set_item("mode", "rdf")?;
+
                 let predicates = pyo3::types::PyList::empty(py);
                 for pred in rdf.predicates {
                     let pred_dict = pyo3::types::PyDict::new(py);
@@ -1883,6 +1887,9 @@ impl PyGrafeoDB {
                 dict.set_item("named_graphs", rdf.named_graphs)?;
                 dict.set_item("subject_count", rdf.subject_count)?;
                 dict.set_item("object_count", rdf.object_count)?;
+            }
+            _ => {
+                dict.set_item("mode", "unknown")?;
             }
         }
 
@@ -2935,6 +2942,7 @@ fn change_event_to_dict(
         grafeo_engine::cdc::ChangeKind::Create => "create",
         grafeo_engine::cdc::ChangeKind::Update => "update",
         grafeo_engine::cdc::ChangeKind::Delete => "delete",
+        _ => "unknown",
     };
     map.insert(
         "kind".to_string(),

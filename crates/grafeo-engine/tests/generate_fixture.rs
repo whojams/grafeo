@@ -1,14 +1,19 @@
-//! One-shot helper to generate the v1 snapshot fixture.
+//! One-shot helper to regenerate the golden snapshot fixture.
 //!
-//! Run with: cargo test --all-features -p grafeo-engine --test generate_fixture -- --ignored
-//! Then commit the generated file. This test is ignored by default.
+//! Run with: cargo test --all-features -p grafeo-engine --test golden_format -- regenerate_snapshot_fixture --ignored
+//! Then commit the updated fixture file. This test is ignored by default.
+//!
+//! **When to regenerate:** only after an intentional snapshot format change
+//! (i.e. bumping `SNAPSHOT_VERSION`). If the golden test in `golden_format.rs`
+//! fails without a version bump, fix the regression instead of regenerating.
 
 use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
-#[test]
-#[ignore = "one-shot fixture generator, not a regular test"]
-fn generate_v1_snapshot_fixture() {
+/// Builds the canonical fixture graph used by both the generator and the
+/// golden format tests. Keep this in sync with the assertions in
+/// `golden_format.rs`.
+pub fn build_fixture_db() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
 
     // 3 nodes with different labels and properties
@@ -30,12 +35,20 @@ fn generate_v1_snapshot_fixture() {
     let works = db.create_edge(gus, acme, "WORKS_AT");
     db.set_edge_property(works, "role", Value::String("Engineer".into()));
 
+    db
+}
+
+#[test]
+#[ignore = "one-shot fixture generator, not a regular test"]
+fn regenerate_snapshot_fixture() {
+    let db = build_fixture_db();
     let bytes = db.export_snapshot().unwrap();
 
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/snapshot_v1.bin"
+        "/tests/fixtures/snapshot_v4.bin"
     );
     std::fs::write(path, &bytes).unwrap();
     println!("Wrote {} bytes to {path}", bytes.len());
+    println!("First byte (snapshot version): {}", bytes[0]);
 }

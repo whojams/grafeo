@@ -4,6 +4,7 @@
 //! Supports `@prefix`, `@base`, predicate lists (`;`), object lists (`,`),
 //! blank node syntax (`_:label`, `[]`), and the `a` shorthand for `rdf:type`.
 
+use crate::graph::rdf::sink::{TripleSink, VecSink};
 use crate::graph::rdf::term::{Literal, Term};
 use crate::graph::rdf::triple::Triple;
 use std::collections::HashMap;
@@ -37,6 +38,13 @@ impl std::fmt::Display for TurtleError {
 impl std::error::Error for TurtleError {}
 
 /// Parses Turtle text into RDF triples.
+///
+/// The parser supports two modes:
+/// - [`parse`](Self::parse): collects all triples into a `Vec` (convenience wrapper)
+/// - [`parse_into`](Self::parse_into): streams triples into any [`TripleSink`]
+///
+/// Use `parse_into` with a [`BatchInsertSink`](crate::graph::rdf::sink::BatchInsertSink)
+/// for memory-bounded loading of large Turtle files.
 pub struct TurtleParser {
     /// Prefix mappings (prefix -> namespace IRI).
     prefixes: HashMap<String, String>,
@@ -44,8 +52,6 @@ pub struct TurtleParser {
     base: Option<String>,
     /// Counter for generating anonymous blank node IDs.
     blank_counter: usize,
-    /// Parsed triples.
-    triples: Vec<Triple>,
     /// Current position in the input.
     pos: usize,
     /// Input bytes.
@@ -64,7 +70,6 @@ impl TurtleParser {
             prefixes: HashMap::new(),
             base: None,
             blank_counter: 0,
-            triples: Vec::new(),
             pos: 0,
             input: Vec::new(),
             line: 1,
@@ -81,10 +86,33 @@ impl TurtleParser {
 
     /// Parses a Turtle string and returns the resulting triples.
     ///
+    /// This is a convenience wrapper around [`parse_into`](Self::parse_into) using a
+    /// [`VecSink`]. For large files, use `parse_into` with a
+    /// [`BatchInsertSink`](crate::graph::rdf::sink::BatchInsertSink) to keep memory bounded.
+    ///
     /// # Errors
     ///
     /// Returns a `TurtleError` if the input is malformed.
     pub fn parse(mut self, input: &str) -> Result<Vec<Triple>, TurtleError> {
+        let mut sink = VecSink::new();
+        self.parse_into(input, &mut sink)?;
+        Ok(sink.into_triples())
+    }
+
+    /// Parses a Turtle string, streaming each triple into the provided sink.
+    ///
+    /// Triples are emitted as soon as they are parsed, so the sink can process
+    /// them incrementally (e.g., flush to a store in batches).
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TurtleError` if the input is malformed or if the sink returns
+    /// an error.
+    pub fn parse_into(
+        &mut self,
+        input: &str,
+        sink: &mut dyn TripleSink,
+    ) -> Result<(), TurtleError> {
         self.input = input.as_bytes().to_vec();
         self.pos = 0;
         self.line = 1;
@@ -105,11 +133,12 @@ impl TurtleParser {
             } else if self.starts_with(b"BASE") || self.starts_with(b"base") {
                 self.parse_sparql_base()?;
             } else {
-                self.parse_triples_block()?;
+                self.parse_triples_block(sink)?;
             }
         }
 
-        Ok(self.triples)
+        sink.finish().map_err(|e| self.error(e))?;
+        Ok(())
     }
 
     // =========================================================================
@@ -160,16 +189,20 @@ impl TurtleParser {
     // Triples parsing
     // =========================================================================
 
-    fn parse_triples_block(&mut self) -> Result<(), TurtleError> {
-        let subject = self.read_subject()?;
+    fn parse_triples_block(&mut self, sink: &mut dyn TripleSink) -> Result<(), TurtleError> {
+        let subject = self.read_subject(sink)?;
         self.skip_ws_and_comments();
-        self.parse_predicate_object_list(&subject)?;
+        self.parse_predicate_object_list(&subject, sink)?;
         self.skip_ws_and_comments();
         self.expect_byte(b'.')?;
         Ok(())
     }
 
-    fn parse_predicate_object_list(&mut self, subject: &Term) -> Result<(), TurtleError> {
+    fn parse_predicate_object_list(
+        &mut self,
+        subject: &Term,
+        sink: &mut dyn TripleSink,
+    ) -> Result<(), TurtleError> {
         loop {
             self.skip_ws_and_comments();
             if self.pos >= self.input.len() {
@@ -186,9 +219,9 @@ impl TurtleParser {
 
             // Object list (comma-separated).
             loop {
-                let object = self.read_object()?;
-                self.triples
-                    .push(Triple::new(subject.clone(), predicate.clone(), object));
+                let object = self.read_object(sink)?;
+                sink.emit(Triple::new(subject.clone(), predicate.clone(), object))
+                    .map_err(|e| self.error(e))?;
 
                 self.skip_ws_and_comments();
                 if self.peek() == Some(b',') {
@@ -215,12 +248,12 @@ impl TurtleParser {
     // Term reading
     // =========================================================================
 
-    fn read_subject(&mut self) -> Result<Term, TurtleError> {
+    fn read_subject(&mut self, sink: &mut dyn TripleSink) -> Result<Term, TurtleError> {
         match self.peek() {
             Some(b'<') => self.read_iri_ref().map(Term::iri),
             Some(b'_') => self.read_blank_node(),
-            Some(b'[') => self.read_blank_node_property_list(),
-            Some(b'(') => self.read_collection(),
+            Some(b'[') => self.read_blank_node_property_list(sink),
+            Some(b'(') => self.read_collection(sink),
             _ => self.read_prefixed_name().map(Term::iri),
         }
     }
@@ -238,12 +271,12 @@ impl TurtleParser {
         }
     }
 
-    fn read_object(&mut self) -> Result<Term, TurtleError> {
+    fn read_object(&mut self, sink: &mut dyn TripleSink) -> Result<Term, TurtleError> {
         match self.peek() {
             Some(b'<') => self.read_iri_ref().map(Term::iri),
             Some(b'_') => self.read_blank_node(),
-            Some(b'[') => self.read_blank_node_property_list(),
-            Some(b'(') => self.read_collection(),
+            Some(b'[') => self.read_blank_node_property_list(sink),
+            Some(b'(') => self.read_collection(sink),
             Some(b'"') | Some(b'\'') => self.read_literal(),
             Some(b't') | Some(b'f') => self.try_read_boolean(),
             Some(c) if c == b'+' || c == b'-' || c.is_ascii_digit() => self.read_numeric_literal(),
@@ -353,7 +386,10 @@ impl TurtleParser {
         Ok(Term::blank(id))
     }
 
-    fn read_blank_node_property_list(&mut self) -> Result<Term, TurtleError> {
+    fn read_blank_node_property_list(
+        &mut self,
+        sink: &mut dyn TripleSink,
+    ) -> Result<Term, TurtleError> {
         self.expect_byte(b'[')?;
         self.skip_ws_and_comments();
 
@@ -366,19 +402,19 @@ impl TurtleParser {
             return Ok(subject);
         }
 
-        self.parse_predicate_object_list(&subject)?;
+        self.parse_predicate_object_list(&subject, sink)?;
         self.skip_ws_and_comments();
         self.expect_byte(b']')?;
         Ok(subject)
     }
 
-    fn read_collection(&mut self) -> Result<Term, TurtleError> {
+    fn read_collection(&mut self, sink: &mut dyn TripleSink) -> Result<Term, TurtleError> {
         self.expect_byte(b'(')?;
         self.skip_ws_and_comments();
 
         let mut items = Vec::new();
         while self.peek() != Some(b')') {
-            let item = self.read_object()?;
+            let item = self.read_object(sink)?;
             items.push(item);
             self.skip_ws_and_comments();
         }
@@ -395,8 +431,8 @@ impl TurtleParser {
         let last_idx = items.len() - 1;
 
         for (i, item) in items.into_iter().enumerate() {
-            self.triples
-                .push(Triple::new(current.clone(), Term::iri(RDF_FIRST), item));
+            sink.emit(Triple::new(current.clone(), Term::iri(RDF_FIRST), item))
+                .map_err(|e| self.error(e))?;
 
             let rest = if i == last_idx {
                 Term::iri(RDF_NIL)
@@ -405,8 +441,8 @@ impl TurtleParser {
                 Term::blank(next_id.as_str())
             };
 
-            self.triples
-                .push(Triple::new(current, Term::iri(RDF_REST), rest.clone()));
+            sink.emit(Triple::new(current, Term::iri(RDF_REST), rest.clone()))
+                .map_err(|e| self.error(e))?;
             current = rest;
         }
 

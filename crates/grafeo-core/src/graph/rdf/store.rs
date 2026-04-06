@@ -3,6 +3,7 @@
 //! Provides an in-memory triple store with efficient indexing for
 //! subject, predicate, and object queries.
 
+use super::sink::TripleSink;
 use super::term::Term;
 use super::triple::{Triple, TriplePattern};
 use grafeo_common::types::TransactionId;
@@ -743,6 +744,85 @@ impl RdfStore {
     pub fn load_turtle(&self, input: &str) -> Result<BulkLoadResult, super::turtle::TurtleError> {
         let triples = super::turtle::TurtleParser::new().parse(input)?;
         Ok(self.bulk_load(triples))
+    }
+
+    /// Parses a Turtle document and streams triples into the store via batched inserts.
+    ///
+    /// Unlike [`load_turtle`](Self::load_turtle), this does not replace existing data.
+    /// Triples are inserted incrementally in batches, keeping memory bounded regardless
+    /// of document size. Duplicate triples are skipped during each batch insert.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TurtleError` on parse failure.
+    pub fn load_turtle_streaming(
+        &self,
+        input: &str,
+        batch_size: usize,
+    ) -> Result<usize, super::turtle::TurtleError> {
+        let mut sink = super::sink::BatchInsertSink::new(self, batch_size);
+        let mut parser = super::turtle::TurtleParser::new();
+        parser.parse_into(input, &mut sink)?;
+        Ok(sink.total_inserted())
+    }
+
+    /// Reads a Turtle document from a buffered reader and streams triples into the store.
+    ///
+    /// The entire reader is consumed into a string first (Turtle requires random access
+    /// for prefix resolution), then parsed with batched inserts. For pure streaming from
+    /// a reader without replacing existing data, this is the recommended entry point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if reading fails, or a `TurtleError` on parse failure.
+    pub fn load_turtle_reader(
+        &self,
+        reader: impl std::io::Read,
+        batch_size: usize,
+    ) -> Result<usize, NTriplesError> {
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut { reader }, &mut input).map_err(NTriplesError::Io)?;
+        self.load_turtle_streaming(&input, batch_size)
+            .map_err(|e| NTriplesError::Parse {
+                line: e.line,
+                content: e.message,
+            })
+    }
+
+    /// Parses N-Triples from a reader, streaming triples into the store via batched inserts.
+    ///
+    /// Unlike [`load_ntriples`](Self::load_ntriples), this does not replace existing data.
+    /// Triples are inserted incrementally in batches, keeping memory bounded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `NTriplesError` on I/O or parse failure.
+    pub fn load_ntriples_streaming(
+        &self,
+        reader: impl std::io::BufRead,
+        batch_size: usize,
+    ) -> Result<usize, NTriplesError> {
+        let mut sink = super::sink::BatchInsertSink::new(self, batch_size);
+        for (line_no, line) in reader.lines().enumerate() {
+            let line = line.map_err(NTriplesError::Io)?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let triple = parse_ntriples_line(trimmed).ok_or_else(|| NTriplesError::Parse {
+                line: line_no + 1,
+                content: line.clone(),
+            })?;
+            sink.emit(triple).map_err(|e| NTriplesError::Parse {
+                line: line_no + 1,
+                content: e,
+            })?;
+        }
+        sink.finish().map_err(|e| NTriplesError::Parse {
+            line: 0,
+            content: e,
+        })?;
+        Ok(sink.total_inserted())
     }
 
     /// Serializes this store's triples to Turtle format.
@@ -1956,5 +2036,160 @@ this is not valid ntriples
             NTriplesError::Parse { line, .. } => assert_eq!(line, 2),
             _ => panic!("expected Parse error"),
         }
+    }
+
+    // =========================================================================
+    // Streaming load tests (TripleSink-based)
+    // =========================================================================
+
+    #[test]
+    fn test_load_turtle_streaming_inserts_incrementally() {
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+            ex:alix a foaf:Person ;
+                foaf:name "Alix" ;
+                foaf:knows ex:gus .
+
+            ex:gus foaf:name "Gus" .
+        "#;
+
+        let store = RdfStore::new();
+        let count = store.load_turtle_streaming(turtle, 2).unwrap();
+        assert_eq!(count, 4);
+        assert_eq!(store.len(), 4);
+
+        // Verify indexes work
+        let alix = Term::iri("http://example.org/alix");
+        assert_eq!(store.triples_with_subject(&alix).len(), 3);
+    }
+
+    #[test]
+    fn test_load_turtle_streaming_does_not_replace_existing() {
+        let store = RdfStore::new();
+        // Pre-load one triple
+        store.insert(Triple::new(
+            Term::iri("http://example.org/existing"),
+            Term::iri("http://example.org/p"),
+            Term::literal("value"),
+        ));
+        assert_eq!(store.len(), 1);
+
+        let turtle = r#"
+            <http://example.org/new> <http://example.org/p> "added" .
+        "#;
+        let count = store.load_turtle_streaming(turtle, 100).unwrap();
+        assert_eq!(count, 1);
+        // Both the existing and new triple should be present
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_load_turtle_streaming_deduplicates() {
+        let turtle = r#"
+            <http://example.org/s> <http://example.org/p> "o" .
+            <http://example.org/s> <http://example.org/p> "o" .
+            <http://example.org/s> <http://example.org/p> "o" .
+        "#;
+
+        let store = RdfStore::new();
+        let count = store.load_turtle_streaming(turtle, 100).unwrap();
+        assert_eq!(count, 1, "duplicates should be filtered by batch_insert");
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_load_ntriples_streaming() {
+        let ntriples = "\
+<http://example.org/alix> <http://xmlns.com/foaf/0.1/name> \"Alix\" .
+<http://example.org/alix> <http://xmlns.com/foaf/0.1/knows> <http://example.org/gus> .
+<http://example.org/gus> <http://xmlns.com/foaf/0.1/name> \"Gus\" .
+";
+        let store = RdfStore::new();
+        let count = store
+            .load_ntriples_streaming(ntriples.as_bytes(), 2)
+            .unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(store.len(), 3);
+    }
+
+    #[test]
+    fn test_load_ntriples_streaming_does_not_replace_existing() {
+        let store = RdfStore::new();
+        store.insert(Triple::new(
+            Term::iri("http://example.org/existing"),
+            Term::iri("http://example.org/p"),
+            Term::literal("value"),
+        ));
+
+        let ntriples = "<http://example.org/new> <http://example.org/p> \"added\" .\n";
+        let count = store
+            .load_ntriples_streaming(ntriples.as_bytes(), 100)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_load_turtle_reader() {
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            ex:alix ex:name "Alix" .
+            ex:gus ex:name "Gus" .
+        "#;
+
+        let store = RdfStore::new();
+        let count = store.load_turtle_reader(turtle.as_bytes(), 100).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_into_with_count_sink() {
+        use crate::graph::rdf::sink::CountSink;
+        use crate::graph::rdf::turtle::TurtleParser;
+
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            ex:a ex:p "1" .
+            ex:b ex:p "2" .
+            ex:c ex:p "3" .
+        "#;
+
+        let mut sink = CountSink::new();
+        let mut parser = TurtleParser::new();
+        parser.parse_into(turtle, &mut sink).unwrap();
+        assert_eq!(sink.count(), 3);
+    }
+
+    #[test]
+    fn test_streaming_turtle_with_collections() {
+        // Collections emit rdf:first/rdf:rest triples through the sink
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            ex:list ex:items ( "a" "b" "c" ) .
+        "#;
+
+        let store = RdfStore::new();
+        let count = store.load_turtle_streaming(turtle, 100).unwrap();
+        // 1 (ex:list ex:items _:head) + 3*(first+rest) = 7
+        assert_eq!(count, 7);
+        assert_eq!(store.len(), 7);
+    }
+
+    #[test]
+    fn test_streaming_turtle_with_blank_node_property_list() {
+        // Blank node property lists emit triples through the sink
+        let turtle = r#"
+            @prefix ex: <http://example.org/> .
+            ex:alix ex:address [ ex:city "Amsterdam" ; ex:country "NL" ] .
+        "#;
+
+        let store = RdfStore::new();
+        let count = store.load_turtle_streaming(turtle, 100).unwrap();
+        // 1 (alix address _:b) + 2 (city, country) = 3
+        assert_eq!(count, 3);
+        assert_eq!(store.len(), 3);
     }
 }

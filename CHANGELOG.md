@@ -9,6 +9,9 @@ Pre-RC API hardening: schema hierarchy, `#[non_exhaustive]` on public enums, que
 ### Added
 
 - **GQL schema hierarchy** (ISO/IEC 39075 Section 4.2.5): `CREATE SCHEMA` auto-creates a default graph partition, `SESSION SET SCHEMA` routes queries to it. Schemas provide full data isolation: nodes/edges in one schema are invisible from another. `DROP SCHEMA` auto-cleans the default graph, `SHOW GRAPHS` hides internal `__default__` partitions
+- **Streaming RDF triple sink**: `TripleSink` trait decouples parsing from storage. `BatchInsertSink` streams triples into the store in configurable batches, keeping memory bounded for large files. `CountSink` enables dry-run validation
+- **Streaming Turtle/N-Triples load**: `load_turtle_streaming()`, `load_turtle_reader()`, `load_ntriples_streaming()` insert incrementally without replacing existing data
+- **`TurtleParser::parse_into()`**: sink-based Turtle parsing, emitting triples as they are parsed instead of collecting all into memory
 
 ### Changed
 

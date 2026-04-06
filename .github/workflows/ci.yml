@@ -413,22 +413,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-features-${{ matrix.profile }}-
 
-      # Library-only build: verifies that the core crates compile under each
-      # feature combination. Tests are not compiled here because many assume
-      # all features are available; full test coverage runs under --all-features
-      # in the rust-test job.
-      - name: Build (${{ matrix.profile }})
+      # Build + test the foundation crates (common, core, adapters) which have
+      # proper #[cfg] gates on all tests. This catches per-feature regressions
+      # in both library and test code.
+      - name: Build + test foundation (${{ matrix.profile }})
         run: >
-          cargo build --workspace --lib
-          --exclude grafeo-spec-tests
-          --exclude grafeo-node
-          --exclude grafeo-python
-          --exclude grafeo-wasm
-          --exclude grafeo-c
-          --exclude grafeo-csharp
-          --exclude grafeo-dart
-          --exclude grafeo-cli
-          --exclude grafeo-examples
+          cargo nextest run
+          -p grafeo-common
+          -p grafeo-core
+          -p grafeo-adapters
+          --no-default-features ${{ matrix.features }}
+        env:
+          RUSTC_WRAPPER: sccache
+
+      # Library-only build for the engine crate: its integration tests assume
+      # all features are available and need incremental cfg-gating (tracked).
+      # Full test coverage runs under --all-features in the rust-test job.
+      - name: Build engine + facade (${{ matrix.profile }})
+        run: >
+          cargo build --lib
+          -p grafeo-engine
+          -p grafeo
           --no-default-features ${{ matrix.features }}
         env:
           RUSTC_WRAPPER: sccache

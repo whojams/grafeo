@@ -97,16 +97,16 @@ grafeo shell ./mydb
 ```
 
 ```
-Grafeo 0.5.34 - Lpg mode, 42 nodes, 87 edges
+Grafeo 0.5.35 - Lpg mode, 42 nodes, 87 edges
 Type :help for commands, :quit to exit.
 
 grafeo> MATCH (n:Person) RETURN n.name, n.age
-┌──────────┬───────┐
-│ n.name   │ n.age │
-├──────────┼───────┤
-│ "Alix"  │ 30    │
-│ "Gus"    │ 25    │
-└──────────┴───────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ n.name   â”‚ n.age â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ "Alix"  â”‚ 30    â”‚
+â”‚ "Gus"    â”‚ 25    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”˜
 2 rows (0.8ms)
 
 grafeo> :begin
@@ -208,7 +208,7 @@ grafeo completions powershell >> $PROFILE
 
 ```bash
 $ grafeo version
-grafeo 0.5.34
+grafeo 0.5.35
 
 Build:
   rustc:    1.91.1

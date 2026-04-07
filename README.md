@@ -18,7 +18,7 @@
 
 Grafeo is a graph database built in Rust from the ground up for speed and low memory use. It runs embedded as a library or as a standalone server, with in-memory or persistent storage and full ACID transactions.
 
-On the [LDBC Social Network Benchmark](https://github.com/GrafeoDB/graph-bench), Grafeo is the fastest tested graph database in both embedded and server configurations, while using a fraction of the memory of some of the alternatives.
+In our [graph-bench](https://github.com/GrafeoDB/graph-bench) suite (which includes workloads inspired by the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmarks/snb/)), Grafeo is the fastest tested graph database in both embedded and server configurations, while using a fraction of the memory of some of the alternatives.
 
 [![Grafeo Playground](docs/assets/playground.png)](https://grafeo.ai)
 
@@ -74,7 +74,7 @@ Grafeo supports both **Labeled Property Graph (LPG)** and **Resource Description
 <details>
 <summary><strong>Benchmarks</strong></summary>
 
-Tested with the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmarks/snb/) via [graph-bench](https://github.com/GrafeoDB/graph-bench):
+Tested with [graph-bench](https://github.com/GrafeoDB/graph-bench), which includes workloads inspired by the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmarks/snb/). These are not official LDBC Benchmark results (see [disclaimer](https://github.com/GrafeoDB/graph-bench#ldbc-disclaimer)).
 
 **Embedded** (SF0.1, in-process):
 
@@ -177,7 +177,7 @@ dotnet add package Grafeo
 ```yaml
 # pubspec.yaml
 dependencies:
-  grafeo: ^0.5.33
+  grafeo: ^0.5.34
 ```
 
 ### Python
@@ -389,7 +389,7 @@ grafeo info ./mydb --format table # Human-readable table (default)
 | [**anywidget-graph**](https://github.com/GrafeoDB/anywidget-graph) | Interactive graph visualization for Python notebooks (Marimo, Jupyter, VS Code, Colab) |
 | [**anywidget-vector**](https://github.com/GrafeoDB/anywidget-vector) | 3D vector/embedding visualization for Python notebooks |
 | [**playground**](https://grafeo.ai) | Interactive browser playground: query in 6 languages, visualize graphs, explore schemas |
-| [**graph-bench**](https://github.com/GrafeoDB/graph-bench) | Benchmark suite comparing graph databases across 25+ benchmarks |
+| [**graph-bench**](https://github.com/GrafeoDB/graph-bench) | Benchmark suite comparing graph databases across 65 LDBC-inspired and custom benchmarks |
 | [**ann-benchmarks**](https://github.com/GrafeoDB/ann-benchmarks) | Fork of ann-benchmarks with a Grafeo HNSW adapter for vector search benchmarking |
 
 ## Documentation

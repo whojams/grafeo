@@ -131,12 +131,8 @@ pub fn kruskal(store: &dyn GraphStore, weight_property: Option<&str>) -> MstResu
     let mut total_weight = 0.0;
 
     for (weight, src, dst, edge_id) in edges {
-        let Some(&i) = node_to_idx.get(&src) else {
-            continue;
-        };
-        let Some(&j) = node_to_idx.get(&dst) else {
-            continue;
-        };
+        let i = *node_to_idx.get(&src).expect("src node in index");
+        let j = *node_to_idx.get(&dst).expect("dst node in index");
 
         if uf.find(i) != uf.find(j) {
             uf.union(i, j);

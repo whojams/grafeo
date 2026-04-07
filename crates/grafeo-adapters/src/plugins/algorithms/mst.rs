@@ -82,10 +82,6 @@ impl MstResult {
 ///
 /// The MST edges and total weight.
 ///
-/// # Panics
-///
-/// Panics if an edge references a node not present in `node_ids()`.
-///
 /// # Complexity
 ///
 /// O(E log E) for sorting edges
@@ -135,8 +131,12 @@ pub fn kruskal(store: &dyn GraphStore, weight_property: Option<&str>) -> MstResu
     let mut total_weight = 0.0;
 
     for (weight, src, dst, edge_id) in edges {
-        let i = *node_to_idx.get(&src).expect("src node in index");
-        let j = *node_to_idx.get(&dst).expect("dst node in index");
+        let Some(&i) = node_to_idx.get(&src) else {
+            continue;
+        };
+        let Some(&j) = node_to_idx.get(&dst) else {
+            continue;
+        };
 
         if uf.find(i) != uf.find(j) {
             uf.union(i, j);

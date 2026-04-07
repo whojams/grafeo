@@ -8,11 +8,9 @@ tags:
   - import
 ---
 
-# Loading RDF Data
-
-Grafeo includes zero-dependency parsers for three W3C RDF serialization formats:
-Turtle, N-Triples and N-Quads. All three support both batch (replace-all) and
-streaming (incremental, memory-bounded) loading.
+Grafeo includes zero-dependency parsers for W3C RDF serialization formats.
+Turtle and N-Triples support both batch (replace-all) and streaming
+(incremental, memory-bounded) loading. N-Quads is supported for export.
 
 ## Turtle
 
@@ -20,7 +18,7 @@ Turtle is the most common human-readable RDF format, supporting prefix
 declarations, predicate lists (`;`), object lists (`,`), blank nodes, typed
 literals and the `a` shorthand for `rdf:type`.
 
-### Batch load (Rust)
+### Turtle batch load (Rust)
 
 Replaces the store contents with the parsed triples:
 
@@ -37,7 +35,7 @@ let result = store.load_turtle(r#"
 println!("{} triples loaded", result.triple_count);
 ```
 
-### Streaming load (Rust)
+### Turtle streaming load (Rust)
 
 Inserts triples incrementally in batches of configurable size, bounding memory
 regardless of document size. Does not replace existing data:
@@ -50,7 +48,7 @@ The `batch_size` parameter controls how many triples are buffered before
 flushing to the store. 10,000 is a good default: small enough to cap memory,
 large enough to amortize lock overhead.
 
-### Via SPARQL
+### Loading via SPARQL
 
 From any language binding you can load Turtle data through SPARQL INSERT DATA:
 
@@ -66,7 +64,7 @@ INSERT DATA {
 N-Triples is a line-based subset of Turtle with no prefixes, one triple per
 line. Its simplicity makes it ideal for streaming large datasets.
 
-### Batch load (Rust)
+### N-Triples batch load (Rust)
 
 ```rust
 use std::io::BufReader;
@@ -75,7 +73,7 @@ let reader = BufReader::new(file);
 let result = store.load_ntriples(reader)?;
 ```
 
-### Streaming load (Rust)
+### N-Triples streaming load (Rust)
 
 Parses line-by-line from a buffered reader, never holding the entire file in
 memory:
@@ -112,11 +110,11 @@ let nquads_string = store.to_nquads()?;
 For advanced use cases the `TripleSink` trait decouples parsing from storage.
 Three built-in implementations are provided:
 
-| Sink | Purpose |
-|------|---------|
+| Sink              | Purpose                                                        |
+| ----------------- | -------------------------------------------------------------- |
 | `BatchInsertSink` | Buffered insert into an `RdfStore` (used by streaming loaders) |
-| `CountSink` | Dry-run counting without storage, useful for validation |
-| `VecSink` | Collects all triples into a `Vec<Triple>` |
+| `CountSink`       | Dry-run counting without storage, useful for validation        |
+| `VecSink`         | Collects all triples into a `Vec<Triple>`                      |
 
 ```rust
 use grafeo_core::graph::rdf::{CountSink, TurtleParser};

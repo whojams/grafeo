@@ -27,7 +27,7 @@ Properties are key-value pairs stored on nodes and edges. Grafeo supports a rich
 | `DateTime` | `'2024-01-15T10:30:00Z'` | Date and time (microsecond precision) |
 | `Null` | `null` | Absence of value |
 | `GCounter` | `{"$gcounter": {...}}` | Grow-only CRDT counter |
-| `ONCounter` | `{"$pncounter": {...}}` | Positive-negative CRDT counter |
+| `OnCounter` | `{"$pncounter": {...}}` | Positive-negative CRDT counter |
 
 ## Using Properties
 
@@ -252,7 +252,7 @@ In bindings the value is returned as a structured object:
 
 `$value` is the computed total (sum of all replica slots).
 
-### ONCounter (positive-negative)
+### OnCounter (positive-negative)
 
 Two grow-only maps track increments and decrements independently. The logical
 value is `sum(pos) - sum(neg)`. Merge applies per-replica max to each map.

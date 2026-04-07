@@ -468,12 +468,18 @@ tests:
         - [null, null]
 
   - name: negative_limit_returns_empty
-    query: "MATCH (n) RETURN n LIMIT -1"
+    setup:
+      - "INSERT (:LimTest {v: 1})"
+      - "INSERT (:LimTest {v: 2})"
+    query: "MATCH (n:LimTest) RETURN n.v AS v LIMIT -1"
     expect:
       empty: true
 
   - name: negative_limit_returns_empty_cypher
+    setup:
+      - "INSERT (:LimTest2 {v: 1})"
+      - "INSERT (:LimTest2 {v: 2})"
     variants:
-      cypher: "MATCH (n) RETURN n LIMIT -1"
+      cypher: "MATCH (n:LimTest2) RETURN n.v AS v LIMIT -1"
     expect:
       empty: true

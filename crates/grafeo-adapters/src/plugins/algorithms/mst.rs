@@ -84,7 +84,7 @@ impl MstResult {
 ///
 /// # Panics
 ///
-/// Panics if the internal node-to-index mapping is inconsistent.
+/// Panics if an edge references a node not present in `node_ids()`.
 ///
 /// # Complexity
 ///
@@ -111,8 +111,7 @@ pub fn kruskal(store: &dyn GraphStore, weight_property: Option<&str>) -> MstResu
     let mut seen_edges: std::collections::HashSet<(usize, usize)> =
         std::collections::HashSet::new();
 
-    for &node in &nodes {
-        let i = *node_to_idx.get(&node).expect("node in index");
+    for (i, &node) in nodes.iter().enumerate() {
         for (neighbor, edge_id) in store.edges_from(node, Direction::Outgoing) {
             if let Some(&j) = node_to_idx.get(&neighbor) {
                 // For undirected: only add each edge once

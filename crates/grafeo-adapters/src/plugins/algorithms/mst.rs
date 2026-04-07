@@ -80,11 +80,8 @@ impl MstResult {
 ///
 /// # Returns
 ///
-/// The MST edges and total weight.
-///
-/// # Panics
-///
-/// Panics if an edge references a node not present in `node_ids()`.
+/// The MST edges and total weight. Edges referencing unknown nodes are
+/// silently ignored.
 ///
 /// # Complexity
 ///

@@ -1214,7 +1214,8 @@ impl GrafeoDB {
     pub fn set_current_graph(&self, name: Option<&str>) -> Result<()> {
         if let Some(name) = name
             && !name.eq_ignore_ascii_case("default")
-            && self.lpg_store().graph(name).is_none()
+            && let Some(store) = &self.store
+            && store.graph(name).is_none()
         {
             return Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
@@ -1371,7 +1372,10 @@ impl GrafeoDB {
     /// If the dropped graph was the active graph context, the context is reset
     /// to the default graph.
     pub fn drop_graph(&self, name: &str) -> bool {
-        let dropped = self.lpg_store().drop_graph(name);
+        let Some(store) = &self.store else {
+            return false;
+        };
+        let dropped = store.drop_graph(name);
         if dropped {
             let mut current = self.current_graph.write();
             if current

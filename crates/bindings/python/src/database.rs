@@ -2635,15 +2635,19 @@ impl PyGrafeoDB {
     /// Example:
     ///     db.set_graph("social")
     ///     result = db.execute("MATCH (n) RETURN n")  # queries 'social' graph
-    fn set_graph(&self, name: String) {
-        self.inner.read().set_current_graph(Some(&name));
+    fn set_graph(&self, name: &str) -> PyResult<()> {
+        self.inner
+            .read()
+            .set_current_graph(Some(name))
+            .map_err(PyGrafeoError::from)?;
+        Ok(())
     }
 
     /// Clears the current graph context.
     ///
     /// Subsequent ``execute()`` calls will use the default graph.
     fn reset_graph(&self) {
-        self.inner.read().set_current_graph(None);
+        let _ = self.inner.read().set_current_graph(None);
     }
 
     /// Returns the current graph name, or ``None`` if no graph is set.
@@ -2727,7 +2731,7 @@ impl PyTransaction {
     fn new(
         db: Arc<RwLock<GrafeoDB>>,
         isolation_level: Option<&str>,
-        #[allow(unused_variables)] cdc_override: Option<bool>,
+        _cdc_override: Option<bool>,
     ) -> PyResult<Self> {
         // Parse isolation level string
         let (level, level_name) = match isolation_level {
@@ -2753,7 +2757,7 @@ impl PyTransaction {
             let db_guard = db.read();
             #[cfg(feature = "cdc")]
             {
-                match cdc_override {
+                match _cdc_override {
                     Some(cdc) => db_guard.session_with_cdc(cdc),
                     None => db_guard.session(),
                 }

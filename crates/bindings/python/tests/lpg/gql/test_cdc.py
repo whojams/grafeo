@@ -47,3 +47,28 @@ class TestCDC:
         # Node ID that doesn't exist
         history = db.node_history(9999)
         assert len(history) == 0
+
+    def test_transaction_with_cdc_enabled(self, db):
+        """Per-transaction CDC override tracks changes when enabled."""
+        with db.begin_transaction_with_cdc(True) as tx:
+            tx.execute("INSERT (:Person {name: 'Gus'})")
+            tx.commit()
+        result = db.execute("MATCH (n:Person {name: 'Gus'}) RETURN n")
+        rows = list(result)
+        assert len(rows) == 1
+        node_id = rows[0]["n"]["_id"]
+        history = db.node_history(node_id)
+        assert len(history) >= 1
+
+    def test_transaction_with_cdc_disabled(self, db):
+        """Per-transaction CDC override suppresses tracking when disabled."""
+        # Insert with CDC explicitly disabled for this transaction
+        with db.begin_transaction_with_cdc(False) as tx:
+            tx.execute("INSERT (:Person {name: 'Vincent'})")
+            tx.commit()
+        result = db.execute("MATCH (n:Person {name: 'Vincent'}) RETURN n")
+        rows = list(result)
+        assert len(rows) == 1
+        node_id = rows[0]["n"]["_id"]
+        history = db.node_history(node_id)
+        assert len(history) == 0

@@ -1634,7 +1634,30 @@ impl PyGrafeoDB {
     /// ```
     #[pyo3(signature = (isolation_level=None))]
     fn begin_transaction(&self, isolation_level: Option<&str>) -> PyResult<PyTransaction> {
-        PyTransaction::new(self.inner.clone(), isolation_level)
+        PyTransaction::new(self.inner.clone(), isolation_level, None)
+    }
+
+    /// Begin a transaction with an explicit CDC override.
+    ///
+    /// When ``cdc_enabled`` is ``True``, mutations in this transaction are
+    /// tracked regardless of the database default. ``False`` disables tracking
+    /// for this transaction only.
+    ///
+    /// Example:
+    /// ```python
+    /// with db.begin_transaction_with_cdc(True) as tx:
+    ///     tx.execute("INSERT (:Person {name: 'Alix'})")
+    ///     tx.commit()
+    /// # This transaction's changes appear in node_history()
+    /// ```
+    #[cfg(feature = "cdc")]
+    #[pyo3(signature = (cdc_enabled, isolation_level=None))]
+    fn begin_transaction_with_cdc(
+        &self,
+        cdc_enabled: bool,
+        isolation_level: Option<&str>,
+    ) -> PyResult<PyTransaction> {
+        PyTransaction::new(self.inner.clone(), isolation_level, Some(cdc_enabled))
     }
 
     /// Get database statistics.
@@ -2550,15 +2573,19 @@ impl PyGrafeoDB {
     /// Example:
     ///     db.set_schema("reporting")
     ///     result = db.execute("SHOW GRAPH TYPES")  # only sees types in 'reporting'
-    fn set_schema(&self, name: String) {
-        self.inner.read().set_current_schema(Some(&name));
+    fn set_schema(&self, name: String) -> PyResult<()> {
+        self.inner
+            .read()
+            .set_current_schema(Some(&name))
+            .map_err(PyGrafeoError::from)?;
+        Ok(())
     }
 
     /// Clears the current schema context.
     ///
     /// Subsequent `execute()` calls will use the default (no-schema) namespace.
     fn reset_schema(&self) {
-        self.inner.read().set_current_schema(None);
+        let _ = self.inner.read().set_current_schema(None);
     }
 
     /// Returns the current schema name, or `None` if no schema is set.
@@ -2568,6 +2595,68 @@ impl PyGrafeoDB {
     ///     assert db.current_schema() == "reporting"
     fn current_schema(&self) -> Option<String> {
         self.inner.read().current_schema()
+    }
+
+    // -----------------------------------------------------------------
+    // Named graph management
+    // -----------------------------------------------------------------
+
+    /// Creates a named graph. Returns ``True`` if created, ``False`` if it
+    /// already exists.
+    ///
+    /// Example:
+    ///     db.create_graph("social")
+    ///     db.set_graph("social")
+    ///     db.execute("INSERT (:Person {name: 'Alix'})")
+    fn create_graph(&self, name: &str) -> PyResult<bool> {
+        Ok(self
+            .inner
+            .read()
+            .create_graph(name)
+            .map_err(PyGrafeoError::from)?)
+    }
+
+    /// Drops a named graph. Returns ``True`` if dropped, ``False`` if it did
+    /// not exist.
+    fn drop_graph(&self, name: &str) -> bool {
+        self.inner.read().drop_graph(name)
+    }
+
+    /// Returns a list of all named graph names.
+    fn list_graphs(&self) -> Vec<String> {
+        self.inner.read().list_graphs()
+    }
+
+    /// Sets the current graph for subsequent ``execute()`` calls.
+    ///
+    /// Equivalent to running ``USE GRAPH <name>`` but persists across calls.
+    /// Use ``reset_graph()`` to clear it.
+    ///
+    /// Example:
+    ///     db.set_graph("social")
+    ///     result = db.execute("MATCH (n) RETURN n")  # queries 'social' graph
+    fn set_graph(&self, name: &str) -> PyResult<()> {
+        self.inner
+            .read()
+            .set_current_graph(Some(name))
+            .map_err(PyGrafeoError::from)?;
+        Ok(())
+    }
+
+    /// Clears the current graph context.
+    ///
+    /// Subsequent ``execute()`` calls will use the default graph.
+    fn reset_graph(&self) {
+        let _ = self.inner.read().set_current_graph(None);
+    }
+
+    /// Returns the current graph name, or ``None`` if no graph is set.
+    ///
+    /// Example:
+    ///     db.set_graph("social")
+    ///     assert db.current_graph() == "social"
+    fn current_graph(&self) -> Option<String> {
+        self.inner.read().current_graph()
     }
 }
 
@@ -2638,8 +2727,12 @@ impl PyTransaction {
         ))
     }
 
-    /// Create a new transaction with an optional isolation level.
-    fn new(db: Arc<RwLock<GrafeoDB>>, isolation_level: Option<&str>) -> PyResult<Self> {
+    /// Create a new transaction with an optional isolation level and CDC override.
+    fn new(
+        db: Arc<RwLock<GrafeoDB>>,
+        isolation_level: Option<&str>,
+        _cdc_override: Option<bool>,
+    ) -> PyResult<Self> {
         // Parse isolation level string
         let (level, level_name) = match isolation_level {
             Some("read_committed") => (
@@ -2659,10 +2752,20 @@ impl PyTransaction {
             }
         };
 
-        // Create session from db, but drop the read guard before moving db
+        // Create session from db, using CDC override when available
         let mut session = {
             let db_guard = db.read();
-            db_guard.session()
+            #[cfg(feature = "cdc")]
+            {
+                match _cdc_override {
+                    Some(cdc) => db_guard.session_with_cdc(cdc),
+                    None => db_guard.session(),
+                }
+            }
+            #[cfg(not(feature = "cdc"))]
+            {
+                db_guard.session()
+            }
         };
 
         // Begin the transaction with the specified isolation level

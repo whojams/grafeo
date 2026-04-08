@@ -122,7 +122,7 @@ Add to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  grafeo: ^0.5.34
+  grafeo: ^0.5.35
 ```
 
 ### Verify Installation

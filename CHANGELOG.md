@@ -2,6 +2,23 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.35] - Unreleased
+
+### Added
+
+- **Python named graph management**: `create_graph()`, `drop_graph()`, `list_graphs()`, `set_graph()`/`reset_graph()`/`current_graph()`, `set_schema()`/`reset_schema()`/`current_schema()` ([#241](https://github.com/GrafeoDB/grafeo/issues/241), [#243](https://github.com/GrafeoDB/grafeo/pull/243) by [@Michaelzag](https://github.com/Michaelzag))
+- **Python per-transaction CDC override**: `begin_transaction_with_cdc(True|False)` to enable or suppress change tracking per transaction ([#242](https://github.com/GrafeoDB/grafeo/issues/242), [#244](https://github.com/GrafeoDB/grafeo/pull/244) by [@Michaelzag](https://github.com/Michaelzag))
+
+### Fixed
+
+- **Graph/schema context validation**: `set_current_graph()` and `set_current_schema()` now reject nonexistent targets across all bindings; `drop_graph()` auto-clears the active context ([#245](https://github.com/GrafeoDB/grafeo/issues/245), [#246](https://github.com/GrafeoDB/grafeo/pull/246) by [@Michaelzag](https://github.com/Michaelzag))
+- **C binding `grafeo_reset_schema`**: propagates errors instead of silently discarding them
+- **WASM `setSchema` error type**: returns a proper JS `Error` object instead of a plain string
+
+### Changed
+
+- **CI**: moved Python CLI wheel build from `pypi.yml` to `release.yml`
+
 ## [0.5.34] - 2026-04-07
 
 Pre-RC hardening: query engine fixes from external integration testing, format stability, feature matrix CI.
